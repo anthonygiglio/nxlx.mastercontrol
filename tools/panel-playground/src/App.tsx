@@ -95,7 +95,7 @@ function Controls({ s, setS, patch, setLayout }: {
   const L = s.layout
   return (
     <div className="pg-controls">
-      <Section title="Theme" note="The four themes in pvj/themes.d. Change any colour to start your own.">
+      <Section title="Theme" note="The four themes in mctl/themes.d. Change any colour to start your own.">
         <div className="pg-themes">
           {Object.entries(THEMES).map(([id, t]) => (
             <button key={id} className={'pg-theme' + (s.theme === id ? ' on' : '')} onClick={() => patch({ theme: id, tokens: { ...t.tokens } })}>
@@ -185,8 +185,8 @@ function ExportDialog({ s }: { s: Settings }) {
       <button className="pg-btn pg-primary" onClick={() => setOpen(true)}>Export</button>
       <Modal open={open} onClose={() => setOpen(false)} title="Take it back to the code"
         description="Only what differs from the panel today. Paste the CSS at the end of app.css so it overrides the rules above it.">
-        <Code title="pvj/web/app.css" text={css} />
-        <Code title="pvj/themes.d/<id>.json" text={theme} />
+        <Code title="mctl/web/app.css" text={css} />
+        <Code title="mctl/themes.d/<id>.json" text={theme} />
         <Code title="Settings (paste into a chat to recreate this look)" text={JSON.stringify({ theme: s.theme, tokens: s.tokens, font: s.font, mono: s.mono, knobs: s.knobs, layout: s.layout })} />
       </Modal>
     </>

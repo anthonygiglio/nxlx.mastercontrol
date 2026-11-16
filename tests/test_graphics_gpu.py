@@ -25,7 +25,7 @@ import time
 import unittest
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj.player import Ipc, Player, PlayerError
+from mctl.player import Ipc, Player, PlayerError
 from tests.test_mctl_render import BIN, H, STRICT, W, Renderer, fd_count, need_program, thread_count
 
 import subprocess
@@ -56,7 +56,7 @@ class Base(unittest.TestCase):
 
     def setUp(self):
         need_program(self)
-        self.tmp = tempfile.mkdtemp(prefix="pvj-gfx-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-gfx-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(*self.ARGS, env=self.ENV)
         self.addCleanup(lambda: self.r.close())
@@ -654,7 +654,7 @@ class ManyClientsTest(Base):
 
 
 class PlayerSideTest(Base):
-    """pvj/player.py's side: how the panel finds the stage and speaks to it (graphics_stage and graphic)."""
+    """mctl/player.py's side: how the panel finds the stage and speaks to it (graphics_stage and graphic)."""
 
     def player(self):
         p = Player(rundir=self.tmp)

@@ -17,7 +17,7 @@ from an approved node (a record with `via: node`, made by Auth.add_node_device),
 * the handler-level proof covers the routes listed in Handlers below (the ones that make permanent access, the Owner-only
   switch, the ticket, People, GET /api/sound and GET /api/nodes); every other route is proved at the gate only. The records
   the walk uses come from a node that is on no list: approval is enforced when a ticket is redeemed and by the sweep
-  (pvj/lease.py), not on each request, and other tests cover that (tests/test_ticket.py, tests/test_lease.py);
+  (mctl/lease.py), not on each request, and other tests cover that (tests/test_ticket.py, tests/test_lease.py);
 * no code outside auth.py, ticket.py, lease.py and handover.py may branch on `via` being "node": a handler that treated
   carried devices specially would not be seen by the walk, so the source is searched (Decisions);
 * a route without a decision here fails the test: CARRIED below must name every route the server has, so adding one
@@ -28,7 +28,7 @@ import types
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import handover as hv, policy, ticket as T
+from mctl import handover as hv, policy, ticket as T
 from tests import test_roles as R
 from tests.test_boxcert import openssls
 from tests.test_handover_api import B_ID

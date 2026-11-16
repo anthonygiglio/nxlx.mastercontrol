@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The locks that know their place (tests/lockrank.py) and the order they keep (pvj/locks.py, D71)."""
+"""The locks that know their place (tests/lockrank.py) and the order they keep (mctl/locks.py, D71)."""
 import ast
 import glob
 import os
@@ -9,7 +9,7 @@ import sys
 import threading
 import unittest
 
-from pvj import locks
+from mctl import locks
 from tests import lockrank
 
 
@@ -76,13 +76,13 @@ class NeverLost(unittest.TestCase):
         self.assertEqual(len(tests._left), 1)
 
     def test_a_breach_that_no_test_showed_fails_the_run_at_its_end(self):
-        code = ("import tests\nfrom pvj import locks\na, b = locks.make('player', True), locks.make('fader.stepping')\n"
+        code = ("import tests\nfrom mctl import locks\na, b = locks.make('player', True), locks.make('fader.stepping')\n"
                 "with b:\n    try:\n        a.acquire()\n    except AssertionError:\n        pass\n")
         done = python(code)
         self.assertEqual(done.returncode, 1, done.stderr)
         self.assertIn("that no test showed", done.stderr)
         self.assertIn("`player` (place", done.stderr)
-        done = python("import tests\nfrom pvj import locks\nwith locks.make('player', True):\n    pass\n")
+        done = python("import tests\nfrom mctl import locks\nwith locks.make('player', True):\n    pass\n")
         self.assertEqual((done.returncode, done.stderr), (0, ""))
 
 
@@ -103,7 +103,7 @@ class AlwaysOn(unittest.TestCase):
                          "started by themselves they would run with plain locks and without a temp folder of their own")
 
     def test_a_module_started_by_discover_alone_runs_with_the_checker(self):
-        code = ("import sys, unittest\nfrom pvj import locks\n"
+        code = ("import sys, unittest\nfrom mctl import locks\n"
                 "p = unittest.main(module=None, argv=['x', 'discover', '-s', 'tests', '-p', 'test_player_layers.py'], exit=False)\n"
                 "on = locks.factory.__name__ == 'Ranked' and locks.factory.__module__.endswith('lockrank')\n"
                 "sys.exit(0 if on and p.result.testsRun and p.result.wasSuccessful() else 3)\n")
@@ -115,7 +115,7 @@ class AlwaysOn(unittest.TestCase):
         folder = tempfile.mkdtemp()
         self.addCleanup(__import__("shutil").rmtree, folder, True)
         with open(os.path.join(folder, "test_breaks.py"), "w") as f:
-            f.write("import unittest\nimport tests\nfrom pvj import locks\n\n\nclass T(unittest.TestCase):\n"
+            f.write("import unittest\nimport tests\nfrom mctl import locks\n\n\nclass T(unittest.TestCase):\n"
                     "    def test_it(self):\n        a, b = locks.make('player', True), locks.make('fader.stepping')\n"
                     "        with b:\n            try:\n                a.acquire()\n            except AssertionError:\n"
                     "                pass\n")
@@ -220,9 +220,9 @@ class Order(unittest.TestCase):
         self.assertEqual(lockrank.take(), [])
 
     def test_the_real_objects_are_made_of_these_locks(self):
-        from pvj.api import Fader
-        from pvj.player import Player
-        from pvj.transitions import Transitions
+        from mctl.api import Fader
+        from mctl.player import Player
+        from mctl.transitions import Transitions
         fader = Fader(lambda level: None)
         self.assertEqual((fader.stepping.name, fader._lock.name), ("fader.stepping", "fader.lock"))
         self.assertEqual(Player._lock.name, "player")

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """A stand-in for mpv on the player's control socket, for the tests. Tests only.
 
-Why: the tests of playing, stopping and the picture's level ran against fakes that rewrote pvj.player.Player's own
+Why: the tests of playing, stopping and the picture's level ran against fakes that rewrote mctl.player.Player's own
 methods, so nothing of player.py was under test there: not its lock, not what it remembers of what it loaded
 (`pipe_playing`), not the order of its questions to mpv. This is the other side of the socket instead. The REAL
 Player talks to it; it answers as mpv does for the commands the player uses, keeps what a real mpv would keep (what

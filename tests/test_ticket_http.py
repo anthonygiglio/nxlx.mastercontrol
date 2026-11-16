@@ -13,7 +13,7 @@ import unittest
 from urllib.parse import urlencode
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import auth as auth_mod, server, ticket as T
+from mctl import auth as auth_mod, server, ticket as T
 from tests.peerfix import PeerNode
 from tests.test_boxcert import openssls
 from tests.test_handover_api import B_ID, ME, FleetApiBase, raw
@@ -330,7 +330,7 @@ class TicketRoute(HttpBase):
         self.assertEqual(self.tcall(self.owner, host="127.0.0.2:%d" % self.tls_port)[0], 409)         # an address the certificate does not name
 
     def test_a_support_session_can_not_reach_it(self):
-        from pvj import support as sp
+        from mctl import support as sp
         self.assertTrue("/api/handover/ticket".startswith(sp.REMOTE_DENY_PREFIX))
 
 

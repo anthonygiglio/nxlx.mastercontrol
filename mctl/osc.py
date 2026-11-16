@@ -1,0 +1,1166 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""OSC control bridge (receive only).
+
+Turns OSC messages from TouchOSC, Resolume, QLab, Max and similar into calls on
+the same API the web panel uses, so every value is validated in one place and
+fades and blackout behave identically.
+
+Deliberate limits:
+* OFF until switched on (System > Control).
+* Only private networks may send (loopback, RFC 1918, link-local, unique-local)
+  plus any ranges you add; UDP source addresses can be forged, so this stops
+  the internet, not a hostile device on your own network.
+* Nothing is sent unless the Owner switched "Send state back" on and named the target (D82, mctl/oscfeedback.py);
+  never an answer to a stranger, never an error reply, and nothing at all from this module's own socket.
+* Nothing that shuts down, reboots, resets or reconfigures the box is reachable
+  over OSC. The old /shutdown, /reboot and /shutdownall are refused.
+* Per-sender rate limit; strict, bounded packet parsing.
+* Three more layers, each off until the owner switches it on (D78): a list of single addresses that may send, a
+  rule that the sender's address is one a paired panel device asked from lately, and a key every address must start
+  with (`/k/<key>/mctl/stop`). None of them is encryption: UDP is readable and a source address can be forged by a
+  device on the same network, and the key can be read from one captured packet. They keep out devices that are
+  merely on the network. What was refused is counted and shown; nothing from a refused packet is applied or kept.
+"""
+
+import collections
+import hmac
+import ipaddress
+import re
+import secrets
+import socket
+import struct
+import threading
+import time
+
+from . import oscfeedback
+
+MAX_PACKET = 8192
+MAX_ARGS = 16
+MAX_STRING = 256
+MAX_BLOB = 1024
+MAX_DEPTH = 4
+MAX_MESSAGES = 64
+RATE_PER_SECOND = 200.0
+RATE_BURST = 400.0
+OSC_DEVICE = {"id": "osc", "name": "OSC", "role": "live"}
+
+# The three layers (D78). Every key below is optional in settings["osc"]: a file without them means "all off".
+MAX_ONLY = 16                    # single addresses in "Only these devices may send"
+PAIRED_ROLES = ("full", "live")  # "full": the owner's devices only; "live": owner and presenter. A guest never counts.
+PAIRED_HOURS, PAIRED_HOURS_MAX = 12, 72
+KEY_PREFIX = "/k/"
+KEY_FORM = re.compile(r"[0-9a-f]{16,64}")
+KEY_SECTION = "osc_secret"        # where the key is kept: a section of its own that no release exports or imports
+SENDER_WINDOW = 600.0            # the page shows the senders of the last ten minutes
+MAX_SENDERS = 64
+MAX_LOG = 50
+SHOWN_ADDRESS = 64               # characters of an OSC address that are kept for the page
+
+WHY_NETWORK = "not on a private or listed network"
+WHY_RATE = "sending too fast"
+WHY_ONLY = "not in the list of devices that may send"
+WHY_PAIRED = "no paired device at this address"
+WHY_PACKET = "not a valid OSC packet"
+WHY_NO_KEY = "no key in the address"
+WHY_KEY = "wrong key"
+WHY_TWICE = "the key prefix is there twice"
+WHY_UNSET = "the key is switched on but none is set"
+DID_NOTHING = "nothing to do (an unknown address, or a button release)"
+NOT_OVER_OSC = "not available over OSC"
+VALUE_REFUSED = "the value was refused"
+NO_STATE = "state is not sent to this address"
+
+PRIVATE_NETS = [ipaddress.ip_network(n) for n in (
+    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
+    "::1/128", "fc00::/7", "fe80::/10")]
+
+# Old addresses that are refused on purpose (or not ported), so logs can say why.
+# The address family before the rename (D138): /pvj/... is still taken for one release and means /mctl/..., so a
+# TouchOSC layout, a Max patch or a QLab cue that was not redone keeps working. What the box sends (the state of
+# oscfeedback.py) uses the new family only. Remove this and current() in the release after the cutover.
+OLD_FAMILY = "/pvj"
+FAMILY = "/mctl"
+
+
+def current(address):
+    """An address of the old family as its new name ("/pvj/stop" -> "/mctl/stop"); any other address as it is."""
+    if address == OLD_FAMILY or address.startswith(OLD_FAMILY + "/"):
+        return FAMILY + address[len(OLD_FAMILY):]
+    return address
+
+
+REFUSED = {"/shutdown", "/reboot", "/rebootall", "/shutdownall", "/piwallmaster", "/piwallloop"}
+
+
+class OscError(Exception):
+    pass
+
+
+# --- wire format ------------------------------------------------------------
+def _padded(n):
+    return (n + 3) & ~3
+
+
+def _read_string(data, pos):
+    end = data.find(b"\0", pos)
+    if end < 0:
+        raise OscError("unterminated string")
+    if end - pos > MAX_STRING:
+        raise OscError("string too long")
+    nxt = _padded(end + 1)
+    if nxt > len(data):
+        raise OscError("string padding runs past the packet")
+    if any(data[end:nxt]):
+        raise OscError("string padding is not zero")
+    try:
+        return data[pos:end].decode("utf-8"), nxt
+    except UnicodeDecodeError:
+        raise OscError("string is not UTF-8")
+
+
+def _take(data, pos, size):
+    if pos + size > len(data):
+        raise OscError("argument runs past the packet")
+    return data[pos:pos + size], pos + size
+
+
+def parse_message(data):
+    """Return (address, [args]). Accepts the old form with no type tag string."""
+    address, pos = _read_string(data, 0)
+    if not address.startswith("/"):
+        raise OscError("address must start with /")
+    if pos >= len(data):
+        return address, []
+    tags, pos = _read_string(data, pos)
+    if not tags.startswith(","):
+        raise OscError("bad type tag string")
+    args = []
+    for tag in tags[1:]:
+        if tag in "[]":
+            continue
+        if tag == "T":
+            args.append(True)
+        elif tag == "F":
+            args.append(False)
+        elif tag == "N":
+            args.append(None)
+        elif tag == "I":
+            args.append(float("inf"))
+        elif tag == "i":
+            raw, pos = _take(data, pos, 4)
+            args.append(struct.unpack(">i", raw)[0])
+        elif tag == "f":
+            raw, pos = _take(data, pos, 4)
+            args.append(struct.unpack(">f", raw)[0])
+        elif tag == "h":
+            raw, pos = _take(data, pos, 8)
+            args.append(struct.unpack(">q", raw)[0])
+        elif tag == "d":
+            raw, pos = _take(data, pos, 8)
+            args.append(struct.unpack(">d", raw)[0])
+        elif tag == "t":
+            raw, pos = _take(data, pos, 8)
+            args.append(struct.unpack(">Q", raw)[0])
+        elif tag in "cs" or tag == "S":
+            if tag == "c":
+                raw, pos = _take(data, pos, 4)
+                args.append(chr(struct.unpack(">I", raw)[0] & 0x10FFFF) if struct.unpack(">I", raw)[0] < 0x110000 else "")
+            else:
+                text, pos = _read_string(data, pos)
+                args.append(text)
+        elif tag in "rm":
+            raw, pos = _take(data, pos, 4)
+            args.append(raw)
+        elif tag == "b":
+            raw, pos = _take(data, pos, 4)
+            size = struct.unpack(">i", raw)[0]
+            if size < 0 or size > MAX_BLOB:
+                raise OscError("bad blob size")
+            blob, _ = _take(data, pos, size)
+            pos = _padded(pos + size)
+            if pos > len(data):
+                raise OscError("blob padding runs past the packet")
+            args.append(blob)
+        else:
+            raise OscError("unknown type tag %r" % tag)  # size unknown, cannot continue safely
+        if len(args) > MAX_ARGS:
+            raise OscError("too many arguments")
+    return address, args
+
+
+def parse_packet(data, depth=0):
+    """A message or a (possibly nested) bundle, flattened to a list of (address, args)."""
+    if len(data) > MAX_PACKET:
+        raise OscError("packet too large")
+    if not data:
+        raise OscError("empty packet")
+    if data.startswith(b"#bundle\0"):
+        if depth >= MAX_DEPTH:
+            raise OscError("bundles nested too deeply")
+        if len(data) < 16:
+            raise OscError("truncated bundle")
+        pos, out = 16, []  # skip "#bundle\0" and the 8 byte time tag: messages run immediately
+        while pos < len(data):
+            raw, pos = _take(data, pos, 4)
+            size = struct.unpack(">i", raw)[0]
+            if size <= 0 or size % 4:
+                raise OscError("bad bundle element size")
+            element, pos = _take(data, pos, size)
+            out.extend(parse_packet(element, depth + 1))
+            if len(out) > MAX_MESSAGES:
+                raise OscError("too many messages in one packet")
+        return out
+    return [parse_message(data)]
+
+
+# --- who may send and how fast ----------------------------------------------
+def parse_networks(items):
+    nets = []
+    for item in items:
+        try:
+            nets.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            raise OscError("bad network %r" % (item,))
+    return nets
+
+
+def _address(ip):
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%")[0])
+    except ValueError:
+        return None
+    if addr.version == 6 and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    return addr
+
+
+def plain_address(ip):
+    """One spelling per address (an IPv4 address written the IPv6 way is the IPv4 one), or None for anything else."""
+    addr = _address(ip)
+    return None if addr is None else str(addr)
+
+
+def source_allowed(ip, extra=()):
+    addr = _address(ip)
+    if addr is None:
+        return False
+    return any(addr in net for net in list(PRIVATE_NETS) + list(extra))
+
+
+# --- the three layers: the list, the paired device, the key (D78) --------------
+def new_key():
+    return secrets.token_hex(10)       # 80 random bits, and only characters an OSC address may hold
+
+
+def valid_key(key):
+    return isinstance(key, str) and KEY_FORM.fullmatch(key) is not None
+
+
+def split_key(address):
+    """"/k/<key>/mctl/stop" -> (key, "/mctl/stop"); (None, None) when the address does not have that form."""
+    if not address.startswith(KEY_PREFIX):
+        return None, None
+    given, slash, rest = address[len(KEY_PREFIX):].partition("/")
+    if not given or not slash or not rest:
+        return None, None
+    return given, "/" + rest
+
+
+def key_matches(given, key):
+    """Constant time, on bytes: the given part comes from a stranger's packet and may hold any UTF-8."""
+    return hmac.compare_digest(given.encode("utf-8"), key.encode("utf-8"))
+
+
+def validate_only(items, extra=()):
+    """The single addresses that may send. Each must be inside the outer wall (the private ranges or an extra
+    network): the list narrows who may send, it never opens the box to an address the wall keeps out."""
+    if not isinstance(items, list) or len(items) > MAX_ONLY or not all(isinstance(i, str) and len(i) < 50 for i in items):
+        raise OscError("only must be a list of up to %d single addresses" % MAX_ONLY)
+    out = []
+    for item in items:
+        plain = None if "/" in item else plain_address(item.strip())
+        if plain is None:
+            raise OscError("%r is not a single address" % (item,))
+        if not source_allowed(plain, extra):
+            raise OscError("%s is not on a private network; add its network under \"Also accept from these networks\" first" % plain)
+        if plain not in out:
+            out.append(plain)
+    return out
+
+
+def validate_layers(v, extra=()):
+    """The layer keys that are present in `v` (a request or an imported file), checked. The key itself is never
+    taken from outside: the box makes it (OscManager.make_key)."""
+    out = {}
+    for flag in ("only_on", "paired_on", "key_on"):
+        if flag in v:
+            if not isinstance(v[flag], bool):
+                raise OscError("%s must be true or false" % flag)
+            out[flag] = v[flag]
+    if "only" in v:
+        out["only"] = validate_only(v["only"], extra)
+    if "paired_roles" in v:
+        if v["paired_roles"] not in PAIRED_ROLES:
+            raise OscError("paired_roles must be full or live")
+        out["paired_roles"] = v["paired_roles"]
+    if "paired_hours" in v:
+        hours = v["paired_hours"]
+        if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= PAIRED_HOURS_MAX:
+            raise OscError("paired_hours must be 1 to %d" % PAIRED_HOURS_MAX)
+        out["paired_hours"] = hours
+    return out
+
+
+# D83. OSC has no login, so the first time it is switched on, on a box where it never was on, the lock "A sender
+# must be a paired device" comes on with it. Whether it "never was on" is a key of its own under "osc", EVER_ON,
+# written once when this code first sets the receiver up (OscManager._note_ever_on) and true from the first
+# switch-on. No schema change: a release before this one ignores both keys and keeps them through a save of its
+# OSC page (it copies the section), and it enforces the lock itself (D78), so going back fails closed.
+EVER_ON = "ever_on"
+PAIRED_DEFAULT = "paired_default"      # the paired lock is on because the box put it on, not the owner: said on the page
+LAYER_KEYS = ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on", "feedback_on", "feedback")
+OPEN_TEXT = "OSC is open: anyone on this network can control the node. Switch on a lock."
+
+
+def used_before(data):
+    """True when the settings show OSC is on or was ever set up: it is on, the mark says so, or anything about it is
+    not as a new box has it (the port, an extra network, any lock or state setting, a key). Only an untouched section
+    is "never". A box where OSC was on and was switched off again with nothing else ever changed, before this code
+    first ran, cannot be told from a new one: its next switch-on brings the lock, and the page says so."""
+    cfg = data.get("osc")
+    if not isinstance(cfg, dict):
+        return False
+    if cfg.get("enabled") or cfg.get(EVER_ON) is True:
+        return True
+    return bool(cfg.get("port", 9876) != 9876 or cfg.get("allow") or any(k in cfg for k in LAYER_KEYS) or "key" in cfg
+                or stored_key(data))
+
+
+def never_on(data):
+    """True only for a box where OSC is off and never was on (see used_before)."""
+    cfg = data.get("osc")
+    if not isinstance(cfg, dict) or cfg.get("enabled"):
+        return False
+    return cfg[EVER_ON] is False if EVER_ON in cfg else not used_before(data)
+
+
+def is_open(cfg):
+    """OSC listens and none of the three locks is on: anyone on the network can control the box."""
+    rules = layers(cfg)
+    return bool(cfg.get("enabled")) and not (rules["only_on"] or rules["paired_on"] or rules["key_on"])
+
+
+def stored_key(data):
+    """The key in a settings dict: its own section, or (a file written before the key moved there) under "osc"."""
+    for section in (KEY_SECTION, "osc"):
+        part = data.get(section)
+        if isinstance(part, dict) and valid_key(part.get("key")):
+            return part["key"]
+    return ""
+
+
+def layers(cfg, key=""):
+    """settings["osc"] as the receiver reads it, with the key (kept apart, see stored_key). A missing setting is
+    "off"; a damaged one fails closed (a list that is not a list lets nobody in, a key layer with no proper key
+    refuses everything)."""
+    only = cfg.get("only")
+    only = [plain_address(a) for a in only if isinstance(a, str)] if isinstance(only, list) else []
+    hours = cfg.get("paired_hours")
+    if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= PAIRED_HOURS_MAX:
+        hours = PAIRED_HOURS
+    return {"only_on": cfg.get("only_on", False) is not False, "only": [a for a in only if a][:MAX_ONLY],
+            "paired_on": cfg.get("paired_on", False) is not False,
+            "paired_roles": cfg.get("paired_roles") if cfg.get("paired_roles") in PAIRED_ROLES else "full",
+            "paired_hours": hours,
+            "key_on": cfg.get("key_on", False) is not False, "key": key if valid_key(key) else ""}
+
+
+def shown(address, key=""):
+    """An address as the page or the journal may show it: never the key, printable ASCII only, and short."""
+    if key:
+        address = address.replace(key, "<key>")
+    return re.sub(r"[^\x21-\x7e]", "?", address)[:SHOWN_ADDRESS]
+
+
+class Watch:
+    """Who sent lately and the last messages, for the owner's page. In memory only, bounded, and a refused packet
+    leaves nothing here but its sender's address, a count and the reason: never a byte of what it carried."""
+
+    def __init__(self, clock=time.monotonic, now=time.time):
+        self._clock, self._now = clock, now
+        self._lock = threading.Lock()
+        self._senders = {}
+        self._log = collections.deque(maxlen=MAX_LOG)
+        self.refused = 0
+
+    def clear(self):
+        with self._lock:
+            self._senders.clear()
+            self._log.clear()
+            self.refused = 0
+
+    def note(self, source, ok, why="", address=""):
+        """One verdict: `ok` and `address` for a message that passed every layer, else `why` it was refused."""
+        source = plain_address(source) or "?"
+        address = shown(address) if address else ""
+        t, wall = self._clock(), int(self._now())
+        with self._lock:
+            if not ok and not address:
+                self.refused += 1
+            s = self._senders.get(source)
+            if s is None:
+                if len(self._senders) >= MAX_SENDERS:
+                    self._make_room(t)
+                s = self._senders[source] = {"messages": 0, "refused": 0, "wrong_keys": 0, "address": "", "passed": False}
+            s["last"], s["at"], s["why"] = t, wall, why
+            if address:                       # it passed every layer (whether or not it then meant anything)
+                s["messages"] += 1
+                s["address"], s["passed"] = address, True
+            else:
+                s["refused"] += 1
+                s["wrong_keys"] += why == WHY_KEY
+                s["passed"] = False
+            last = self._log[-1] if self._log else None
+            if last and not address and (last["from"], last["why"], last["address"]) == (source, why, ""):
+                last["count"] += 1            # a flood of the same refusal is one line
+                last["at"] = wall
+            else:
+                self._log.append({"at": wall, "from": source, "address": address, "ok": bool(ok), "why": why, "count": 1})
+
+    def _make_room(self, t):
+        old = [k for k, s in self._senders.items() if t - s["last"] > SENDER_WINDOW]
+        if not old:      # a spray of forged senders pushes out refused ones first, not the tablet that works
+            refused = [k for k, s in self._senders.items() if not s["messages"]]
+            old = [min(refused or self._senders, key=lambda k: self._senders[k]["last"])]
+        for k in old:
+            del self._senders[k]
+
+    def senders(self):
+        t = self._clock()
+        with self._lock:
+            rows = [dict(address=k, messages=s["messages"], refused=s["refused"], last=s["address"], accepted=s["passed"],
+                         why=s["why"], at=s["at"], wrong_keys=s["wrong_keys"]) for k, s in self._senders.items() if t - s["last"] <= SENDER_WINDOW]
+            order = {k: s["last"] for k, s in self._senders.items()}
+        return sorted(rows, key=lambda r: -order[r["address"]])
+
+    def messages(self):
+        with self._lock:
+            return [dict(m) for m in reversed(self._log)]
+
+
+class RateLimiter:
+    def __init__(self, clock=time.monotonic, rate=RATE_PER_SECOND, burst=RATE_BURST, max_sources=1024):
+        self._clock, self._rate, self._burst, self._max = clock, rate, burst, max_sources
+        self._buckets = {}
+
+    def allow(self, source):
+        now = self._clock()
+        tokens, last = self._buckets.get(source, (self._burst, now))
+        tokens = min(self._burst, tokens + (now - last) * self._rate)
+        if len(self._buckets) >= self._max and source not in self._buckets:
+            self._buckets.clear()  # bounded memory under a spray of forged sources
+        if tokens < 1:
+            self._buckets[source] = (tokens, now)
+            return False
+        self._buckets[source] = (tokens - 1, now)
+        return True
+
+
+# --- meaning ----------------------------------------------------------------
+def _number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
+
+
+def pressed(args):
+    """Buttons send 1 on press and 0 on release; only the press fires a trigger."""
+    if not args:
+        return True
+    v = args[0]
+    if v is True:
+        return True
+    if v is False or v is None:
+        return False
+    return _number(v) and v > 0.5
+
+
+_ROOM_SCENE = re.compile(r"/mctl/scene/([1-9][0-9]?)")
+_ROOM_GROUP = re.compile(r"/mctl/group/(all|[1-9][0-9]?)/(on|off|mute|mute_picture|mute_sound|input)")
+
+
+def _room(a, args):
+    """The Room module's scenes and group buttons (ROOM.md): /mctl/scene/<n> (press), /mctl/scene with a name or a
+    number, /mctl/group/<n or all>/on, off (press), mute, mute_picture, mute_sound (1 or 0) and input (a code)."""
+    m = _ROOM_SCENE.fullmatch(a)
+    if m:
+        return ("/api/room/scene", {"number": int(m.group(1))}) if pressed(args) else None
+    if a == "/mctl/scene":
+        v = args[0] if args else None
+        if isinstance(v, str):
+            return "/api/room/scene", {"name": v}
+        if isinstance(v, float) and _number(v) and v == int(v):       # a controller that only sends floats
+            v = int(v)
+        return ("/api/room/scene", {"number": v}) if isinstance(v, int) and not isinstance(v, bool) else None
+    m = _ROOM_GROUP.fullmatch(a)
+    if not m:
+        return None
+    body = {"group": "all"} if m.group(1) == "all" else {"number": int(m.group(1))}
+    what, v = m.group(2), (args[0] if args else None)
+    if what in ("on", "off"):
+        if not pressed(args):
+            return None
+        body["action"] = what
+    elif what == "input":                             # "31", 31 or 31.0 (a controller that only sends floats)
+        if _number(v) and v == int(v):
+            v = str(int(v))
+        if not isinstance(v, str):
+            return None
+        body["action"], body["input"] = "input", v
+    else:
+        on = v if isinstance(v, bool) else ((v > 0.5) if _number(v) else None)
+        if on is None:
+            return None
+        body["action"] = what if on else "un" + what
+    return "/api/room/group", body
+
+
+# --- the reach the controllers got with D75, from the table MIDI shares (mctl/actions.py) --------------------------
+_NOT_MINE = object()
+_PRESSES = {"/mctl/fade": "fade", "/mctl/clip/next": "clip_next", "/mctl/clip/prev": "clip_prev",
+            "/mctl/effect/next": "effect_next", "/mctl/effect/prev": "effect_prev",
+            "/mctl/shader/next": "shader_next", "/mctl/shader/prev": "shader_prev", "/mctl/clock/tap": "clock_tap"}
+# address -> (the level's name in the shared table, what the number is multiplied by)
+_LEVELS = {"/mctl/position/x": ("position", 1.0), "/mctl/position/y": ("position_y", 1.0), "/mctl/effect/amount": ("effect_amount", 0.01),
+           "/mctl/shader/speed": ("shader_speed", 1.0), "/mctl/shader/hue": ("shader_hue", 1.0), "/mctl/shader/brightness": ("shader_brightness", 1.0)}
+_SLOT = re.compile(r"/mctl/(shader|effect)/(control|preset)/([1-8])")
+_GRAPHIC = re.compile(r"/mctl/graphic/([1-8])(?:/(text|send))?")
+_SHADER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}")
+
+
+def _fade(path, args):
+    """/mctl/fadeout and /mctl/fadein. A TouchOSC button sends 1 when it is pressed and 0 when it is let go, and
+    these two used to read that as seconds: a fade of one second, then a refused 0 in the log. Now a 0 is a release
+    (nothing, and nothing logged), exactly 1 is a press (the 2 seconds of the panel's button), no argument is a
+    press too, and any other number is still the seconds, as it always was. For a real time of 1 second, or to be
+    plain about it, there are /mctl/fadein/seconds and /mctl/fadeout/seconds."""
+    if not args:
+        return path, {"seconds": 2.0}
+    v = args[0]
+    if v is True:
+        return path, {"seconds": 2.0}
+    if not _number(v) or v == 0:
+        return None
+    return path, {"seconds": 2.0 if v == 1 else v}
+
+
+STROBE_PATHS = ("/api/strobe/hold", "/api/strobe/release")
+
+
+def _strobe(a, args):
+    """The Strobe (mctl/strobe.py). /mctl/strobe is HELD: a button's 1 is a press (the node gives the sender a lease), its 0 is the
+    release, and a 1 sent again renews the lease. A message with no argument does nothing (a flash is never started by an
+    address alone). The lease of an OSC sender is the panel's half second (strobe.PANEL_TTL): the sender repeats its 1 about every 0.2 s while
+    held, and one press with no repeats lasts about half a second; the sender's address is the holder (set by the receiver, not by the message). The rest set the look:
+    /mctl/strobe/rate (flashes a second; the node keeps it to 3, or 12 with its opt-in), /mctl/strobe/colour (a hex colour, or red,
+    green and blue from 0 to 1), /mctl/strobe/flash (milliseconds) and /mctl/strobe/way (colour, black or add)."""
+    v = args[0] if args else None
+    number = v if _number(v) else None
+    if a == "/mctl/strobe":
+        if v is None:
+            return None
+        flag = v if isinstance(v, bool) else ((v > 0.5) if number is not None else None)
+        if flag is None:
+            return None
+        return ("/api/strobe/hold" if flag else "/api/strobe/release"), {}
+    if a == "/mctl/strobe/rate":
+        return ("/api/strobe", {"rate": number}) if number is not None else None
+    if a in ("/mctl/strobe/colour", "/mctl/strobe/color"):
+        if isinstance(v, str):
+            return "/api/strobe", {"colour": v[:16]}
+        if len(args) in (3, 4) and all(_number(x) for x in args):
+            return "/api/strobe", {"colour": list(args)}
+        return None
+    if a == "/mctl/strobe/flash":
+        return ("/api/strobe", {"flash": number}) if number is not None else None
+    if a == "/mctl/strobe/way":
+        return ("/api/strobe", {"way": v[:16]}) if isinstance(v, str) else None
+    return None
+
+
+def _reach(a, args):
+    """(path, body) for one of the addresses added with D75, None for one of them with an argument that means
+    nothing, _NOT_MINE for any other address. Numbers are in real units and go to the API as they are: no curve
+    and no dead zone (those are for a knob that sends 0 to 127; see MIDI.md)."""
+    from . import actions
+    v = args[0] if args else None
+    number = v if _number(v) else None
+    flag = v if isinstance(v, bool) else ((v > 0.5) if number is not None else None)
+    if a in _PRESSES:
+        return actions.press(_PRESSES[a]) if pressed(args) else None
+    if a in _LEVELS:
+        name, scale = _LEVELS[a]
+        return actions.level(name, number * scale) if number is not None else None
+    m = _SLOT.fullmatch(a)
+    if m:
+        kind, what, n = m.group(1), m.group(2), int(m.group(3))
+        if what == "preset":                            # only a shader's presets have a place in the list
+            return actions.press("shader_preset_%d" % n) if kind == "shader" and pressed(args) else None
+        if number is None or not 0 <= number <= 1:      # 0 to 1, spread as a controller's knob is
+            return None
+        return actions.control(kind, n, int(round(number * 127)))
+    if a == "/mctl/fadein":
+        return _fade("/api/fadein", args)
+    if a == "/mctl/fadein/seconds":
+        return ("/api/fadein", {"seconds": number}) if number is not None else None
+    if a in ("/mctl/flip/h", "/mctl/flip/v"):
+        return ("/api/control", {"action": "flip_" + a[-1], "value": flag}) if flag is not None else None
+    if a == "/mctl/effect":
+        if not args:
+            return actions.press("effect_toggle")
+        return ("/api/effects", {"on": flag}) if flag is not None else None
+    if a.startswith("/mctl/strobe"):
+        return _strobe(a, args)
+    if a == "/mctl/overlay":
+        if not args:
+            return actions.press("overlay")
+        return ("/api/overlay", {"on": flag}) if flag is not None else None
+    if a == "/mctl/overlay/file":
+        return ("/api/overlay", {"file": v}) if isinstance(v, str) else None
+    if a == "/mctl/transition":
+        return ("/api/mix", {"transition": v}) if isinstance(v, str) else None
+    if a == "/mctl/transition/duration":
+        return ("/api/mix", {"duration": number}) if number is not None else None
+    if a == "/mctl/vibes/dwell":
+        return ("/api/vibes", {"dwell": number}) if number is not None else None
+    if a.startswith("/mctl/mapping/"):                   # mapping mode (mctl/mapper.py): the box refuses all of it unless the owner's switch is on
+        what = a[len("/mctl/mapping/"):]
+        names = {"surface/next": "map_surface_next", "surface/prev": "map_surface_prev", "corner/next": "map_corner_next",
+                 "corner/prev": "map_corner_prev", "left": "map_left", "right": "map_right", "up": "map_up", "down": "map_down", "undo": "map_undo"}
+        if what in names:
+            return actions.press(names[what]) if pressed(args) else None
+        # Entering and leaving. A TouchOSC button sends 1 when it is pressed and 0 when it is let go, and the 0 used
+        # to be "leave": the mode was over as the finger came up (the trap /mctl/fadein had, see _fade). Now a 0 on
+        # /mctl/mapping/mode is a release and does nothing; 1 enters; no argument switches over. Leaving is said
+        # outright with /mctl/mapping/mode/off, and one momentary button does both with /mctl/mapping/mode/toggle.
+        if what == "mode":
+            if not args:
+                return actions.NUDGE, {"mode": "toggle"}
+            return (actions.NUDGE, {"mode": True}) if flag else None
+        if what in ("mode/on", "mode/off", "mode/toggle"):
+            return (actions.NUDGE, {"mode": {"on": True, "off": False, "toggle": "toggle"}[what[5:]]}) if pressed(args) else None
+        whole = [int(x) for x in args[:2] if _number(x) and x == int(x)]
+        if what == "step":
+            return (actions.NUDGE, {"step": whole[0]}) if len(whole) >= 1 else None
+        if what == "nudge":                             # two whole numbers: steps to the right and steps down
+            return (actions.NUDGE, {"steps": whole}) if len(whole) == 2 and len(args) >= 2 else None
+        return None
+    if a == "/mctl/graphic/hide":                        # Hide all (D129, design 8.3): the emergency button
+        return ("/api/graphics", {"all": False}) if pressed(args) else None
+    m = _GRAPHIC.fullmatch(a)
+    if m:
+        slot, what = int(m.group(1)), m.group(2)
+        if what is None:                                # switch over, or set on or off
+            if not args:
+                return "/api/graphics", {"slot": slot, "on": "toggle"}
+            return ("/api/graphics", {"slot": slot, "on": flag}) if flag is not None else None
+        if not isinstance(v, str):
+            return None
+        v = v[:2000]                                    # more is cut by the box anyway (280 characters); this keeps a flood cheap
+        if what == "text":                              # set the text; it shows if the graphic is on
+            return "/api/graphics", {"slot": slot, "text": v}
+        return "/api/graphics", {"slot": slot, "text": v, "on": True}       # send: the text, and on, in one message
+    if a == "/mctl/shader":                              # a shader by its name, with ".fs" or without
+        if not isinstance(v, str) or not _SHADER_NAME.fullmatch(v):
+            return None
+        return "/api/shaders/play", {"id": v if v.endswith(".fs") else v + ".fs"}
+    return _NOT_MINE
+
+
+# Old names that start with /start but are not playback presets: sync and sound output need full access
+# (System > Sync and video wall, Sound output), the audio player and the PDF presenter are not built.
+NOT_HERE = {"/startslave", "/startaudio", "/startaudioslave", "/startaudiousb", "/startpdf", "/startpdfusb"}
+
+
+def translate(address, args, mix=None):
+    """Map an OSC message to (api_path, body), or None if it means nothing here."""
+    address = current(address)                          # the old family is the new one for a release (D138)
+    a = address.rstrip("/") if len(address) > 1 else address
+
+    def control(action, value=None):
+        body = {"action": action}
+        if value is not None:
+            body["value"] = value
+        return "/api/control", body
+
+    def num(scale=1.0):
+        return args[0] * scale if args and _number(args[0]) else None
+
+    def flag():
+        if not args:
+            return None
+        v = args[0]
+        if isinstance(v, bool):
+            return v
+        return (v > 0.5) if _number(v) else None
+
+    # -- stable names --------------------------------------------------------
+    if a.startswith(("/mctl/scene", "/mctl/group/")):
+        return _room(a, args)
+    more = _reach(a, args)
+    if more is not _NOT_MINE:
+        return more
+    if a.startswith("/mctl/pad/"):
+        parts = a.split("/")[3:]
+        if len(parts) == 2 and all(p.isdigit() for p in parts) and pressed(args):
+            return "/api/play", {"pad": [int(parts[0]) - 1, int(parts[1]) - 1]}
+        return None
+    if a == "/mctl/play/pad":
+        if len(args) >= 2 and all(isinstance(x, int) and not isinstance(x, bool) for x in args[:2]):
+            return "/api/play", {"pad": [args[0] - 1, args[1] - 1]}
+        return None
+    if a == "/mctl/play/file":
+        return ("/api/play", {"file": args[0]}) if args and isinstance(args[0], str) else None
+    if a == "/mctl/play/preset":
+        return ("/api/play", {"preset": args[0]}) if args and isinstance(args[0], str) else None
+    if a == "/mctl/vibes/set":                           # start the rotation through a set, named by its name or id
+        return ("/api/vibes", {"on": True, "set": args[0]}) if args and isinstance(args[0], str) else None
+    if a == "/mctl/vibes/previous":
+        return ("/api/vibes", {"previous": True}) if pressed(args) else None
+    if a in ("/mctl/vibes", "/mctl/vibes/next"):          # the shader rotation: start it, or go to the next shader
+        return ("/api/vibes", {"on": True} if a == "/mctl/vibes" else {"next": True}) if pressed(args) else None
+    if a == "/mctl/stop":
+        return control("stop") if pressed(args) else None
+    if a == "/mctl/pause":
+        v = flag()
+        if not args:
+            return control("pause")
+        return control("pause", v) if v is not None else None
+    if a == "/mctl/blackout":
+        v = flag()
+        if v is None:
+            v = not (mix or {}).get("blackout", False) if not args else None
+        return ("/api/blackout", {"on": v}) if v is not None else None
+    if a == "/mctl/fadeout":                             # a button's 1 and 0 are a press and a release, not seconds (_fade)
+        return _fade("/api/fadeout", args)
+    if a == "/mctl/fadeout/seconds":
+        return ("/api/fadeout", {"seconds": num()}) if num() is not None else None
+    if a == "/mctl/mix/reset":
+        return control("reset") if pressed(args) else None
+    if a in ("/mctl/loop", "/mctl/mute"):
+        v = flag()
+        return control(a.split("/")[2], v) if v is not None else None
+    if a in ("/mctl/seek", "/mctl/speed", "/mctl/volume", "/mctl/opacity", "/mctl/size", "/mctl/position", "/mctl/rotate"):
+        v = num()
+        if v is None:
+            return None
+        return control(a.split("/")[2], int(v) if a == "/mctl/rotate" else v)
+
+    # -- names from the old Node receiver that still make sense --------------
+    legacy = {"/stopall": "stop", "/stopvideo": "stop", "/pause": "pause"}
+    if a in legacy:
+        return control(legacy[a]) if pressed(args) else None
+    if a in ("/beameron", "/beameroff"):
+        return ("/api/projector", {"id": "all", "action": "on" if a == "/beameron" else "off", "background": True}) if pressed(args) else None
+    if a == "/fastforward":
+        return control("seek", 10) if pressed(args) else None
+    if a in ("/volumeup", "/volumedown"):
+        return control("volume_step", 10 if a == "/volumeup" else -10) if pressed(args) else None
+    if a in ("/rotate0", "/rotate90", "/rotate180", "/rotate270"):
+        return control("rotate", int(a[len("/rotate"):])) if pressed(args) else None
+    # Old names for things the new player does too (the old panel's TouchOSC layouts send these).
+    simple = {
+        "/testscreen": ("/api/testpattern", {"on": True}), "/testscreenoff": ("/api/testpattern", {"on": False}),
+        "/testtone": ("/api/testtone", {"channel": "both"}), "/testtoneleft": ("/api/testtone", {"channel": "left"}),
+        "/testtoneright": ("/api/testtone", {"channel": "right"}),
+        "/overlay": ("/api/overlay", {"on": True}), "/stopoverlay": ("/api/overlay", {"on": False}),
+        "/image": ("/api/play", {"slideshow": {"source": "media"}}), "/stopimage": control("stop"),
+    }
+    if a in simple:
+        return simple[a] if pressed(args) else None
+    if a in ("/fliph", "/flipv"):                     # the old buttons switched the mirror over each press
+        key = "flip_h" if a == "/fliph" else "flip_v"
+        return control(key, not (mix or {}).get(key, False)) if pressed(args) else None
+    m = re.fullmatch(r"/startmasteronce([0-9]{2})", a)
+    if m:                                             # the old receiver ran the startmasteroneNN scripts for these
+        return ("/api/play", {"preset": "startmasterone" + m.group(1)}) if pressed(args) else None
+    if a in NOT_HERE:
+        return None
+    if a.startswith("/start") and pressed(args):
+        return "/api/play", {"preset": a[1:]}
+    return None
+
+
+class OscServer:
+    def __init__(self, api, port=9876, extra_allow=(), host="0.0.0.0", clock=time.monotonic, log=print,
+                 rules=None, paired=None, watch=None, key=""):
+        self.api = api
+        self.port = port
+        self.host = host
+        self.extra = list(extra_allow)
+        self.log = log
+        self.limiter = RateLimiter(clock)
+        self.rules = layers(rules or {}, key)
+        self.paired = paired or (lambda roles, hours: set())   # (roles, hours) -> the addresses that count now
+        self.watch = watch or Watch(clock)
+        self.feedback = None    # oscfeedback.Feedback while the Owner's "Send state back" is on (D82), else None
+        self._clock = clock
+        self._sock = None
+        self._thread = None
+        self._quiet_until = {}
+        self.stats = {"received": 0, "handled": 0, "dropped": 0}
+
+    def _note(self, key, text):
+        """Log a message at most once per 10 seconds per kind, so a flood cannot fill the journal."""
+        now = self._clock()
+        if len(self._quiet_until) > 2048:
+            self._quiet_until.clear()
+        if self._quiet_until.get(key, 0) <= now:
+            self._quiet_until[key] = now + 10
+            self.log("osc: " + text)
+
+    def _refuse(self, source_ip, why):
+        """A packet that is not let in: counted, its sender and the reason noted, and nothing else."""
+        self.stats["dropped"] += 1
+        self.watch.note(source_ip, False, why)
+        self._note(why + ":" + source_ip, "ignoring %s (%s)" % (source_ip, why))
+        return 0
+
+    def _unlock(self, messages, rules):
+        """With the key layer on: every message of the packet must carry the key, or the whole packet is refused
+        (returns the reason). The messages come back without the prefix. With the layer off a prefix is just dropped,
+        so a layout that has it goes on working. Nothing here depends on who sent: a wrong key is counted for the
+        owner to see and never held against the sender's address, which anyone on the network can forge (a limit
+        per address would be a way to lock the real tablet out, and 80 random bits need none)."""
+        out = []
+        if rules["key_on"] and not rules["key"]:
+            return None, WHY_UNSET
+        for address, args in messages:
+            given, rest = split_key(address)
+            if rules["key_on"]:
+                if given is None:
+                    return None, WHY_NO_KEY
+                if not key_matches(given, rules["key"]):
+                    return None, WHY_KEY
+            address = rest or address
+            if address.startswith(KEY_PREFIX):     # "/k/<key>/k/<key>/...": the rest would be shown with a key in it
+                return None, WHY_TWICE
+            out.append((address, args))
+        return out, None
+
+    def handle_packet(self, data, source_ip):
+        """Process one datagram. Returns the number of commands executed. The order: the outer wall (private and
+        extra networks), the rate limit, the list of devices, the paired device, the packet's form, the key. A
+        packet must pass every layer that is on before anything in it is looked at for meaning."""
+        self.stats["received"] += 1
+        rules = self.rules
+        if not source_allowed(source_ip, self.extra):
+            return self._refuse(source_ip, WHY_NETWORK)
+        if not self.limiter.allow(source_ip):
+            return self._refuse(source_ip, WHY_RATE)
+        plain = plain_address(source_ip)
+        sound = getattr(self.api, "sound", None)
+        if sound is not None and (data[:15] == b"/nxlx/sound/in/" or data[:8] == b"#bundle\x00") and sound.osc_in_host(plain):
+            # Levels sent in (D97): from a render node or an address the Owner listed, and nothing else. Checked before
+            # the locks of D78 because that list is narrower than any of them, and these addresses can only feed
+            # numbers into the levels file. A packet with anything else in it takes the normal way below.
+            try:
+                messages = parse_packet(data)
+            except OscError:
+                messages = []
+            if messages and all(a.startswith("/nxlx/sound/in/") for a, _ in messages):
+                taken = sound.osc_in(messages, plain)
+                self.watch.note(source_ip, bool(taken), "" if taken else DID_NOTHING, "/nxlx/sound/in/")
+                return 0
+        if rules["only_on"] and plain not in rules["only"]:
+            return self._refuse(source_ip, WHY_ONLY)
+        if rules["paired_on"] and plain not in self.paired(rules["paired_roles"], rules["paired_hours"]):
+            return self._refuse(source_ip, WHY_PAIRED)
+        try:
+            messages = parse_packet(data)
+        except OscError as e:
+            self.stats["dropped"] += 1
+            self.watch.note(source_ip, False, WHY_PACKET)
+            self._note("parse", "bad packet from %s: %s" % (source_ip, e))
+            return 0
+        messages, why = self._unlock(messages, rules)
+        if why:
+            return self._refuse(source_ip, why)
+        done = 0
+        for address, args in messages:
+            seen = shown(address, rules["key"])      # for the page and the journal: never with the key in it
+            was = address
+            address = current(address)               # /pvj/... is /mctl/... for one release (D138); seen keeps what was sent
+            if (address.rstrip("/") or "/") == oscfeedback.REQUEST:
+                # "Send me everything" (D82). It sets a flag for the target at this address and nothing else: the
+                # state leaves on the feedback thread, under its caps, to the Owner's target only. From any other
+                # address, or with feedback off, nothing is sent to anybody.
+                feedback = self.feedback
+                asked = feedback is not None and feedback.request(plain, old_family=current(was) != was)
+                self.watch.note(source_ip, asked, "" if asked else NO_STATE, seen)
+                continue
+            if address in REFUSED:
+                self.watch.note(source_ip, False, NOT_OVER_OSC, seen)
+                self._note("refused:" + address, "%s is not available over OSC" % address)
+                continue
+            mapped = translate(address, args, self.api.mix)
+            if mapped is None:
+                self.watch.note(source_ip, False, DID_NOTHING, seen)
+                continue
+            if mapped[0] in STROBE_PATHS:
+                mapped = (mapped[0], dict(mapped[1], holder=plain))        # the sender is the holder; a message cannot name another
+            status, payload = self.api.handle("POST", mapped[0], mapped[1], OSC_DEVICE, source_ip)
+            if status == 200:
+                done += 1
+                self.stats["handled"] += 1
+                self.watch.note(source_ip, True, "", seen)
+            else:
+                self.watch.note(source_ip, False, VALUE_REFUSED, seen)
+                self._note("err:" + seen, "%s -> %s %s" % (seen, status, payload.get("error", "")))
+        if done and self.feedback is not None:
+            self.feedback.wake()         # something changed: look at the box now instead of at the next tick
+        return done
+
+    # --- socket ---------------------------------------------------------
+    def start(self):
+        if self._sock:
+            return
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.bind((self.host, self.port))
+        except OSError as e:
+            sock.close()
+            raise OscError("cannot listen on UDP %d: %s" % (self.port, e))
+        sock.settimeout(0.5)
+        self._sock = sock
+        self.port = sock.getsockname()[1]
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="osc")
+        self._thread.start()
+
+    def _loop(self):
+        sock = self._sock
+        while self._sock is sock:
+            try:
+                data, addr = sock.recvfrom(MAX_PACKET + 1)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            try:
+                self.handle_packet(data, addr[0])
+            except Exception as e:  # one bad packet must never kill the receiver
+                self._note("bug", "internal error: %r" % (e,))
+
+    def stop(self):
+        sock, self._sock = self._sock, None
+        if sock:
+            sock.close()
+        if self._thread:
+            self._thread.join(timeout=2)
+            self._thread = None
+        strobe = getattr(self.api, "strobe", None)
+        if strobe is not None:
+            try:
+                strobe.drop("osc")                  # the listener is gone: nobody is holding a strobe through it
+            except Exception:
+                pass
+
+    @property
+    def listening(self):
+        return self._sock is not None
+
+
+class OscManager:
+    """Starts and stops the receiver from the saved settings."""
+
+    def __init__(self, api, settings, host="0.0.0.0", log=print):
+        self.api, self.settings, self.host, self.log = api, settings, host, log
+        self.server = None
+        self.error = None
+        self.watch = Watch()        # outlives a save of the page (apply makes a new receiver each time)
+        self.feedback = None        # the sender of "Send state back" (D82): there only while it is on and OSC listens
+        # One change at a time: two saves at once (two taps on the page, two devices) would each stop the receiver
+        # and open the port again, and the slower one would find it "in use" and take the other's change back.
+        self.lock = threading.RLock()
+
+    def _paired(self, roles, hours):
+        """The addresses from which a paired device of those roles made a panel request in the last `hours`."""
+        auth = getattr(self.api, "auth", None)
+        if auth is None:
+            return set()
+        allowed = ("full",) if roles == "full" else ("full", "live")
+        return {plain_address(a) for a in auth.paired_addresses(hours * 3600, allowed)} - {None}
+
+    def key(self):
+        return stored_key(self.settings.data)
+
+    # -- "Send state back" (D82) --
+    def _may_be_sent(self, address):
+        """Would the address locks that are on let this address send right now? A target must pass them too: with
+        the list on it is in the list, with the paired-device lock on a paired device asked the panel from it."""
+        rules = layers(self.settings.data["osc"], "")
+        if rules["only_on"] and address not in rules["only"]:
+            return False
+        if rules["paired_on"] and address not in self._paired(rules["paired_roles"], rules["paired_hours"]):
+            return False
+        return True
+
+    def local_nets(self, fresh=True):
+        """The box's own IPv4 networks now, for what may be a target. Without `fresh`, what was read in the last
+        seconds will do (the page asks every few seconds, and reading them starts a program)."""
+        at, nets = getattr(self, "_nets_seen", (None, []))
+        now = time.monotonic()
+        if fresh or at is None or now - at >= oscfeedback.NETS_EVERY:
+            ip_json = getattr(self.api, "_ip_json", None)
+            nets = oscfeedback.local_nets(ip_json()) if ip_json else []
+            self._nets_seen = (now, nets)
+        return nets
+
+    def _apply_feedback(self):
+        """Make the sender match the settings: it runs only while OSC listens, the switch is on and there is a
+        target. Called with self.lock held."""
+        on, targets = oscfeedback.stored(self.settings.data["osc"])
+        want = bool(on and targets and self.server and self.server.listening)
+        if not want:
+            if self.feedback is not None:
+                self.feedback.stop()
+                self.feedback = None
+        elif self.feedback is None:
+            self.feedback = oscfeedback.Feedback(self.api, targets, allowed=self._may_be_sent, nets=self.local_nets, log=self.log)
+            self.feedback.start()
+        else:
+            self.feedback.configure(targets)
+        if self.server:
+            self.server.feedback = self.feedback
+
+    def make_key(self):
+        """A new key, in its own section (the caller saves and applies). The old one stops working at once."""
+        key = new_key()
+        with self.settings.lock:
+            self.settings.data[KEY_SECTION] = {"key": key}
+            self.settings.data["osc"].pop("key", None)
+        return key
+
+    def _move_key(self):
+        """A key that an earlier build of this change kept under "osc" goes to its own section, once (no schema
+        change: this runs whenever the receiver is set up, and does nothing when there is nothing to move)."""
+        with self.settings.lock:
+            cfg = self.settings.data["osc"]
+            if "key" not in cfg:
+                return
+            old = cfg.pop("key")
+            if valid_key(old) and not valid_key((self.settings.data.get(KEY_SECTION) or {}).get("key")):
+                self.settings.data[KEY_SECTION] = {"key": old}
+            self.settings.save()
+
+    def _note_ever_on(self):
+        """Once, the first time this code sets the receiver up on a box: write down whether OSC is on or was ever set
+        up (D83). After that the mark only ever goes to true. A box that updates with OSC on is "was on": nothing of
+        its settings changes, so a working tablet is never locked out by an update.
+
+        A save that fails (a full or read-only disk) must never stop the receiver, which the review of #124 found it
+        did: the mark then lives in memory for this run, it is said once, and the save is tried again whenever the
+        receiver is set up next (any change of the page, the next start)."""
+        with self.settings.lock:
+            cfg = self.settings.data["osc"]
+            unsaved = getattr(self, "_mark_unsaved", False)
+            if not unsaved:
+                if cfg.get(EVER_ON) is True or (EVER_ON in cfg and not cfg.get("enabled")):
+                    return
+                cfg[EVER_ON] = used_before(self.settings.data)
+            try:
+                self.settings.save()
+                self._mark_unsaved = False
+            except OSError as e:
+                if not unsaved:
+                    self._mark_unsaved = True
+                    self.log("osc: whether OSC was ever on could not be saved (%s); the receiver starts all the same" % (e.strerror or e))
+
+    def apply(self):
+        """Make reality match settings["osc"]. Raises OscError if the port cannot be opened."""
+        with self.lock:
+            self._move_key()
+            self._note_ever_on()
+            cfg = self.settings.data["osc"]
+            if self.server and self.server.listening and cfg["enabled"] and self.server.port == cfg["port"]:
+                # Same port: who may send changes in place. The socket stays open, so no message is lost while the
+                # owner switches a lock or allows a device in the middle of a show.
+                self.server.extra = parse_networks(cfg["allow"])
+                self.server.rules = layers(cfg, self.key())
+                self.error = None
+                self._apply_feedback()
+                return
+            if self.server:
+                self.server.stop()
+                self.server = None
+            self.error = None
+            if not cfg["enabled"]:
+                self._apply_feedback()
+                return
+            server = OscServer(self.api, cfg["port"], parse_networks(cfg["allow"]), host=self.host, log=self.log,
+                               rules=cfg, paired=self._paired, watch=self.watch, key=self.key())
+            try:
+                server.start()
+            except OscError as e:
+                self.error = str(e)
+                self._apply_feedback()
+                raise
+            self.server = server
+            self._apply_feedback()
+
+    def feedback_status(self, fresh=False):
+        """For the Owner at the studio: the switch, the targets with the age of the last packet to each, and the
+        last sender that passed every lock (for "Use the device that is sending now": it fills the form, no more)."""
+        on, targets = oscfeedback.stored(self.settings.data["osc"])
+        feedback = self.feedback
+        rows = feedback.status() if feedback is not None else [dict(t, last_sent=None, why="") for t in targets]
+        nets = self.local_nets(fresh=fresh)
+        for row in rows:                    # a target that is not on the box's network now is said so at once, sender or no sender
+            if oscfeedback.not_local(row["address"], nets):
+                row["why"] = oscfeedback.WHY_NETWORK
+        now = next((s["address"] for s in self.watch.senders() if s["accepted"] and ":" not in s["address"]), "")
+        return {"on": on, "targets": rows, "max": oscfeedback.MAX_TARGETS, "sending": feedback is not None, "sender": now}
+
+    def status(self, full=False, studio=False):
+        """What every paired device may read; with `full` also the lists (never the key: see Api.osc_key); with
+        `studio` (an Owner who is not a support session) also "Send state back" and its targets."""
+        cfg = self.settings.data["osc"]
+        rules = layers(cfg, self.key())
+        out = {"enabled": cfg["enabled"], "port": cfg["port"], "allow": list(cfg["allow"]),
+               "listening": bool(self.server and self.server.listening), "error": self.error,
+               "received": self.server.stats["received"] if self.server else 0,
+               "only_on": rules["only_on"], "paired_on": rules["paired_on"], "key_on": rules["key_on"],
+               # D83: on with every lock off. The words are the box's, so every place says the same.
+               "open": is_open(cfg), "open_text": OPEN_TEXT,
+               "paired_default": bool(rules["paired_on"] and cfg.get(PAIRED_DEFAULT) is True)}
+        if full:
+            counting = self._paired(rules["paired_roles"], rules["paired_hours"])
+            # The receiver listens on IPv4 only: a device that opened the panel over IPv6 is paired, and can never
+            # be the sender of a packet. It is named apart, so the lock does not look satisfied when it is not.
+            v6 = sorted(a for a in counting if ":" in a)
+            panel = self._paired("live", rules["paired_hours"])      # a panel device of the owner or a presenter
+            senders = [dict(s, panel=s["address"] in panel) for s in self.watch.senders()]
+            out.update(only=rules["only"], paired_roles=rules["paired_roles"], paired_hours=rules["paired_hours"],
+                       key_set=bool(rules["key"]), refused=self.watch.refused, senders=senders,
+                       paired_now=sorted(counting - set(v6)), paired_v6=v6)
+        if full and studio:
+            out["feedback"] = self.feedback_status()
+        return out
+
+    def stop(self):
+        if self.feedback is not None:
+            self.feedback.stop()
+            self.feedback = None
+        if self.server:
+            self.server.stop()
+            self.server = None
+
+
+def validate_allow(items):
+    """Extra ranges allowed to send. Refuses anything so broad it would open the box to the internet."""
+    if not isinstance(items, list) or len(items) > 16 or not all(isinstance(i, str) and len(i) < 50 for i in items):
+        raise OscError("allow must be a list of up to 16 network ranges")
+    nets = parse_networks(items)
+    for net in nets:
+        if net.version == 4 and net.prefixlen < 8 or net.version == 6 and net.prefixlen < 32:
+            raise OscError("%s is too broad; list the specific range of your show network" % net)
+    return [str(n) for n in nets]

@@ -22,8 +22,8 @@ import time
 import unittest
 
 import tests  # noqa: F401  (the package: ranked locks and a temp folder of its own, as every test module)
-from pvj import graphics, pinscreen
-from pvj.player import PlayerError
+from mctl import graphics, pinscreen
+from mctl.player import PlayerError
 from tests import test_pinscreen
 from tests.test_graphics import Base, wait
 

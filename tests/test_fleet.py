@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Nodes that find each other (pvj/fleet.py, the fleet_* commands of pvj/sysd.py, GET /api/nodes; D127): the reading of
+"""Nodes that find each other (mctl/fleet.py, the fleet_* commands of mctl/sysd.py, GET /api/nodes; D127): the reading of
 the network's answer with several nodes, a malformed packet, our own node, a goodbye and a hostile one; the cached,
 never-blocking list; the announcement being sent once and again only on a change; the service file the root helper
 writes; the node id; who may ask."""
@@ -13,7 +13,7 @@ import threading
 import unittest
 
 import tests        # noqa: F401  (the run's own temp folder)
-from pvj import fleet, sysd
+from mctl import fleet, sysd
 from tests.test_roles import RolesBase
 
 ID1, ID2, ID3, ID_SELF = "1" * 32, "2" * 32, "3" * 32, "a" * 32

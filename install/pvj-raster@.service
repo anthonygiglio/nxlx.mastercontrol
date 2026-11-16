@@ -17,7 +17,10 @@ StandardInput=socket
 StandardOutput=socket
 StandardError=journal
 Environment=HOME=/nonexistent
-ExecStart=@PVJ_DIR@/render/pvj-raster --fonts @PVJ_DIR@/pvj/fonts
+# The fonts are in mctl/fonts, or in pvj/fonts in a release from before the rename. A rollback only repoints
+# "current" and does not write this file again, so the unit looks at which one the current release has (for one
+# release; $$ is a $ for systemd).
+ExecStart=/bin/sh -c 'f=@PVJ_DIR@/mctl/fonts; [ -d "$$f" ] || f=@PVJ_DIR@/pvj/fonts; exec @PVJ_DIR@/render/pvj-raster --fonts "$$f"'
 # A job that is not done in 15 seconds is killed from outside as well as by the program's own alarm.
 RuntimeMaxSec=15
 

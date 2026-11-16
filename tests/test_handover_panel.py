@@ -8,7 +8,7 @@ import types
 import unittest
 
 import tests  # noqa: F401  (the package: ranked locks and a temp folder of its own, as every test module)
-from pvj import api as api_mod, fleet, server
+from mctl import api as api_mod, fleet, server
 
 ME, B, C, D, E = "a" * 32, "b" * 32, "c" * 32, "d" * 32, "e" * 32
 

@@ -3,7 +3,7 @@
 # The nxlx render node patch for Max 9 (D94)
 
 `nxlx-render-node.maxpat` is a small Max patch that is a render node for Mastercontrol: it takes the box's `/nxlx/` cues
-(the "max" profile, `pvj/RENDERNODES.md`) on UDP port 7400, drives a placeholder Jitter look, and sends the picture
+(the "max" profile, `mctl/RENDERNODES.md`) on UDP port 7400, drives a placeholder Jitter look, and sends the picture
 as NDI so the box can show it.
 
 **Untested in Max.** It was written as Max's JSON patch format by hand and checked only as JSON (the box's tests hold

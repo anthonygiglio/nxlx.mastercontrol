@@ -17,7 +17,7 @@ CALL = re.compile(r'_set_status\(\s*"[a-z_]+"\s*,\s*"(.)')
 class StatusLinesStartWithACapital(unittest.TestCase):
     def test_every_status_message_starts_with_a_capital(self):
         found, bad = 0, []
-        root = os.path.join(HERE, "pvj")
+        root = os.path.join(HERE, "mctl")
         for name in sorted(os.listdir(root)):
             if not name.endswith(".py"):
                 continue
@@ -26,7 +26,7 @@ class StatusLinesStartWithACapital(unittest.TestCase):
                     for m in CALL.finditer(line):
                         found += 1
                         if m.group(1).islower():
-                            bad.append("pvj/%s:%d: %s" % (name, n, line.strip()[:100]))
+                            bad.append("mctl/%s:%d: %s" % (name, n, line.strip()[:100]))
         self.assertGreater(found, 5, "the status messages were found in the code")
         self.assertEqual(bad, [], "status messages that start with a small letter")
 

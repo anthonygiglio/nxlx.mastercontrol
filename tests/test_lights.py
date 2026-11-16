@@ -14,8 +14,8 @@ import time
 import unittest
 from unittest import mock
 
-from pvj import boxcare, midi
-from pvj.midi import LightWriter
+from mctl import boxcare, midi
+from mctl.midi import LightWriter
 from tests.test_controllers import BY_ID, MIX, NANO, PAD, HubBase, raw
 from tests.test_shader_engine import ALL, Live
 

@@ -174,7 +174,7 @@ export function exportCss(s: Settings): string {
     lines.push('', '/* Layout changes (need app.js work, not only CSS): */')
     for (const k of lay) lines.push(`/*   ${k}: ${DEFAULT_LAYOUT[k]} -> ${s.layout[k]} */`)
   }
-  return lines.length ? '/* Append at the end of pvj/web/app.css: later rules win. */\n' + lines.join('\n') : '/* Nothing changed from the panel as it is. */'
+  return lines.length ? '/* Append at the end of mctl/web/app.css: later rules win. */\n' + lines.join('\n') : '/* Nothing changed from the panel as it is. */'
 }
 
 export function exportTheme(s: Settings): string {

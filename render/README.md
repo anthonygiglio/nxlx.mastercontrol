@@ -2,7 +2,7 @@
      SPDX-License-Identifier: GPL-3.0-or-later -->
 # mctl-render
 
-`link/` beside this holds another program, pvj-link, the Ableton Link follower (D117, pvj/SOUND.md). It is C++, shares
+`link/` beside this holds another program, pvj-link, the Ableton Link follower (D117, mctl/SOUND.md). It is C++, shares
 nothing with mctl-render, and is built only by `make pvj-link`.
 
 `raster/` holds pvj-raster (D129), the one program that decodes a picture somebody uploaded (PNG, JPEG, SVG) and writes
@@ -11,7 +11,7 @@ a clean PNG. It shares nothing with mctl-render, needs only libpng and libjpeg h
 standard output; systemd runs it for each job with no network and hard limits (`install/pvj-raster@.service`). Its SVG
 reader, nanosvg, is vendored unchanged in `raster/vendor/`. Since slice 2 of D129 it also draws the text and the logos that
 go on the screen (`raster/gfx.inc.c`, part of the same program, one more request: `RASTER1 GFX`): a line of text in one of the
-eleven bundled fonts (`pvj/fonts`, FreeType; the program reads a font by a checked name from the folder `--fonts` names, and no
+eleven bundled fonts (`mctl/fonts`, FreeType; the program reads a font by a checked name from the folder `--fonts` names, and no
 other file), or a stored logo scaled, turned and made clearer or fainter, as one small premultiplied picture. It needs the
 FreeType headers as well (`libfreetype-dev`).
 
@@ -133,4 +133,4 @@ every arena under its lock, so it is a property of its own, for a test or a pers
 
 ## The final pass at 720 lines (D108)
 
-`--final=auto` or `--final=720`: after the first frame mctl-render finds the primary plane and tests that it can scale. If so, the final pass can draw in the top left 720 lines (the width follows the output's shape) of the one GBM surface, and the plane's source rectangle goes in the atomic commit of that frame. `["mctl-final", "full"|720]` changes it from the next frame on; pvj/renderer.py's rule decides under Automatic. Without the argument nothing of this runs. The output's size stays what every size on the socket reports, and the mapping's HOOKED_size. `mctl-render` adds `load`, `final-lines` (0: the output's size), `final-switches` and `final-why`. `["screenshot-to-file", PATH, "mctl-screen"]` is the whole final picture at the screen's size, mapping and text in it, whichever way the pass draws. A build with `make TEST_HOOKS=1` run headless with `PVJ_RENDER_TEST_FINAL=1` draws in the corner of its framebuffer, so all but the plane runs in CI.
+`--final=auto` or `--final=720`: after the first frame mctl-render finds the primary plane and tests that it can scale. If so, the final pass can draw in the top left 720 lines (the width follows the output's shape) of the one GBM surface, and the plane's source rectangle goes in the atomic commit of that frame. `["mctl-final", "full"|720]` changes it from the next frame on; mctl/renderer.py's rule decides under Automatic. Without the argument nothing of this runs. The output's size stays what every size on the socket reports, and the mapping's HOOKED_size. `mctl-render` adds `load`, `final-lines` (0: the output's size), `final-switches` and `final-why`. `["screenshot-to-file", PATH, "mctl-screen"]` is the whole final picture at the screen's size, mapping and text in it, whichever way the pass draws. A build with `make TEST_HOOKS=1` run headless with `PVJ_RENDER_TEST_FINAL=1` draws in the corner of its framebuffer, so all but the plane runs in CI.

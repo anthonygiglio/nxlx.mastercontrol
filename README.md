@@ -2,7 +2,7 @@
 
 **nxlx.mastercontrol** is a project of NXLX.Systems. It began as a fork of PocketVJ CP v3 (the repository was formerly named `PocketVJ-CP-v3`, after the last version maintained upstream). It is a modernization of that control panel, a control panel for playing, mixing and mapping video on small computers. It is built for artists who run visuals at gigs: raves, concerts and installations.
 
-> **Status: work in progress.** The new core (Python 3, in `pvj/`) is in place and has been tested in containers and CI, and the CI-built image has been booted and exercised on **one Raspberry Pi 4** (see [HANDOFF.md](HANDOFF.md) for exactly what was and was not verified there); other boards are untested. The `master` branch also still holds the legacy v3 code, which targets Raspberry Pi 3B+ on Raspbian Jessie. The state before the fork work began is tagged `legacy-v3`. Do not expose the legacy code to an untrusted network; see [SECURITY.md](SECURITY.md).
+> **Status: work in progress.** The new core (Python 3, in `mctl/`) is in place and has been tested in containers and CI, and the CI-built image has been booted and exercised on **one Raspberry Pi 4** (see [HANDOFF.md](HANDOFF.md) for exactly what was and was not verified there); other boards are untested. The `master` branch also still holds the legacy v3 code, which targets Raspberry Pi 3B+ on Raspbian Jessie. The state before the fork work began is tagged `legacy-v3`. Do not expose the legacy code to an untrusted network; see [SECURITY.md](SECURITY.md).
 
 ## What it looks like
 
@@ -19,7 +19,7 @@ More screens, with the beta modules (autostart, schedule, streams, DMX, MIDI, ne
 - Run on Raspberry Pi 3B, 4 and 5, small x86 mini PCs, and old recycled computers.
 - Run on current systems: Raspberry Pi OS Bookworm and Trixie, Debian and Ubuntu on x86.
 - Be rugged at gigs. The preferred setup is a direct Ethernet link on a private network; Wi-Fi is optional, for the phone only.
-- Take video from the network: NDI® ([ndi.video](https://ndi.video/); beta, needs NDI's own runtime, which the owner supplies, see [pvj/NDI.md](pvj/NDI.md); NDI® is a registered trademark of Vizrt NDI AB.), SRT, RTSP and RTMP, plus AES67/Dante audio. SMPTE ST 2110 sources come in through a gateway (2110 to HDMI into the capture input, or 2110 to NDI). Each input is an optional, updatable module. See [ROADMAP.md](ROADMAP.md).
+- Take video from the network: NDI® ([ndi.video](https://ndi.video/); beta, needs NDI's own runtime, which the owner supplies, see [mctl/NDI.md](mctl/NDI.md); NDI® is a registered trademark of Vizrt NDI AB.), SRT, RTSP and RTMP, plus AES67/Dante audio. SMPTE ST 2110 sources come in through a gateway (2110 to HDMI into the capture input, or 2110 to NDI). Each input is an optional, updatable module. See [ROADMAP.md](ROADMAP.md).
 
 ## Layout
 

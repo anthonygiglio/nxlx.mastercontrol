@@ -10,7 +10,7 @@ the node sends is new only. Remove this file with the bridge, in the release aft
 import os
 import unittest
 
-from pvj import osc, oscfeedback, oscfeedback as fb, peer
+from mctl import osc, oscfeedback, oscfeedback as fb, peer
 from tests.test_https import HttpsBase
 from tests.test_osc import ServerLogicTest, msg
 from tests.test_osc_feedback import T1, Base as FeedbackBase, decode
@@ -36,7 +36,7 @@ class OldOscAddressesTest(ServerLogicTest):
         for old, new in [("/pvj/stop", "/mctl/stop"), ("/pvj/pad/1/3", "/mctl/pad/1/3"), ("/pvj/scene/2", "/mctl/scene/2"),
                          ("/pvj/strobe/rate", "/mctl/strobe/rate"), ("/pvj/state", "/mctl/state"), ("/pvj", "/mctl")]:
             self.assertEqual(osc.current(old), new)
-        for same in ("/mctl/stop", "/stopall", "/pvjx/stop", "/x/pvj/stop", "/fastforward", "/"):
+        for same in ("/mctl/stop", "/stopall", "/pvjx/stop", "/x/mctl/stop", "/fastforward", "/"):
             self.assertEqual(osc.current(same), same, "only the old family itself is moved")
         for args in ((1.0,), (50.0,), ()):
             for name in ("stop", "opacity", "pad/1/3", "fade", "scene/1", "shader/speed"):
@@ -52,7 +52,7 @@ class OldOscAddressesTest(ServerLogicTest):
         self.server.rules = dict(self.server.rules, key_on=True, key="k" * 24)
         self.assertEqual(self.send(msg("/k/%s/pvj/opacity" % ("k" * 24), 40.0)), 1)
         self.assertEqual(self.send(msg("/pvj/opacity", 40.0)), 0, "the key layer still holds for the old family")
-        self.assertEqual(self.send(msg("/k/wrong/pvj/opacity", 40.0)), 0)
+        self.assertEqual(self.send(msg("/k/wrong/mctl/opacity", 40.0)), 0)
 
     def test_what_the_node_sends_is_the_new_family(self):
         self.assertEqual(oscfeedback.PREFIX, "/mctl/state/")
@@ -223,13 +223,13 @@ class OldSecureCookieTest(HttpsBase):
 
 class WhatIsSentTest(unittest.TestCase):
     def test_the_node_and_the_panel_send_the_new_names(self):
-        with open(os.path.join(REPO, "pvj", "peer.py"), encoding="utf-8") as f:
+        with open(os.path.join(REPO, "mctl", "peer.py"), encoding="utf-8") as f:
             text = f.read()
         self.assertIn('"User-Agent": "mctl-peer"', text)
         self.assertIn('"X-MCTL-Request": "1"', text)
         self.assertNotIn("X-PVJ-Request", text)
         self.assertTrue(peer)
-        with open(os.path.join(REPO, "pvj", "web", "app.js"), encoding="utf-8") as f:
+        with open(os.path.join(REPO, "mctl", "web", "app.js"), encoding="utf-8") as f:
             app = f.read()
         self.assertNotIn("X-PVJ-Request", app, "the panel sends the new header only")
         self.assertEqual(app.count("pvj.nodes.opened"), 1, "the old key is named once: where it is copied over")

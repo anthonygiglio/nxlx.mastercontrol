@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// pvj-link (D117, pvj/SOUND.md): the box follows an Ableton Link session.
+// pvj-link (D117, mctl/SOUND.md): the box follows an Ableton Link session.
 //
 // It reads a session's tempo and its place in a four-beat bar and writes them into one small file for the panel. It
 // never sets a tempo, a beat or play and stop: there is no commit of a session state anywhere in this program. The
@@ -20,7 +20,7 @@
 // CLOCK_MONOTONIC time", in the box's own clock.
 //
 // The record is 56 bytes, little-endian, written in place, at most 20 times a second and once a second while nobody is
-// there. pvj/link.py has the same layout (pack, unpack); tests/test_link.py and tests/test_pvj_link.py hold them together.
+// there. mctl/link.py has the same layout (pack, unpack); tests/test_link.py and tests/test_pvj_link.py hold them together.
 //
 //   offset  0  4 bytes  magic NXLK
 //           4  u16      version (1)
@@ -64,7 +64,7 @@
 namespace
 {
 
-constexpr double QUANTUM = 4.0;           // the bar: as BAR_BEATS in pvj/clock.py
+constexpr double QUANTUM = 4.0;           // the bar: as BAR_BEATS in mctl/clock.py
 constexpr double NEVER_SHOWN_TEMPO = 120.0;   // Link must be given one; it is never written, never said, never set on anyone
 constexpr double RECORD_EVERY = 0.05;     // 20 records a second while Link is enabled
 constexpr double IDLE_EVERY = 1.0;        // and one a second otherwise, so the panel can tell the helper is there

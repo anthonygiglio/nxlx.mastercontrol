@@ -16,8 +16,8 @@ import threading
 import time
 import unittest
 
-from pvj import boxcare, render
-from pvj.settings import Settings
+from mctl import boxcare, render
+from mctl.settings import Settings
 from tests.test_ndi import frame, wait
 from tests.test_ndi_pads import HOST, NAME, PadBase, REPO, RID, ROW
 from tests.test_roles import CONTROLLER_DEVICES, LAN, SCENE, TUNNEL
@@ -395,8 +395,8 @@ class CueTest(ApiBase):
 
     def test_a_guest_is_refused_at_the_gate_and_in_the_handler_each(self):
         """Two walls, each tested alone: the gate's form (policy) and the handler, past the gate."""
-        from pvj import policy
-        from pvj.api import ApiError
+        from mctl import policy
+        from mctl.api import ApiError
         self.add()
         self.cue_pad()
         with self.assertRaises(policy.Refused) as e:

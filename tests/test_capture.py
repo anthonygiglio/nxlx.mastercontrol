@@ -7,7 +7,7 @@ import threading
 import time
 import unittest
 
-from pvj import capture
+from mctl import capture
 from tests.test_server import ServerBase
 
 
@@ -183,7 +183,7 @@ class ReviewFindingsTest(CaptureTest):
 
 class OldMpvTest(unittest.TestCase):
     def test_play_pipe_falls_back_to_player_wide_options_and_undoes_them(self):
-        from pvj.player import Player, PlayerError
+        from mctl.player import Player, PlayerError
         p = Player.__new__(Player)
         sent = []
 

@@ -4,7 +4,7 @@
 // The output: the screen through EGL on GBM on KMS (page flips paced by vblank, the next frame drawn while the last
 // flip is pending), or, headless, an EGL context without a surface drawing into a framebuffer of its own, paced by
 // the clock. The card, connector and mode are taken as mpv 0.40 takes them (video/out/drm_common.c), because the
-// player's service passes the arguments it chose for mpv (pvj/screenmode.py, D90 to D92).
+// player's service passes the arguments it chose for mpv (mctl/screenmode.py, D90 to D92).
 #define _GNU_SOURCE
 #include "mctl.h"
 

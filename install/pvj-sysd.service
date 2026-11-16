@@ -28,7 +28,7 @@ PrivateTmp=yes
 # devices (null, zero, random and the like). On a board with no /dev/vcio the entry matches nothing.
 DevicePolicy=closed
 DeviceAllow=/dev/vcio rw
-# D127: the one avahi service file that announces the node to the local network (pvj/FLEET.md). D128: the Pi's boot files, for the AV output choice.
+# D127: the one avahi service file that announces the node to the local network (mctl/FLEET.md). D128: the Pi's boot files, for the AV output choice.
 # "-": no error where avahi is not installed or the boot folder is not there.
 ReadWritePaths=/run/pvj-sysd -/etc/avahi/services -/boot/firmware
 PrivateNetwork=yes

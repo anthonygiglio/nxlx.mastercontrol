@@ -51,7 +51,7 @@ class ImageStageTest(unittest.TestCase):
         wf = os.path.join(os.path.dirname(__file__), "..", ".github", "workflows", "image.yml")
         with open(wf) as f:
             text = f.read()
-        self.assertIn("cp -a pocketvj/pvj pocketvj/bin pocketvj/install", text)
+        self.assertIn("cp -a pocketvj/mctl pocketvj/bin pocketvj/install", text)
         self.assertIn("SKIP_IMAGES", text)
 
 

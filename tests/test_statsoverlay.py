@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Show stats on output (D133, pvj/statsoverlay.py): the ASS text and its escaping, the sampler, the show-safety rules
+"""Show stats on output (D133, mctl/statsoverlay.py): the ASS text and its escaping, the sampler, the show-safety rules
 and the routes. The renderer's half (osd-overlay on mctl-render) is in tests/test_mctl_render.py, the panel's in
 tests/ui/panel.test.js."""
 import glob
@@ -12,8 +12,8 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-from pvj import policy, statsoverlay as so, support, sysd
-from pvj.player import Ipc, PlayerError
+from mctl import policy, statsoverlay as so, support, sysd
+from mctl.player import Ipc, PlayerError
 from tests.test_boxcare import Base as CareBase
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -21,7 +21,7 @@ ERR = object()
 
 
 class FakeIpc:
-    """Stands in for pvj.player.Ipc: answers `request` and `batch` from a dict of properties."""
+    """Stands in for mctl.player.Ipc: answers `request` and `batch` from a dict of properties."""
 
     def __init__(self, pid=100, render=None):
         self.pid, self.render = pid, render        # render None: classic mpv (no mctl-render property)
@@ -39,7 +39,7 @@ class FakeIpc:
 
     def request(self, *cmd, wait=None, link=None):
         """Like mpv: an osd-overlay belongs to the connection that sent it. A plain request is a connection of its own that
-        closes at once (pvj.player.Ipc), so on classic mpv (no mctl-render property) its overlay is gone as soon as it is made.
+        closes at once (mctl.player.Ipc), so on classic mpv (no mctl-render property) its overlay is gone as soon as it is made.
         mctl-render keeps its overlays itself."""
         self.sent.append(cmd)
         if self.fail:
@@ -72,7 +72,7 @@ class FakeIpc:
 
 
 class FakeLink:
-    """pvj.player.HeldIpc: one connection kept open. Closing it takes its overlay off on classic mpv."""
+    """mctl.player.HeldIpc: one connection kept open. Closing it takes its overlay off on classic mpv."""
 
     def __init__(self, ipc):
         self.ipc, self.closed = ipc, False
@@ -121,7 +121,7 @@ RENDER = {"version": "0.12.0", "osd-overlay": True, "flips": 1000, "missed-vblan
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="pvj-stats-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-stats-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         for d in ("proc", "sys/class/thermal/thermal_zone0", "sys/devices/system/cpu/cpu0/cpufreq"):
             os.makedirs(os.path.join(self.tmp, d))
@@ -331,17 +331,17 @@ class ShowSafetyTest(Base):
 
     def test_it_is_not_turned_on_by_anything_but_the_one_route_handler(self):
         calls = []
-        for path in glob.glob(os.path.join(REPO, "pvj", "*.py")):
+        for path in glob.glob(os.path.join(REPO, "mctl", "*.py")):
             with open(path) as f:
                 src = f.read()
             for m in re.finditer(r"\.turn_on\(", src):
                 calls.append((os.path.basename(path), src[:m.start()].rsplit("\n", 1)[-1].strip()))
         self.assertEqual([c[0] for c in calls], ["api.py"], calls)          # one call, and it is in the route handler (below)
-        with open(os.path.join(REPO, "pvj", "api.py")) as f:
+        with open(os.path.join(REPO, "mctl", "api.py")) as f:
             src = f.read()
         handler = src[src.index("def set_stats_overlay"):src.index("def get_renderer")]
         self.assertIn("self.stats.turn_on(", handler)
-        for path in glob.glob(os.path.join(REPO, "pvj", "*.py")):       # and the flag itself is assigned only inside the module
+        for path in glob.glob(os.path.join(REPO, "mctl", "*.py")):       # and the flag itself is assigned only inside the module
             name = os.path.basename(path)
             with open(path) as f:
                 text = f.read()
@@ -350,7 +350,7 @@ class ShowSafetyTest(Base):
                 self.assertNotIn("stats._on", text, name)
 
     def test_nothing_is_written_to_settings_or_anywhere_else(self):
-        with open(os.path.join(REPO, "pvj", "statsoverlay.py")) as f:
+        with open(os.path.join(REPO, "mctl", "statsoverlay.py")) as f:
             src = f.read()
         self.assertNotRegex(src, r"settings\.|\.save\(|open\([^)]*,\s*[\"'][wa]|os\.(rename|replace)", "the state is memory only")
 
@@ -358,7 +358,7 @@ class ShowSafetyTest(Base):
         for table in (policy.LEGACY_LIVE, policy.GUEST):
             self.assertFalse([r for r in table if "stats" in r[1]])
         for name in ("osc.py", "midi.py", "dmx.py", "room.py", "scheduler.py", "presets.py", "autostart.py"):
-            path = os.path.join(REPO, "pvj", name)
+            path = os.path.join(REPO, "mctl", name)
             if os.path.exists(path):
                 with open(path) as f:
                     self.assertNotIn("stats_overlay", f.read(), name)
@@ -606,7 +606,7 @@ class IpcBatchTest(unittest.TestCase):
     def test_many_commands_one_connection_in_order_with_refusals(self):
         import socket
         import threading
-        d = tempfile.mkdtemp(prefix="pvj-batch-")
+        d = tempfile.mkdtemp(prefix="mctl-batch-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "s")
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -634,7 +634,7 @@ class IpcBatchTest(unittest.TestCase):
         self.assertEqual(len(conns), 1)
 
     def test_no_player_is_an_error_and_a_silent_one_times_out(self):
-        d = tempfile.mkdtemp(prefix="pvj-batch-")
+        d = tempfile.mkdtemp(prefix="mctl-batch-")
         self.addCleanup(shutil.rmtree, d, True)
         with self.assertRaises(PlayerError) as e:
             Ipc(os.path.join(d, "none"), timeout=1).batch([("get_property", "a")])
@@ -649,11 +649,11 @@ class RealMpvTest(unittest.TestCase):
     def test_the_overlay_command_batch_and_arguments_work_on_mpv(self):
         import subprocess
         import time
-        from pvj.player import Player
+        from mctl.player import Player
         mpv = shutil.which("mpv")
         if not mpv:
             self.skipTest("no mpv here")
-        d = tempfile.mkdtemp(prefix="pvj-statsmpv-")
+        d = tempfile.mkdtemp(prefix="mctl-statsmpv-")
         self.addCleanup(shutil.rmtree, d, True)
         player = Player(mpv_bin=mpv, extra_args=["--vo=null", "--ao=null", "--no-config"], rundir=d)
         player.socket_path = os.path.join(d, "mpv.sock")
@@ -683,8 +683,8 @@ class HeldIpcTest(unittest.TestCase):
     def test_a_connection_that_stays_open_matches_answers_by_id_and_skips_events(self):
         import socket
         import threading
-        from pvj.player import Ipc
-        d = tempfile.mkdtemp(prefix="pvj-held-")
+        from mctl.player import Ipc
+        d = tempfile.mkdtemp(prefix="mctl-held-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "s")
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -728,8 +728,8 @@ class HeldIpcTest(unittest.TestCase):
             held.request("four")
 
     def test_no_player_is_the_usual_error(self):
-        from pvj.player import Ipc
-        d = tempfile.mkdtemp(prefix="pvj-held-")
+        from mctl.player import Ipc
+        d = tempfile.mkdtemp(prefix="mctl-held-")
         self.addCleanup(shutil.rmtree, d, True)
         with self.assertRaises(PlayerError) as e:
             Ipc(os.path.join(d, "none")).hold()

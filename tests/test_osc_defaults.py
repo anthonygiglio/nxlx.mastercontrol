@@ -8,8 +8,8 @@ import socket
 import subprocess
 import textwrap
 
-from pvj import osc
-from pvj.settings import Settings, default_settings
+from mctl import osc
+from mctl.settings import Settings, default_settings
 from tests.test_boxcare import Base as CareBase
 from tests.test_osc import msg
 from tests.test_osc_lockdown import OTHER, TABLET
@@ -206,7 +206,7 @@ class ReviewTest(Base):
         self.assertEqual((out["paired_on"], out["paired_default"], out["open"]), (True, True, False))
 
     def test_an_import_into_a_file_that_has_no_mark_yet_writes_the_mark_it_would_have_had(self):
-        from pvj import boxcare
+        from mctl import boxcare
         for cfg, mark in (({"enabled": False, "port": 9876, "allow": []}, False), ({"enabled": False, "port": 9001, "allow": []}, True),
                           ({"enabled": True, "port": 9876, "allow": []}, True)):
             new = {"osc": {"enabled": False, "port": 9050, "allow": []}}

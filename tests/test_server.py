@@ -11,18 +11,18 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 
-from pvj import locks, server, themes as themes_mod
-from pvj.api import Api
-from pvj.auth import Auth
-from pvj.modules import Registry
-from pvj.osc import OscManager
-from pvj.settings import Settings
+from mctl import locks, server, themes as themes_mod
+from mctl.api import Api
+from mctl.auth import Auth
+from mctl.modules import Registry
+from mctl.osc import OscManager
+from mctl.settings import Settings
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
 class FakePlayer:
-    # the calls for which pvj.player.Player takes its own lock: the fake takes one of the same place in the order
-    # of the locks (pvj/locks.py), so that what is tested against it keeps to the order as against the real one
+    # the calls for which mctl.player.Player takes its own lock: the fake takes one of the same place in the order
+    # of the locks (mctl/locks.py), so that what is tested against it keeps to the order as against the real one
     LOCKED = ("set_shaders", "set_mapping_mode", "play_pipe", "clear")
 
     def __init__(self, rundir):
@@ -318,7 +318,7 @@ class ServerTest(ServerBase):
             while time.time() < deadline and ("speed", 3.0) not in self.player.calls:
                 time.sleep(0.05)
         self.assertIn(("speed", 3.0), self.player.calls)
-        from pvj.settings import Settings as S2
+        from mctl.settings import Settings as S2
         self.assertTrue(S2(self.settings.path).load()["osc"]["enabled"])  # persisted
         st, body, _ = self.call("POST", "/api/osc", {"enabled": False}, token=full)
         self.assertEqual((st, body["listening"]), (200, False))
@@ -374,7 +374,7 @@ class ServerTest(ServerBase):
 
     def test_player_down_is_503_not_a_crash(self):
         token, _ = self.pair()
-        from pvj.player import PlayerError
+        from mctl.player import PlayerError
 
         def boom(*a, **k):
             raise PlayerError("player service is not running")
@@ -398,7 +398,7 @@ class ServerTest(ServerBase):
             self.assertEqual(self.call("POST", "/api/theme", body, token=token)[0], 400, body)
 
     def real_panel(self):
-        """From here on the test talks to a server that serves the real pvj/web (the others use a two-file folder)."""
+        """From here on the test talks to a server that serves the real mctl/web (the others use a two-file folder)."""
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(self.api, self.auth, server.WEB_DIR))
         httpd.daemon_threads = True
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -548,7 +548,7 @@ class ServerTest(ServerBase):
         """The real box answered 404 for /favicon.ico and the two apple-touch-icon names (seen in its journal)."""
         import struct
         import zlib
-        from pvj import icon
+        from mctl import icon
         seen = set()
         for path in ("/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/favicon.ico?v=2"):
             for method in ("GET", "HEAD"):
@@ -578,8 +578,8 @@ class ServerTest(ServerBase):
         self.assertEqual(len(raw), 180 * (1 + 3 * 180))
         colours = {raw[y * 541 + 1 + 3 * x:y * 541 + 4 + 3 * x] for y in range(0, 180, 6) for x in range(0, 180, 6)}
         self.assertEqual(colours, {bytes(icon.BACK), bytes(icon.MARK)})  # a mark on a ground, not an empty tile
-        import pvj
-        with open(os.path.join(os.path.dirname(pvj.__file__), "web", "index.html")) as f:      # the real page names them
+        import mctl
+        with open(os.path.join(os.path.dirname(mctl.__file__), "web", "index.html")) as f:      # the real page names them
             text = f.read()
         self.assertIn('href="/favicon.ico"', text)
         self.assertIn('rel="apple-touch-icon" href="/apple-touch-icon.png"', text)
@@ -616,7 +616,7 @@ class EndToEndTest(ServerBase):
         clip = make_test_video(self.media)
         if not clip:
             self.skipTest("cannot generate a test video with this mpv")
-        from pvj.player import Player
+        from mctl.player import Player
         real = Player(extra_args=["--vo=null", "--ao=null"], rundir=self.rundir)
         self.addCleanup(real.stop)
         self.api.player = real
@@ -703,7 +703,7 @@ class MediaTest(MediaBase):
         self.assertFalse(os.path.exists(os.path.join(self.media, "x.mp4")))
 
     def test_size_limit_and_full_disk_are_refused_up_front(self):
-        import pvj.api as api_mod
+        import mctl.api as api_mod
         token, _ = self.pair()
         old = api_mod.MAX_UPLOAD_BYTES
         api_mod.MAX_UPLOAD_BYTES = 10
@@ -809,7 +809,7 @@ class MediaHardeningTest(MediaBase):
         self.assertEqual(self.leftovers(), [])
 
     def test_a_trickling_sender_is_cut_off_and_frees_the_lock(self):
-        import pvj.api as api_mod
+        import mctl.api as api_mod
         token, _ = self.pair()
         old = (api_mod.RATE_GRACE_SECONDS, api_mod.MIN_UPLOAD_RATE)
         api_mod.RATE_GRACE_SECONDS, api_mod.MIN_UPLOAD_RATE = 0.4, 10 * 1024 * 1024
@@ -880,7 +880,7 @@ class NetworkApiTest(ServerBase):
     def setUp(self):
         super().setUp()
         from tests.test_netd import FakeNm, make_sysfs
-        from pvj.netd import NetService
+        from mctl.netd import NetService
         self.nm = FakeNm()
         self.sysfs = make_sysfs()
         self.kdir = tempfile.mkdtemp()
@@ -978,7 +978,7 @@ class NetworkApiTest(ServerBase):
 
     def test_helper_down_is_a_clean_503_and_status_still_works(self):
         self.enable()
-        from pvj.netcfg import NetError
+        from mctl.netcfg import NetError
 
         class Down:
             def request(_, message):
@@ -1023,7 +1023,7 @@ class HostileClientTest(ServerBase):
         super().setUp()
         self.httpd.shutdown()
         self.httpd.server_close()
-        self.httpd = server.PvjServer(("127.0.0.1", 0), server.make_handler(self.api, self.auth, self.web,
+        self.httpd = server.MctlServer(("127.0.0.1", 0), server.make_handler(self.api, self.auth, self.web,
                                                                              max_lifetime=1.0), max_connections=3)
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
@@ -1071,7 +1071,7 @@ class ManyAtOnceTest(ServerBase):
     def serve(self, start=True, **kw):
         self.httpd.shutdown()
         self.httpd.server_close()
-        self.httpd = server.PvjServer(("127.0.0.1", 0), server.make_handler(self.api, self.auth, self.web, max_lifetime=5.0), **kw)
+        self.httpd = server.MctlServer(("127.0.0.1", 0), server.make_handler(self.api, self.auth, self.web, max_lifetime=5.0), **kw)
         self.port = self.httpd.server_address[1]
         self.addCleanup(self.httpd.server_close)
         if start:
@@ -1116,8 +1116,8 @@ class ManyAtOnceTest(ServerBase):
         # Two numbers held so that changing either is a deliberate act. This proves no behaviour: what a short queue
         # does is in the three tests below.
         import inspect
-        self.assertEqual(server.PvjServer.request_queue_size, 128)
-        self.assertEqual(inspect.signature(server.PvjServer.__init__).parameters["max_connections"].default, 64)
+        self.assertEqual(server.MctlServer.request_queue_size, 128)
+        self.assertEqual(inspect.signature(server.MctlServer.__init__).parameters["max_connections"].default, 64)
 
     def test_six_browsers_at_once_all_get_every_file(self):
         # Tells a queue of 5 from 128 on macOS, where the connection that does not fit is reset (measured: 196 of

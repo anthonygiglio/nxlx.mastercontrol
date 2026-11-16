@@ -8,7 +8,7 @@
 # opt-in changes, that a later install keeps it, and that opting out takes it off. Without NDI's library.
 # Then an NDI picture all the way, on this layout: a STAND-IN for NDI's library (tests/ndi_standin, our own code,
 # built here) is placed by the real command, loaded by the real helper in its sandbox, written through root's pipe
-# and read by the real player, asked for through the panel's API. NDI's own library is never here; see pvj/NDI.md,
+# and read by the real player, asked for through the panel's API. NDI's own library is never here; see mctl/NDI.md,
 # "What the tests prove".
 #
 # It creates accounts, installs to /opt/pvj, writes units and starts services. Run it ONLY on a machine that is
@@ -181,13 +181,13 @@ step "the preview through the panel, inside its sandbox (it must not fail on a r
 PIN="$("$SRC/bin/pvj-pin")"
 TOKEN="$(curl -sS -m 20 -H 'Content-Type: application/json' -H 'X-MCTL-Request: 1' -d "{\"pin\": \"$PIN\", \"name\": \"ci\"}" http://127.0.0.1/api/pair | sed -n 's/.*"token": *"\([^"]*\)".*/\1/p')"
 [ -n "$TOKEN" ] || fail "could not pair with the panel"
-CODE="$(curl -sS -m 30 -o /tmp/pvj-preview.out -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://127.0.0.1/api/preview.jpg)"
-echo "preview: HTTP $CODE, $(wc -c < /tmp/pvj-preview.out) bytes"
-if grep -a -q -i "read-only" /tmp/pvj-preview.out; then fail "the preview failed on a read-only file system: $(head -c 300 /tmp/pvj-preview.out)"; fi
+CODE="$(curl -sS -m 30 -o /tmp/mctl-preview.out -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://127.0.0.1/api/preview.jpg)"
+echo "preview: HTTP $CODE, $(wc -c < /tmp/mctl-preview.out) bytes"
+if grep -a -q -i "read-only" /tmp/mctl-preview.out; then fail "the preview failed on a read-only file system: $(head -c 300 /tmp/mctl-preview.out)"; fi
 if [ "$CODE" = 200 ]; then
 	echo "a picture came back"
 else
-	echo "NOTE: no picture on this machine (no display): $(head -c 300 /tmp/pvj-preview.out)"
+	echo "NOTE: no picture on this machine (no display): $(head -c 300 /tmp/mctl-preview.out)"
 fi
 
 step "reinstall over the new layout: nothing is emptied, a link planted in the panel's folder leads root nowhere"
@@ -225,11 +225,11 @@ rm -f "$SRC/render/pvj-render"
 # What runs or starts the renderer: the package, render/, the commands in bin/ and the node's units. bin/nxlx-convert
 # is left out: its rename table names the old program on purpose, as the name it converts from.
 ls -d /etc/systemd/system/pvj-* >/dev/null 2>&1 || fail "no pvj-* units to search (renamed? update this check)"
-if grep -rIl "pvj-render" "$NEW_REL/pvj" "$NEW_REL/render" /etc/systemd/system/pvj-* \
+if grep -rIl "pvj-render" "$NEW_REL/mctl" "$NEW_REL/render" /etc/systemd/system/pvj-* \
 	|| grep -rIl --exclude=nxlx-convert "pvj-render" "$NEW_REL/bin"; then
 	fail "a file of the new release or a unit still names pvj-render"
 fi
-grep -q "mctl-render" "$NEW_REL/pvj/renderer.py" || fail "the player does not look for mctl-render"
+grep -q "mctl-render" "$NEW_REL/mctl/renderer.py" || fail "the player does not look for mctl-render"
 rm -rf "$OLD_REL"
 if [ "$had_previous" = 1 ]; then cp "$PREV_SAVED" /opt/pvj/previous; else rm -f /opt/pvj/previous; fi
 rm -f "$PREV_SAVED"
@@ -270,7 +270,7 @@ services_and_their_files
 NDI_WEB_DROPIN=/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf
 NDI_PLAYER_DROPIN=/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf
 ndi_setup() {      # ndi_setup enable|disable: root's code as `pvj-ndi-runtime install|remove` runs it, without a library
-	python3 -B -c 'import sys; sys.path.insert(0, "/opt/pvj/current"); from pvj import ndisetup; getattr(ndisetup, sys.argv[1])()' "$1"
+	python3 -B -c 'import sys; sys.path.insert(0, "/opt/pvj/current"); from mctl import ndisetup; getattr(ndisetup, sys.argv[1])()' "$1"
 }
 groups_of() { systemctl show -p SupplementaryGroups --value "$1"; }
 panel_answers() { curl -sS -m 5 -o /dev/null http://127.0.0.1/api/hello; }
@@ -330,7 +330,7 @@ ndi_setup enable
 is /etc/systemd/system/pvj-ndi.service "root:root 644 regular file"
 is "$NDI_WEB_DROPIN" "root:root 644 regular file"
 is "$NDI_PLAYER_DROPIN" "root:root 644 regular file"
-sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/pvj/systemd/pvj-ndi.service" | cmp - /etc/systemd/system/pvj-ndi.service || fail "the helper's unit is not the template"
+sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/mctl/systemd/pvj-ndi.service" | cmp - /etc/systemd/system/pvj-ndi.service || fail "the helper's unit is not the template"
 systemctl is-enabled --quiet pvj-ndi.service || fail "pvj-ndi is not enabled after the opt-in"
 if ! wait_for 40 systemctl is-active --quiet pvj-ndi.service; then
 	systemctl status pvj-ndi.service --no-pager -l >&2 || true
@@ -397,7 +397,7 @@ refused pvj-ndi touch /run/pvj-ndi-config/x
 refused pvj-ndi rm /run/pvj-ndi-pipe/ndi.fifo
 # The helper's own look at the pipe before it writes, as its account and on root's pipe (found on a Pi, 2026-10-12:
 # it took only a pipe of its own, so on a box every source ended "the input pipe was replaced").
-runuser -u pvj-ndi -- python3 -B -c 'import os, sys; sys.path.insert(0, "/opt/pvj/current"); from pvj import ndi
+runuser -u pvj-ndi -- python3 -B -c 'import os, sys; sys.path.insert(0, "/opt/pvj/current"); from mctl import ndi
 fd = os.open("/run/pvj-ndi-pipe/ndi.fifo", os.O_RDWR | os.O_NONBLOCK)
 sys.exit(0 if ndi.pipe_to_write(os.fstat(fd)) and os.fstat(fd).st_uid != os.getuid() else 1)' \
 	|| fail "the helper's account would not write root's pipe"
@@ -410,7 +410,7 @@ rm "$NDI_PLAYER_DROPIN"
 installer
 grep -q "this box has NDI set up" "$OUT" || fail "the installer did not see the opt-in"
 if grep -q "could not write the NDI helper" "$OUT"; then fail "the installer could not write the helper's unit again"; fi
-sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/pvj/systemd/pvj-ndi.service" | cmp - /etc/systemd/system/pvj-ndi.service || fail "the helper's unit was not written again"
+sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/mctl/systemd/pvj-ndi.service" | cmp - /etc/systemd/system/pvj-ndi.service || fail "the helper's unit was not written again"
 is "$NDI_PLAYER_DROPIN" "root:root 644 regular file"
 systemctl is-enabled --quiet pvj-ndi.service || fail "pvj-ndi is no longer enabled after a plain install"
 wait_for 40 systemctl is-active --quiet pvj-ndi.service || fail "pvj-ndi is not active after a plain install"
@@ -439,7 +439,7 @@ nothing_of_ndi
 services_and_their_files
 
 step "a helper's unit without the mark (a setup cut short, or a box from when the helper went on every box) is removed by the next install"
-sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/pvj/systemd/pvj-ndi.service" > /etc/systemd/system/pvj-ndi.service
+sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/mctl/systemd/pvj-ndi.service" > /etc/systemd/system/pvj-ndi.service
 systemctl daemon-reload
 systemctl enable --now pvj-ndi.service
 wait_for 40 systemctl is-active --quiet pvj-ndi.service || fail "the helper without a mark did not start (the test's own set-up)"
@@ -461,7 +461,7 @@ is /opt/pvj-ndi-server/ndi-discovery-server "root:root 755 regular file"
 [ "$(id -nG pvj-ndisc)" = pvj-ndisc ] || fail "the account pvj-ndisc is in: $(id -nG pvj-ndisc)"
 [ "$(getent passwd pvj-ndisc | cut -d: -f7)" = /usr/sbin/nologin ] || fail "the account pvj-ndisc has a shell"
 is /etc/systemd/system/pvj-ndi-discovery.service "root:root 644 regular file"
-sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/pvj/systemd/pvj-ndi-discovery.service" | cmp - /etc/systemd/system/pvj-ndi-discovery.service || fail "the discovery server's unit is not the template"
+sed -e "s|@PVJ_DIR@|/opt/pvj/current|g" "$SRC/mctl/systemd/pvj-ndi-discovery.service" | cmp - /etc/systemd/system/pvj-ndi-discovery.service || fail "the discovery server's unit is not the template"
 systemctl is-enabled --quiet pvj-ndi-discovery.service || fail "pvj-ndi-discovery is not enabled after the set-up"
 if ! wait_for 40 systemctl is-active --quiet pvj-ndi-discovery.service; then
 	systemctl status pvj-ndi-discovery.service --no-pager -l >&2 || true
@@ -530,7 +530,7 @@ services_and_their_files
 # picture reached the screen of any box. Every test was green, because every test ran the helper where it makes a
 # pipe of its own. So here the whole road is taken as a box has it: the real accounts, the real units and the
 # helper's sandbox, root's pipe from the tmpfiles lines, the real pvj-ndi service, the panel's API, the real mpv.
-# The one thing that is not real is the library: tests/ndi_standin/standin.c, written from what pvj/ndi.py calls,
+# The one thing that is not real is the library: tests/ndi_standin/standin.c, written from what mctl/ndi.py calls,
 # which makes up three sources and touches no network. So this never shows that NDI's own library works, finds a
 # sender or gets through the sandbox's network rules.
 # And this machine has no screen: the player is started with mpv's null video and sound outputs (a drop-in of this
@@ -541,21 +541,21 @@ NDI_STANDIN="$NDI_BUILD/libndi.so.6"
 NDI_LIB=/opt/pvj-ndi/libndi.so.6
 NDI_PIPE=/run/pvj-ndi-pipe/ndi.fifo
 NDI_PLAYER_CI=/run/systemd/system/pvj-player.service.d/90-ci-no-screen.conf
-MPV_LOG=/tmp/pvj-ci-mpv.log
-NDI_MOVING="PVJ-STANDIN (moving)"
-NDI_SOUND="PVJ-STANDIN (moving with sound)"
-NDI_STILL="PVJ-STANDIN (one still then sound)"
-NDI_CHANGES="PVJ-STANDIN (changes size)"
+MPV_LOG=/tmp/mctl-ci-mpv.log
+NDI_MOVING="MCTL-STANDIN (moving)"
+NDI_SOUND="MCTL-STANDIN (moving with sound)"
+NDI_STILL="MCTL-STANDIN (one still then sound)"
+NDI_CHANGES="MCTL-STANDIN (changes size)"
 # 1280 x 720: a picture is 1.8 MB, more than the pipe holds, so the writer is in the middle of a picture most of the time
-NDI_BIG_SOUND="PVJ-STANDIN (big moving with sound)"
-NDI_BIG_STILL="PVJ-STANDIN (big one still then sound)"
-NDI_BIG_A="PVJ-STANDIN (big at once A)"
-NDI_BIG_B="PVJ-STANDIN (big at once B)"
-NDI_BIG_A_SOUND="PVJ-STANDIN (big at once A with sound)"
-NDI_BIG_B_SOUND="PVJ-STANDIN (big at once B with sound)"
-NDI_BIG_CHANGES="PVJ-STANDIN (big changes size)"
-NDI_BIG_CHANGES_SOUND="PVJ-STANDIN (big changes size with sound)"
-NDI_SOUND_ONLY="PVJ-STANDIN (sound only)"
+NDI_BIG_SOUND="MCTL-STANDIN (big moving with sound)"
+NDI_BIG_STILL="MCTL-STANDIN (big one still then sound)"
+NDI_BIG_A="MCTL-STANDIN (big at once A)"
+NDI_BIG_B="MCTL-STANDIN (big at once B)"
+NDI_BIG_A_SOUND="MCTL-STANDIN (big at once A with sound)"
+NDI_BIG_B_SOUND="MCTL-STANDIN (big at once B with sound)"
+NDI_BIG_CHANGES="MCTL-STANDIN (big changes size)"
+NDI_BIG_CHANGES_SOUND="MCTL-STANDIN (big changes size with sound)"
+NDI_SOUND_ONLY="MCTL-STANDIN (sound only)"
 box() {            # the questions to the panel and the player (tests/ndi_standin/box_check.py); the token stays off the command line
 	PVJ_TOKEN="$TOKEN" python3 -B "$SRC/tests/ndi_standin/box_check.py" "$@"
 }
@@ -630,7 +630,7 @@ grep -q " $NDI_LIB\$" "/proc/$HELPER_PID/maps" || ndi_fail "the helper's process
 
 step "sound off: the helper's account writes root's pipe, the player reads it, the panel says 'playing' and counts the pictures"
 # With the check as it was until 2026-10-12 (a pipe is written only if the helper owns it) this is where the run
-# ends: 'PVJ-STANDIN (moving)' did not play: it stopped with "the input pipe was replaced; not writing to it".
+# ends: 'MCTL-STANDIN (moving)' did not play: it stopped with "the input pipe was replaced; not writing to it".
 box play "$NDI_MOVING" raw || ndi_fail "sound off: the stand-in's picture did not get from the helper through root's pipe to the player"
 holds_the_pipe "$HELPER_PID" || ndi_fail "the helper's process has not got root's pipe open"
 holds_the_pipe "$PLAYER_PID" || ndi_fail "the player's process has not got root's pipe open"

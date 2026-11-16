@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""A screen that comes after the player has started (pvj/latescreen.py): the box that fell back to classic mpv for want
+"""A screen that comes after the player has started (mctl/latescreen.py): the box that fell back to classic mpv for want
 of a screen goes back to mctl-render once when one is connected, never in a loop, and a crash fallback stays on classic.
 
 A fake /sys tree and a fake clock; nothing here forks, kills or touches the real /sys."""
@@ -11,8 +11,8 @@ import unittest
 from unittest import mock
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import hardware, latescreen, renderer, screenmode
-from pvj.player import Player
+from mctl import hardware, latescreen, renderer, screenmode
+from mctl.player import Player
 from tests.test_renderer import Base as RendererBase
 
 
@@ -20,7 +20,7 @@ class Fake:
     """A /sys/class/drm tree, a clock that only moves when the watcher sleeps, and a player that can be ended."""
 
     def __init__(self, test):
-        self.root = tempfile.mkdtemp(prefix="pvj-latescreen-")
+        self.root = tempfile.mkdtemp(prefix="mctl-latescreen-")
         test.addCleanup(shutil.rmtree, self.root, True)
         self.rundir = os.path.join(self.root, "run")
         os.makedirs(self.rundir)
@@ -261,7 +261,7 @@ class ServeTest(RendererBase):
             raise Exec()
         with mock.patch.object(screenmode, "prepare", lambda *a, **k: []), \
                 mock.patch.object(renderer.paths, "state_dir", lambda e=None: state), \
-                mock.patch("pvj.player.detach_socket_opener", lambda path: None), \
+                mock.patch("mctl.player.detach_socket_opener", lambda path: None), \
                 mock.patch("os.execvp", execvp), \
                 mock.patch.object(latescreen, "start", lambda *a, **k: seen["watch"].append(a)), \
                 mock.patch.object(hardware, "drm_connectors", lambda root="/": sysfs), \

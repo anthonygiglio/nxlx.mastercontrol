@@ -18,8 +18,8 @@ import threading
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from http.server import ThreadingHTTPServer  # noqa: E402
 
-from pvj import server  # noqa: E402
-from pvj.player import Player  # noqa: E402
+from mctl import server  # noqa: E402
+from mctl.player import Player  # noqa: E402
 from tests.test_server import make_test_video  # noqa: E402
 
 tmp = tempfile.mkdtemp()
@@ -74,12 +74,12 @@ api.gfx._player = lambda: _GfxPlayer()
 # D90: the report a player on the owner's 1440p monitor writes (the list of tests/test_screenmode.py), so Setup >
 # Screen output has a screen's modes to show; the real player here draws to no screen (--vo=null). No pid: the panel
 # never takes this for the player it talks to, so nothing is restarted for it.
-from pvj import screenmode  # noqa: E402
+from mctl import screenmode  # noqa: E402
 from tests.test_screenmode import MONITOR, connected  # noqa: E402
 _rep = screenmode.decide({"mode": "auto"}, screenmode.parse_help(MONITOR), "", connected(), "harness")
 screenmode.write_json(os.path.join(rundir, screenmode.REPORT), dict(_rep, pid=None, boot="harness", at=0))
 from tests.test_netd import FakeNm, make_sysfs  # noqa: E402
-from pvj.netd import NetService  # noqa: E402
+from mctl.netd import NetService  # noqa: E402
 
 _fake_nm = FakeNm()
 _fake_nm.scan_text = ("Leyline Staff:72:WPA2:36\nVenue Guest:40::1\nCorp:60:WPA2 802.1X:6\n"
@@ -98,7 +98,7 @@ api.net = _DirectNet()
 api._sysfs = _net_service.sysfs
 api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.9", "prefixlen": 24}]}]
 import ipaddress  # noqa: E402
-from pvj import projector  # noqa: E402
+from mctl import projector  # noqa: E402
 from tests.test_projector import FakeProjector  # noqa: E402
 
 projector.PRIVATE = projector.PRIVATE + [ipaddress.ip_network("127.0.0.0/8")]
@@ -114,7 +114,7 @@ _fakes[2].power = "1"      # (the fifth is one nobody switches: in standby, so "
 # appended to <midi_dir>/in ("B0 00 40", or "keys: 90 3C 7F" for the second one) is what the controller sends. The
 # harness keeps the writing end of each pipe, so a reader never sees the end of the stream.
 import time  # noqa: E402
-from pvj import midi as midi_mod  # noqa: E402
+from mctl import midi as midi_mod  # noqa: E402
 
 _midi_dir = os.path.join(tmp, "midi")
 os.makedirs(_midi_dir)
@@ -180,11 +180,11 @@ api.midi = midi_mod.MidiHub(api, api.settings, open_fn=_midi_open, namer=lambda 
 api.midi.apply()
 threading.Thread(target=_midi_feed, daemon=True).start()
 
-# A file of the page that does not arrive, for the checks of pvj/web/load.js (tests/ui/delivery.js). Each line of the
+# A file of the page that does not arrive, for the checks of mctl/web/load.js (tests/ui/delivery.js). Each line of the
 # file <delivery_file> is "<path> <how>", and the next request for that path uses the line up: "drop" closes the
 # connection with no answer (what a full queue or a lost connection is to a browser), "busy" answers 503 as the box
 # does at its cap of connections, "broken" delivers a script that cannot run. This is in the harness only: the
-# box's own server (pvj/server.py) has no such switch, and nothing on a box runs this file.
+# box's own server (mctl/server.py) has no such switch, and nothing on a box runs this file.
 from urllib.parse import urlsplit  # noqa: E402
 
 _delivery = os.path.join(tmp, "delivery")
@@ -213,7 +213,7 @@ class _TestHandler(server.make_handler(api, auth)):
         if how == "drop":
             self.close_connection = True
             return None
-        if how == "busy":           # the very bytes of PvjServer.process_request at the cap
+        if how == "busy":           # the very bytes of MctlServer.process_request at the cap
             self.close_connection = True
             self.wfile.write(b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             return None
@@ -222,7 +222,7 @@ class _TestHandler(server.make_handler(api, auth)):
         return super().do_GET()
 
 
-httpd = server.PvjServer(("127.0.0.1", 0), _TestHandler)
+httpd = server.MctlServer(("127.0.0.1", 0), _TestHandler)
 print(json.dumps({"port": httpd.server_address[1], "pin": auth.current_pin, "projector_ports": [f.port for f in _fakes], "midi_dir": _midi_dir,
                   "delivery_file": _delivery}), flush=True)
 # The test (or a run that ended badly) stops this process with SIGTERM, which by default ends it at once and leaves

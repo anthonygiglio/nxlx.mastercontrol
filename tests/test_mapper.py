@@ -10,8 +10,8 @@ import threading
 import time
 import unittest
 
-from pvj import autostart, mapper as M
-from pvj.settings import Settings
+from mctl import autostart, mapper as M
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 W, H = 1920, 1080

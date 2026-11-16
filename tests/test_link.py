@@ -12,9 +12,9 @@ import shutil
 import tempfile
 import unittest
 
-from pvj import boxcare, clock as clk, link, paths, soundout
-from pvj.clock import Clock
-from pvj.settings import default_settings
+from mctl import boxcare, clock as clk, link, paths, soundout
+from mctl.clock import Clock
+from mctl.settings import default_settings
 from tests.test_roles import TUNNEL, RolesBase
 from tests.test_sound import FakeApi
 
@@ -378,7 +378,7 @@ class RouteTest(RolesBase):
         routes = self.api.routes()
         self.assertEqual(routes[("POST", "/api/tempo/link")][0], "full")
         self.assertEqual(routes[("POST", "/api/tempo/link")][1].__name__, "set_link")
-        with open(os.path.join(REPO, "pvj", "api.py")) as f:
+        with open(os.path.join(REPO, "mctl", "api.py")) as f:
             src = f.read()
         self.assertEqual(len(re.findall(r"def set_link\(", src)), 1)
         self.assertEqual(len(re.findall(r'\("POST", "/api/tempo/link"\)', src)), 1)
@@ -398,14 +398,14 @@ class RouteTest(RolesBase):
         self.assertEqual(out["link"]["state"], "off")
 
     def test_a_bad_body_is_refused(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         for body in ({}, {"on": 1}, {"on": True, "more": 2}, [], {"bpm": 120}):
             with self.assertRaises(ApiError) as e:
                 self.api.set_link(body, {"id": "o", "role": "full"}, "127.0.0.1")
             self.assertEqual(e.exception.status, 400, repr(body))
 
     def test_through_remote_support_off_yes_on_no(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.api.support.is_remote = lambda client: client == TUNNEL
         helper_login = {"id": "r", "role": "full", "remote": True}
         with self.assertRaises(ApiError) as e:

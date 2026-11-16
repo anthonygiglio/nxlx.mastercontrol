@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""pvj/fleetlist.py (D132, slice 1): the check a node makes before it believes a fleet list. Every root here is a
+"""mctl/fleetlist.py (D132, slice 1): the check a node makes before it believes a fleet list. Every root here is a
 throwaway made by the test; nothing reads the owner's real root. A list is signed here with plain `openssl`, not with
 the tool, so the tool and the checker do not vouch for each other. Skipped where there is no openssl."""
 import ast
@@ -15,7 +15,7 @@ import tempfile
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import fleetlist as FL
+from mctl import fleetlist as FL
 from tests.test_boxcert import boxcert, make_request, openssls
 
 PASS = "correct horse battery"
@@ -454,10 +454,10 @@ class Shape(unittest.TestCase):
             tree = ast.parse(f.read())
         bad = []
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and (node.level or (node.module or "").split(".")[0] in ("pvj", "tests")):
+            if isinstance(node, ast.ImportFrom) and (node.level or (node.module or "").split(".")[0] in ("mctl", "tests")):
                 bad.append(node.module)
             if isinstance(node, ast.Import):
-                bad += [a.name for a in node.names if a.name.split(".")[0] in ("pvj", "tests")]
+                bad += [a.name for a in node.names if a.name.split(".")[0] in ("mctl", "tests")]
         self.assertEqual(bad, [])
 
     def test_the_prefix_and_limits_are_what_the_design_says(self):

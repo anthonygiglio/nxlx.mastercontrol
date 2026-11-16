@@ -16,10 +16,10 @@ import threading
 import unittest
 from unittest import mock
 
-from pvj import paths, server
-from pvj.netd import NetdClient, NetError
-from pvj.player import Player, PlayerError
-from pvj.update import Updater
+from mctl import paths, server
+from mctl.netd import NetdClient, NetError
+from mctl.player import Player, PlayerError
+from mctl.update import Updater
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -126,7 +126,7 @@ class PreviewInThePlayersFolderTest(unittest.TestCase):
     """mpv writes the preview, so it is in the player's folder, which the panel can read and not change."""
 
     def setUp(self):
-        from pvj.api import Api
+        from mctl.api import Api
         self.base = tempfile.mkdtemp()
         self.env = box(self.base)
         os.mkdir(self.env["PVJ_PLAYER_DIR"], 0o750)
@@ -165,7 +165,7 @@ class PreviewInThePlayersFolderTest(unittest.TestCase):
         self.assertEqual(os.listdir(self.env["PVJ_RUNTIME_DIR"]), [])
 
     def test_a_picture_from_an_earlier_request_is_never_served_as_new(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.old()                                           # a good JPEG, but from before
         self.api.player.screenshot.side_effect = lambda *a: None       # mpv said yes and wrote nothing
         with self.assertRaises(ApiError) as e:
@@ -191,7 +191,7 @@ class PreviewInThePlayersFolderTest(unittest.TestCase):
         self.assertEqual(self.api.preview_jpeg(None), JPEG)
 
     def test_a_link_in_place_of_the_picture_is_not_followed(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         secret = os.path.join(self.base, "secret")
         with open(secret, "wb") as f:
             f.write(JPEG)
@@ -210,7 +210,7 @@ class PreviewInThePlayersFolderTest(unittest.TestCase):
 class NetdFolderTest(unittest.TestCase):
     @unittest.skipUnless(hasattr(socket, "SO_PEERCRED"), "needs SO_PEERCRED (Linux)")
     def test_the_helper_listens_in_the_folder_it_is_given_and_the_panel_finds_it(self):
-        from pvj import netd
+        from mctl import netd
         base = tempfile.mkdtemp()
         env = box(base)
         made = []

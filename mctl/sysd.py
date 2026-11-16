@@ -1,0 +1,461 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""pvj-sysd: the small root helper for reboot, power off and setting the clock, on behalf of the unprivileged panel.
+
+The old panel had Reboot, Power off and Set time buttons (it ran `sudo reboot` and `date -s` from PHP). Here the panel
+(user pvj-web) sends one JSON line over a Unix socket in /run/pvj-sysd; this daemon answers only root and pvj-web (checked
+with SO_PEERCRED), and runs only these fixed commands, as argument lists, never a shell:
+
+* reboot, poweroff: `systemctl reboot|poweroff`, one second after answering, so the panel gets its reply;
+* set_time: only while the clock has NOT been set from the network (a Pi has no clock battery, so without a network
+  it starts at the last shutdown time); `timedatectl set-time` with a validated epoch, then network time back on, so
+  a network that appears later still corrects it;
+* status: whether the clock is set from the network;
+* timezone, set_timezone (J-129): read the zone systemd reports; set it with `timedatectl set-timezone` for one checked IANA name
+  (tz.valid_zone: a safe pattern and a real zone file, and `timedatectl list-timezones` must name it), then read it back;
+* journal: the node's own pvj-* log lines, read with `journalctl` for a fixed list of units, a capped number of lines
+  and a bounded time window (the panel is deliberately not in the systemd-journal group, so this is how it reads them);
+* fleet_announce, fleet_withdraw (D127): write or remove the one avahi service file that announces the node as `_nxlx._tcp`
+  (fields checked against fixed patterns, a fixed template, nothing run; the only file outside /run this helper writes);
+* av_output: turn the AV (composite) output on or off in the Raspberry Pi's boot files (mctl/bootcfg.py), with backups; it
+  takes effect at the next start of the node;
+* throttled (the stats overlay): `vcgencmd get_throttled`, a fixed argument list, read-only; the reply is the number the firmware
+  keeps (bit 0 under-voltage now, 1 capped now, 2 throttled now, 3 soft temperature limit now; bits 16 to 19 the same since boot);
+* update: start pvj-update-usb@V.service or pvj-update-inbox@V.service (fixed template units, V a checked version: pvj-update checks the signature,
+  refuses older versions and rolls back by itself).
+
+It holds no capabilities of its own (systemd and timedated do the work), and OSC, MIDI and DMX cannot reach it.
+"""
+
+import datetime
+import json
+import socket
+import os
+import re
+import subprocess
+import threading
+import time
+
+from . import paths, tz as tz_mod
+from .netd import exchange, NetServer, peer_uid  # noqa: F401  (the same small, reviewed socket server)
+
+MIN_EPOCH = 1735689600      # 2025-01-01: anything earlier is a wrong clock, not a date to set
+MAX_EPOCH = 2082758400      # 2036-01-01: a phone set to a far future year would otherwise stick (timesyncd saves the
+                            # clock and never moves it back), so such a date is refused, not set
+JOURNAL_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service",
+                 "pvj-sound.service", "pvj-link.service", "pvj-ndi*.service", "pvj-update-usb@*.service",
+                 "pvj-update-inbox@*.service", "pvj-usb@*.service")      # the node's own, a fixed list: nothing else is asked for
+JOURNAL_LINES, JOURNAL_LINES_MAX = 300, 500
+JOURNAL_HOURS, JOURNAL_HOURS_MAX = 24, 24 * 7
+JOURNAL_LINE_MAX = 400
+JOURNAL_SECONDS = 20          # journalctl on a big journal on a card can be slow
+JOURNAL_BYTES = 56000       # the whole reply must fit the 64 KiB the panel reads (netd.exchange), escapes included
+MARKER = "ntp-was-on"       # left in the helper's own runtime folder while network time is switched off
+STATUS_CACHE = 5.0
+
+
+class SysService:
+    def __init__(self, runner=subprocess.run, schedule=None, log=print, rundir=None, clock=time.monotonic, now=time.time,
+                 avahi_services=None, avahi_socket=None):
+        self.runner, self.log = runner, log
+        self.avahi_services = avahi_services or self.AVAHI_SERVICES
+        self.avahi_socket = avahi_socket or self.AVAHI_SOCKET
+        self._fleet_fail = None
+        self._schedule = schedule or (lambda delay, fn: threading.Timer(delay, fn).start())
+        self.lock = threading.Lock()
+        self.rundir = rundir
+        self._clock, self._now = clock, now
+        self._status = None            # (time, reply): a view device polling the panel must not make root spawn a process each time
+        self._power_requested = None
+
+    def _run(self, argv, timeout=15):
+        assert isinstance(argv, list) and argv[0] in ("systemctl", "timedatectl", "journalctl", "vcgencmd")
+        try:
+            r = self.runner(argv, capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return 1, str(e)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+    def _show(self, prop):
+        code, out = self._run(["timedatectl", "show", "--property=" + prop, "--value"])
+        return None if code != 0 else out.strip() == "yes"
+
+    def synchronized(self):
+        """True if the clock has been set from the network, None if that cannot be read."""
+        return self._show("NTPSynchronized")
+
+    def status(self):
+        t = self._clock()
+        if self._status and t - self._status[0] < STATUS_CACHE:
+            return dict(self._status[1], now=int(self._now()))
+        reply = {"ok": True, "clock_from_network": self.synchronized(), "now": int(self._now())}
+        self._status = (t, reply)
+        return reply
+
+    def power(self, verb):
+        if self._power_requested:
+            return {"ok": True, verb: True, "already": self._power_requested}
+        # Ask systemd whether it would do it before saying yes: a refusal is reported, not logged and lost.
+        code, out = self._run(["systemctl", "--dry-run", verb])
+        if code != 0:
+            return {"ok": False, "error": "the system refused to %s: %s" % (verb, out.strip()[-160:])}
+        self._power_requested = verb
+
+        def go():
+            code, out = self._run(["systemctl", verb])
+            if code != 0:
+                self._power_requested = None
+                self.log("pvj-sysd: systemctl %s failed: %s" % (verb, out.strip()[-200:]))
+        self.log("pvj-sysd: %s requested by the panel" % verb)
+        self._schedule(1.0, go)
+        return {"ok": True, verb: True}
+
+    # --- the clock ----------------------------------------------------------
+    def _marker(self):
+        return os.path.join(self.rundir, MARKER) if self.rundir else None
+
+    def _ntp_on(self):
+        """Switch network time back on, check it, and clear the marker. True if it is on."""
+        for _ in range(2):
+            self._run(["timedatectl", "set-ntp", "true"])
+            if self._show("NTP"):
+                m = self._marker()
+                if m:
+                    try:
+                        os.unlink(m)
+                    except FileNotFoundError:
+                        pass
+                return True
+        return False
+
+    def recover(self):
+        """At start: if an earlier run switched network time off and died before switching it back, switch it on."""
+        m = self._marker()
+        if m and os.path.exists(m):
+            ok = self._ntp_on()
+            self.log("pvj-sysd: network time was left off by an interrupted clock change; %s"
+                     % ("switched it back on" if ok else "could NOT switch it back on"))
+            return ok
+        return None
+
+    def set_time(self, epoch):
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or not MIN_EPOCH <= epoch <= MAX_EPOCH:
+            return {"ok": False, "error": "that is not a sensible date"}
+        with self.lock:
+            synced = self.synchronized()
+            if synced is None:
+                return {"ok": False, "error": "cannot tell whether the clock is set from the network; not changing it"}
+            if synced:
+                return {"ok": False, "error": "the clock is already set from the network"}
+            ntp_was_on = self._show("NTP")
+            stamp = datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            if ntp_was_on:
+                m = self._marker()
+                if m:
+                    with open(m, "w") as f:
+                        f.write("1\n")
+                code, out = self._run(["timedatectl", "set-ntp", "false"])
+                if code != 0:
+                    self._ntp_on()
+                    return {"ok": False, "error": "could not pause network time: %s" % out.strip()[-160:]}
+            code, out = self._run(["timedatectl", "--adjust-system-clock", "set-time", stamp + " UTC"])
+            back_on = self._ntp_on() if ntp_was_on else True
+            self._status = None
+            if code != 0:
+                return {"ok": False, "error": "the clock could not be set: %s" % out.strip()[-160:]}
+            if not back_on:
+                return {"ok": False, "error": "the clock was set, but network time could not be switched back on"}
+            now = int(self._now())
+            self.log("pvj-sysd: clock set to %s UTC by the panel" % stamp)
+            if abs(now - epoch) > 120:
+                return {"ok": False, "error": "the clock was set but moved again (to %s UTC); a saved clock may be ahead"
+                        % datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M")}
+            return {"ok": True, "now": now}
+
+    # --- the time zone (J-129) -------------------------------------------------
+    zoneinfo_root = tz_mod.ZONEINFO
+
+    def timezone(self):
+        """{"ok", "timezone"}: the zone systemd reports (read-only)."""
+        code, out = self._run(["timedatectl", "show", "--property=Timezone", "--value"])
+        name = out.strip()
+        if code != 0 or not tz_mod.NAME.fullmatch(name):
+            return {"ok": False, "error": "cannot read the time zone"}
+        return {"ok": True, "timezone": name}
+
+    def set_timezone(self, zone):
+        """Set the time zone: the name is checked (tz.valid_zone, then `timedatectl list-timezones`, which must name it: no list, no change),
+        `timedatectl set-timezone` is run with that one name, and the zone is read back and compared."""
+        if not tz_mod.valid_zone(zone, self.zoneinfo_root):
+            return {"ok": False, "error": "that is not a time zone this node knows"}
+        with self.lock:
+            code, out = self._run(["timedatectl", "list-timezones"])
+            listed = out.split() if code == 0 else []
+            if zone not in listed:          # fails closed: a list that cannot be read, or is empty, allows nothing
+                return {"ok": False, "error": "that is not a time zone this node knows"}
+            code, out = self._run(["timedatectl", "set-timezone", "--", zone])
+            self._status = None
+            if code != 0:
+                return {"ok": False, "error": "the time zone could not be set: %s" % out.strip()[-160:]}
+            read = self.timezone()
+        if not read["ok"] or read["timezone"] != zone:
+            return {"ok": False, "error": "the time zone was set, but reading it back gave %s" % (read.get("timezone") or "no answer")}
+        self.log("pvj-sysd: time zone set to %s by the panel" % zone)
+        return {"ok": True, "timezone": zone}
+
+    def av_output(self, enable, norm):
+        """Turn the AV output on or off in config.txt and cmdline.txt (bootcfg.apply: backups first, nothing else touched).
+        `norm` is one of bootcfg.NORMS (NTSC when none is sent) and counts only for on."""
+        from . import bootcfg
+        if not isinstance(enable, bool):
+            return {"ok": False, "error": "enable must be true or false"}
+        norm = bootcfg.DEFAULT_NORM if norm is None else norm
+        if enable and (not isinstance(norm, str) or norm not in bootcfg.NORMS):
+            return {"ok": False, "error": "the TV standard must be one of %s" % ", ".join(bootcfg.NORMS)}
+        with self.lock:
+            try:
+                res = bootcfg.apply(enable, norm if enable else None, root=self.boot_root, now=self._now)
+            except bootcfg.BootError as e:
+                out = {"ok": False, "error": str(e)}
+                if e.state:
+                    out["state"] = e.state          # a file may have been left changed: the panel can show what the boot files say now
+                return out
+        self.log("pvj-sysd: AV output %s%s by the panel; backups %s" % ("on (%s)" % norm if enable else "off", "" if res["changed"] else " (nothing to change)",
+                                                                       ", ".join(res["backups"]) or "none"))
+        return {"ok": True, "changed": res["changed"], "backups": res["backups"], "restart_needed": res["changed"],
+                "enabled": res["state"]["composite"], "norm": res["state"]["norm"]}
+
+    boot_root = "/"
+
+    THROTTLED = re.compile(r"throttled=0x([0-9a-fA-F]{1,8})")
+
+    def throttled(self):
+        """{"ok", "bits"}: the firmware's throttling word, read by `vcgencmd get_throttled` (a fixed argument list, nothing from
+        the caller). Only a Raspberry Pi has it: elsewhere (no vcgencmd, or no firmware to ask) the answer is ok False and the
+        panel says the state is unknown. Read-only; the panel asks about every five seconds while the stats overlay is on."""
+        code, out = self._run(["vcgencmd", "get_throttled"], timeout=3)
+        m = self.THROTTLED.fullmatch(out.strip()) if code == 0 else None
+        if not m:
+            return {"ok": False, "error": "the throttling state is not available on this node"}
+        return {"ok": True, "bits": int(m.group(1), 16)}
+
+    @staticmethod
+    def _bounded(value, low, high, default):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+            return default
+        return int(min(max(value, low), high))
+
+    def journal(self, lines=None, hours=None, boot=None):
+        """The node's own pvj-* log lines: {"ok", "lines", "boot", "persistent", "read_only_root", "cut"}. `lines` (at most
+        500, default 300), `hours` (1 to 168, default 24; the current boot only) and `boot` (0 this start, -1 the one
+        before; anything else is 0) are bounded here. Raw: the panel, which knows the secrets, scrubs them. The reply is
+        cut from the old end to fit what the panel reads."""
+        lines = self._bounded(lines, 1, JOURNAL_LINES_MAX, JOURNAL_LINES)
+        hours = self._bounded(hours, 1, JOURNAL_HOURS_MAX, JOURNAL_HOURS)
+        boot = -1 if boot == -1 and not isinstance(boot, bool) else 0
+        argv = ["journalctl", "--no-pager", "-q", "-o", "short-iso", "--boot=%d" % boot, "-n", str(lines)]
+        if boot == 0:
+            argv += ["--since", "-%dh" % hours]
+        for unit in JOURNAL_UNITS:
+            argv += ["-u", unit]
+        code, out = self._run(argv, timeout=JOURNAL_SECONDS)
+        if code != 0:
+            why = ("it did not answer within %d seconds" % JOURNAL_SECONDS) if "timed out" in out else out.strip()[-160:]
+            self.log("pvj-sysd: journalctl failed: %s" % why)         # so the node's own journal says why (device row EV1)
+            return {"ok": False, "error": "the system log could not be read: %s" % why}
+        rows = [l[:JOURNAL_LINE_MAX] for l in out.splitlines() if l.strip()][-lines:]
+        kept, used = [], 0
+        for line in reversed(rows):                         # the newest first in the budget, then back to the order
+            used += len(json.dumps(line)) + 2
+            if used > JOURNAL_BYTES:
+                break
+            kept.append(line)
+        kept.reverse()
+        from . import rootfs
+        return {"ok": True, "lines": kept, "boot": boot, "cut": len(rows) - len(kept),
+                "persistent": os.path.isdir(self.journal_dir), "read_only_root": rootfs.current_state() == "overlay"}
+
+    journal_dir = "/var/log/journal"
+
+    UPDATE_SOURCES = ("usb", "inbox")
+    UPDATE_VERSION = re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}")
+
+    def update(self, source, version):
+        """Start pvj-update-<source>@<version>.service, a fixed template unit (pvj-update checks the signature,
+        refuses older versions and rolls back by itself). Only the source, from a fixed list, and a version that
+        is three numbers reach systemctl."""
+        if source not in self.UPDATE_SOURCES:
+            return {"ok": False, "error": "source must be usb or inbox"}
+        if not isinstance(version, str) or not self.UPDATE_VERSION.fullmatch(version):
+            return {"ok": False, "error": "version must look like 1.2.3"}
+        with self.lock:                       # two requests at once must not both see "nothing running"
+            code, out = self._run(["systemctl", "list-units", "--plain", "--no-legend", "--state=active,activating",
+                                   "pvj-update-usb@*.service", "pvj-update-inbox@*.service"])
+            if code != 0 or out.strip():
+                return {"ok": False, "error": "an update is already running"}
+            code, out = self._run(["systemctl", "start", "--no-block", "pvj-update-%s@%s.service" % (source, version)])
+        if code != 0:
+            return {"ok": False, "error": "could not start the update: %s" % out.strip()[-160:]}
+        self.log("pvj-sysd: update to %s from %s started by the panel" % (version, source))
+        return {"ok": True, "started": source, "version": version}
+
+    # --- announcing the node to the local network (D127) ------------------------------------------------------------
+    AVAHI_SERVICES = "/etc/avahi/services"
+    AVAHI_SOCKET = "/run/avahi-daemon/socket"
+    FLEET_FILE = "nxlx-mastercontrol.service"
+    FLEET_TIERS = ("lean", "standard", "full", "unknown")
+    FLEET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}")
+    FLEET_ID = re.compile(r"[0-9a-f]{32}")
+    FLEET_VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+-]{0,19}")
+
+    def _avahi(self):
+        """"missing" (no folder for service files), "stopped" (the folder, no running daemon) or "running"."""
+        if not os.path.isdir(self.avahi_services):
+            return "missing"
+        return "running" if os.path.exists(self.avahi_socket) else "stopped"
+
+    def fleet_announce(self, message):
+        """Write the one avahi service file that says `_nxlx._tcp` with the node's id, name, tier and version. Every field
+        is checked against a fixed pattern here, whatever the panel sent, and the file is rendered from a fixed template:
+        nothing from the request is a path or a command, and nothing runs (avahi-daemon watches its folder and picks the
+        file up). The file is replaced whole by a rename and left alone when it would not change."""
+        ident, name, tier, version, port = (message.get(k) for k in ("id", "name", "tier", "version", "port"))
+        secure = message.get("https")
+        if not (isinstance(ident, str) and self.FLEET_ID.fullmatch(ident) and isinstance(name, str) and self.FLEET_NAME.fullmatch(name)
+                and tier in self.FLEET_TIERS and isinstance(version, str) and self.FLEET_VERSION.fullmatch(version)
+                and isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535 and isinstance(secure, bool)):
+            return {"ok": False, "error": "the announcement has a field that is not valid"}
+        state = self._avahi()
+        if state == "missing":
+            return {"ok": True, "avahi": "missing"}
+        text = ("<?xml version=\"1.0\" standalone='no'?>\n"
+                "<!DOCTYPE service-group SYSTEM \"avahi-service.dtd\">\n"
+                "<!-- Written by pvj-sysd for nxlx.mastercontrol; the panel's discovery switch removes it. -->\n"
+                "<service-group>\n  <name replace-wildcards=\"yes\">%h</name>\n  <service>\n    <type>_nxlx._tcp</type>\n"
+                "    <port>" + str(port) + "</port>\n"
+                "    <txt-record>txtvers=1</txt-record>\n"
+                "    <txt-record>id=" + ident + "</txt-record>\n"
+                "    <txt-record>name=" + name + "</txt-record>\n"
+                "    <txt-record>tier=" + tier + "</txt-record>\n"
+                "    <txt-record>version=" + version + "</txt-record>\n"
+                "    <txt-record>https=" + ("1" if secure else "0") + "</txt-record>\n"
+                "  </service>\n</service-group>\n")
+        final = os.path.join(self.avahi_services, self.FLEET_FILE)
+        with self.lock:                          # one writer at a time: the temporary name is fixed
+            try:
+                with open(final, "r", encoding="utf-8") as f:
+                    if f.read(len(text) + 1) == text:
+                        self._fleet_fail = None
+                        return {"ok": True, "avahi": state}
+            except OSError:
+                pass
+            tmp = os.path.join(self.avahi_services, ".nxlx-mastercontrol.tmp")      # avahi reads only names ending in .service
+            try:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(text)
+                    os.fchmod(f.fileno(), 0o644)            # the unit's UMask would make it 0640, which avahi's own account cannot read
+                os.replace(tmp, final)
+            except OSError as e:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                self._fleet_failed("the avahi service file was not written: %s" % e)
+                return {"ok": False, "error": "the service file could not be written"}
+            self._fleet_fail = None
+        self.log("pvj-sysd: announcing this node as %s (id %s)" % (name, ident[:8]))
+        return {"ok": True, "avahi": state}
+
+    def _fleet_failed(self, text):
+        """A failure to write or remove the file, logged once per change of reason: the panel asks again every minute
+        (on a read-only root every time would be the same line)."""
+        if text != self._fleet_fail:
+            self._fleet_fail = text
+            self.log("pvj-sysd: " + text)
+
+    def fleet_withdraw(self):
+        """Remove the service file (the switch is off). Nothing to do is also ok."""
+        with self.lock:
+            try:
+                os.unlink(os.path.join(self.avahi_services, self.FLEET_FILE))
+                self.log("pvj-sysd: no longer announcing this node")
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                self._fleet_failed("the avahi service file was not removed: %s" % e)
+                return {"ok": False, "error": "the service file could not be removed"}
+            self._fleet_fail = None
+        return {"ok": True}
+
+    def handle(self, message):
+        if not isinstance(message, dict):
+            return {"ok": False, "error": "bad request"}
+        cmd = message.get("cmd")
+        if cmd == "status":
+            return self.status()
+        if cmd in ("reboot", "poweroff"):
+            return self.power(cmd)
+        if cmd == "set_time":
+            return self.set_time(message.get("epoch"))
+        if cmd == "timezone":
+            return self.timezone()
+        if cmd == "set_timezone":
+            return self.set_timezone(message.get("zone"))
+        if cmd == "update":
+            return self.update(message.get("source"), message.get("version"))
+        if cmd == "av_output":
+            return self.av_output(message.get("enable"), message.get("norm"))
+        if cmd == "journal":
+            return self.journal(message.get("lines"), message.get("hours"), message.get("boot"))
+        if cmd == "fleet_announce":
+            return self.fleet_announce(message)
+        if cmd == "fleet_withdraw":
+            return self.fleet_withdraw()
+        if cmd == "throttled":
+            return self.throttled()
+        return {"ok": False, "error": "unknown command"}
+
+
+class SysdClient:
+    """Used by the panel: one request, one reply."""
+
+    def __init__(self, path, timeout=90):          # longer than the helper's worst case (four 15 s commands)
+        self.path, self.timeout = path, timeout
+
+    def request(self, message):
+        try:
+            reply = json.loads(exchange(self.path, message, self.timeout))
+        except socket.timeout:
+            raise OSError("the system helper (pvj-sysd) did not answer in time; the change may still be going on")
+        except (OSError, ValueError):
+            raise OSError("the system helper (pvj-sysd) is not running")
+        if not isinstance(reply, dict):
+            raise OSError("the system helper (pvj-sysd) gave a bad answer")
+        return reply
+
+def main(argv=None):
+    import grp
+    import pwd
+    # Its own folder (root:pvj 0750): nobody but root can create or replace anything in it, so no member of group
+    # pvj can put a fake socket in its place.
+    rundir = paths.sysd_dir()
+    os.makedirs(rundir, exist_ok=True)
+    allowed = {0}
+    try:
+        allowed.add(pwd.getpwnam("pvj-web").pw_uid)
+    except KeyError:
+        pass
+    service = SysService(log=lambda m: print(m, flush=True), rundir=rundir)
+    service.recover()
+    server = NetServer(os.path.join(rundir, paths.SYSD_SOCKET), service, lambda uid: uid in allowed)
+    try:
+        os.chown(server.server_address, 0, grp.getgrnam("pvj").gr_gid, follow_symlinks=False)
+    except (KeyError, OSError):
+        pass
+    print("pvj-sysd: ready", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    return 0

@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Locks that know their place (pvj/locks.py, D71), for the tests. Tests only.
+"""Locks that know their place (mctl/locks.py, D71), for the tests. Tests only.
 
 Six reviews each found an order of events that made two threads wait for each other or act in the wrong order, and
 the last one found a real deadlock that readers and a stress test had missed. A lock order kept by readers is not
-kept. With this module's factory in pvj.locks (tests/__init__.py puts it there for every test), each lock of the
+kept. With this module's factory in mctl.locks (tests/__init__.py puts it there for every test), each lock of the
 order remembers, per thread, what that thread holds. A thread that waits for a lock while it holds one that stands
 LATER in the order breaks the rule: the taking raises AssertionError, with both locks' names and the place in the
 code where the held one was taken, and the breach is also written down, because the code under test catches
@@ -19,7 +19,7 @@ RLock that the thread already holds.
 import threading
 import traceback
 
-from pvj import locks
+from mctl import locks
 
 _held = threading.local()           # .stack: [(place, name, lock, where it was taken)]
 breaches = []                       # what was seen and not yet shown: never thrown away, only handed on by take()

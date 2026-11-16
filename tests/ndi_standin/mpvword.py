@@ -19,8 +19,8 @@ import time
 
 WIDTH, HEIGHT, FRAMES_A_SECOND = 320, 180, 30
 LOOKED = ("path", "idle-active", "core-idle", "time-pos", "audio-pts", "track-list/count", "track-list", "video-params", "audio-params", "eof-reached")
-CHAIN = ("PVJ-STANDIN (big moving with sound)", "PVJ-STANDIN (big at once A with sound)", "PVJ-STANDIN (big at once B with sound)",
-         "PVJ-STANDIN (big changes size with sound)", "PVJ-STANDIN (one still then sound)", "PVJ-STANDIN (big moving with sound)")
+CHAIN = ("MCTL-STANDIN (big moving with sound)", "MCTL-STANDIN (big at once A with sound)", "MCTL-STANDIN (big at once B with sound)",
+         "MCTL-STANDIN (big changes size with sound)", "MCTL-STANDIN (one still then sound)", "MCTL-STANDIN (big moving with sound)")
 
 
 TRYING = "; trying again"              # how the page's "ended" closes while the panel's watch is still bringing a source back
@@ -657,7 +657,7 @@ def case_sync_paused(rig, name, still=20.0):
 
 
 # ---- sound from another sender (D87): the picture of one source, the sound of another -----------------------------------
-# What these show and what they cannot is in pvj/NDI.md ("Sound from another sender: what the tests show"). In short:
+# What these show and what they cannot is in mctl/NDI.md ("Sound from another sender: what the tests show"). In short:
 # the stand-in's two sources share ONE clock, the process's; two real senders share none. And every number here is
 # mpv's own (its tracks, its audio-pts, its avsync, its audio-delay): nobody hears anything.
 SOUND_AFTER_IT_APPEARS = 12.0          # (c): mpv plays the sound within this long after the sound source is on the network

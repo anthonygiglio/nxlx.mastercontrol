@@ -4,10 +4,10 @@ import os
 import tempfile
 import unittest
 
-from pvj import auth as auth_mod, pinscreen
-from pvj.auth import Auth, AuthError
-from pvj.player import PlayerError
-from pvj.settings import Settings
+from mctl import auth as auth_mod, pinscreen
+from mctl.auth import Auth, AuthError
+from mctl.player import PlayerError
+from mctl.settings import Settings
 import tests
 from tests.test_pinscreen import Api as PinApi, Auth as PinAuth, Player as PinPlayer
 from tests.test_server import ServerBase
@@ -736,7 +736,7 @@ class PresenterGuestCodeTest(AccessApiTest):
 
 class HostCheckTest(ServerBase):
     def test_only_ip_addresses_and_our_own_names_are_answered(self):
-        from pvj import server
+        from mctl import server
         names = {"localhost", "box", "box.local", "studio.example"}
         for good in ("192.168.0.169", "192.168.0.169:80", "[fe80::1]", "[::1]:8080", "localhost:8080", "box.local", "BOX.LOCAL", "studio.example", "box."):
             self.assertTrue(server.host_allowed(good, names), good)
@@ -751,7 +751,7 @@ class HostCheckTest(ServerBase):
         self.assertEqual(self.call("GET", "/api/hello", headers={"Host": "attacker.example"})[0], 421)
 
     def test_extra_names_from_the_environment(self):
-        from pvj import server
+        from mctl import server
         self.assertIn("screen.studio", server.allowed_names({"PVJ_ALLOWED_HOSTS": " Screen.Studio , ,other"}))
 
 
@@ -789,7 +789,7 @@ class QrEndpointTest(ServerBase):
     @unittest.skipUnless(__import__("shutil").which("zbarimg"), "needs zbar")
     def test_the_code_qr_decodes_to_the_join_link(self):
         import subprocess
-        from pvj import qr
+        from mctl import qr
         code = self.call("POST", "/api/access/code", {"role": "live"}, token=self.full)[1]["codes"][0]["code"]
         text = "http://127.0.0.1:%d/#code=%s" % (self.port, code)
         path = os.path.join(self.tmp, "c.png")

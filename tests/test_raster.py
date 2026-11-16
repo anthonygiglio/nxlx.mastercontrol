@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Safe image upload (D129, slice 1 of design/text-and-logo-sources_2026-11-08.md): pvj/raster.py and pvj-raster.
+"""Safe image upload (D129, slice 1 of design/text-and-logo-sources_2026-11-08.md): mctl/raster.py and pvj-raster.
 
 Three layers:
 
@@ -25,7 +25,7 @@ import unittest
 import zlib
 
 import tests  # noqa: F401  (the package: ranked locks and a temp folder of its own, as every test module)
-from pvj import api as api_mod, policy, raster
+from mctl import api as api_mod, policy, raster
 from tests.test_roles import RolesBase
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -985,7 +985,7 @@ class RealGraphicsTest(unittest.TestCase):
                         "no empty margin: the picture is cut to the ink on every side")
 
     def test_every_bundled_font_draws_and_a_weight_changes_a_variable_one(self):
-        from pvj import graphics
+        from mctl import graphics
         for f in graphics.FONTS:
             done = self.draw(text_params("AaBbCc 0123", font=f["id"], size=80))
             self.assertEqual(done["missing"], 0, f["id"])

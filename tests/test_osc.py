@@ -8,12 +8,12 @@ import tempfile
 import time
 import unittest
 
-from pvj import osc, themes as themes_mod
-from pvj.api import Api
-from pvj.auth import Auth
-from pvj.modules import Registry
-from pvj.osc import OscError, OscServer
-from pvj.settings import Settings
+from mctl import osc, themes as themes_mod
+from mctl.api import Api
+from mctl.auth import Auth
+from mctl.modules import Registry
+from mctl.osc import OscError, OscServer
+from mctl.settings import Settings
 from tests.test_server import FakePlayer
 
 
@@ -289,7 +289,7 @@ class OldTouchOscNamesTest(unittest.TestCase):
     def test_startmasteronce_runs_the_play_once_presets(self):
         # the old receiver ran startmasteroneNN for /startmasteronceNN; it used to fail silently here
         self.assertEqual(osc.translate("/startmasteronce07", [1.0]), ("/api/play", {"preset": "startmasterone07"}))
-        from pvj import presets
+        from mctl import presets
         self.assertFalse(presets.parse_legacy_name("startmasterone07")["loop"])
         self.assertIsNone(osc.translate("/startmasteronce07", [0.0]))         # the release does nothing
 

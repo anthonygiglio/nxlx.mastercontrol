@@ -481,7 +481,7 @@ function pages() {
 
 module.exports = { setUp, pages, closeOthers, sys, sysIndex, go, at, back, stripOpen, WALLS };
 
-// What one screen must hold in Signal (the rules are in pvj/THEMES.md). Returns what is wrong, as sentences; an
+// What one screen must hold in Signal (the rules are in mctl/THEMES.md). Returns what is wrong, as sentences; an
 // empty list is a pass. o: { area (null before pairing), desk (the area where the screen is a column of a desk,
 // when that is another), light (Signal light) }.
 async function check(pg, o) {

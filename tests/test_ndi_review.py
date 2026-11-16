@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 
-from pvj import ndi, ndiscovery as D, ndisetup
+from mctl import ndi, ndiscovery as D, ndisetup
 from tests.test_ndi import frame, wait
 from tests.test_ndi_discovery import FAKE, elf
 from tests.test_ndi_pads import HOST, NAME, REPO, RID, PadBase
@@ -44,14 +44,14 @@ class UpdateOverAnOlderSetUp(unittest.TestCase):
     def test_a_folder_that_tmpfiles_makes_is_never_a_reason_for_a_unit_not_to_start(self):
         made = [l.split()[1] for l in ndisetup.TMPFILES_TEXT.splitlines() if l.startswith("d ")]
         self.assertEqual(made, ["/run/pvj-ndi-pipe", "/run/pvj-ndi-config"])
-        for name, text in (("pvj-ndi.service", read("pvj", "systemd", "pvj-ndi.service")), ("the panel's drop-in", ndisetup.WEB_TEXT),
-                           ("the player's drop-in", ndisetup.PLAYER_TEXT), ("pvj-ndi-discovery.service", read("pvj", "systemd", "pvj-ndi-discovery.service"))):
+        for name, text in (("pvj-ndi.service", read("mctl", "systemd", "pvj-ndi.service")), ("the panel's drop-in", ndisetup.WEB_TEXT),
+                           ("the player's drop-in", ndisetup.PLAYER_TEXT), ("pvj-ndi-discovery.service", read("mctl", "systemd", "pvj-ndi-discovery.service"))):
             for line in text.splitlines():
                 if line.startswith(("ReadWritePaths=", "ReadOnlyPaths=", "BindPaths=", "BindReadOnlyPaths=")):
                     for word in line.split("=", 1)[1].split():
                         if word.lstrip("-+") in made:
                             self.assertTrue(word.startswith("-"), "%s: %s names a folder that may not be there yet, without the dash" % (name, word))
-        self.assertIn("ReadWritePaths=/run/pvj-ndi -/run/pvj-ndi-pipe\n", read("pvj", "systemd", "pvj-ndi.service"))
+        self.assertIn("ReadWritePaths=/run/pvj-ndi -/run/pvj-ndi-pipe\n", read("mctl", "systemd", "pvj-ndi.service"))
 
     def test_the_set_up_commands_make_the_folders_themselves(self):
         ran = []
@@ -61,7 +61,7 @@ class UpdateOverAnOlderSetUp(unittest.TestCase):
                         root=root, check=lambda r: None, sleep=lambda s: None, overlay=lambda: False)
         self.assertIn(["systemd-tmpfiles", "--create", ndisetup.TMPFILES_PATH], ran)
         self.assertLess(ran.index(["systemd-tmpfiles", "--create", ndisetup.TMPFILES_PATH]), ran.index(["systemctl", "restart", ndisetup.UNIT]))
-        self.assertNotIn("tmpfiles", D.WEB_TEXT + read("pvj", "systemd", "pvj-ndi-discovery.service").split("[Unit]")[1])      # the discovery server needs none: its only folder is its RuntimeDirectory
+        self.assertNotIn("tmpfiles", D.WEB_TEXT + read("mctl", "systemd", "pvj-ndi-discovery.service").split("[Unit]")[1])      # the discovery server needs none: its only folder is its RuntimeDirectory
 
     def test_the_real_install_job_updates_over_a_box_whose_folders_were_never_made(self):
         sh = read("tests", "real_install_test.sh")
@@ -200,9 +200,9 @@ class ConfigurationBesideTheProgram(unittest.TestCase):
         self.assertIsNone(s.child)
 
     def test_the_docs_say_what_a_pad_follows_and_where_the_program_reads_from(self):
-        for doc in (read("pvj", "NDI.md"), read("SECURITY.md")):
+        for doc in (read("mctl", "NDI.md"), read("SECURITY.md")):
             self.assertIn("ndi-discovery-service.v1.json", doc)
-        text = read("pvj", "NDI.md")
+        text = read("mctl", "NDI.md")
         self.assertRegex(text, r"a name at an IP address")
         self.assertIn("another port", text)
         self.assertFalse(re.search("—", text))

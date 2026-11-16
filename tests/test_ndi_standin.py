@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The stand-in for NDI's library (tests/ndi_standin/standin.c), built with this machine's C compiler and driven by
 the helper's own code: the real CtypesLibrary, the real Service and Receiver, a real pipe. It shows that the
-stand-in and pvj/ndi.py agree on every structure and call, which is what tests/real_install_test.sh then leans on
+stand-in and mctl/ndi.py agree on every structure and call, which is what tests/real_install_test.sh then leans on
 when it runs the same file under systemd. Skipped where there is no C compiler. It says nothing about NDI's own
 library: no test in this repository can."""
 import ctypes
@@ -17,27 +17,27 @@ import time
 import unittest
 
 import tests  # noqa: F401  (the package: its lock checker and its temp folder, also when this file is started alone)
-from pvj import ndi
+from mctl import ndi
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE = os.path.join(REPO, "tests", "ndi_standin", "standin.c")
 CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 WIDTH, HEIGHT, FPS = 320, 180, 30.0
 FRAME = 2 * WIDTH * HEIGHT
-MOVING, SOUND, STILL = "PVJ-STANDIN (moving)", "PVJ-STANDIN (moving with sound)", "PVJ-STANDIN (one still then sound)"
-AT_ONCE_A, AT_ONCE_B, CHANGES = "PVJ-STANDIN (at once A)", "PVJ-STANDIN (at once B)", "PVJ-STANDIN (changes size)"
-BIG_SOUND, BIG_CHANGES_SOUND = "PVJ-STANDIN (big moving with sound)", "PVJ-STANDIN (big changes size with sound)"
-BIG = (BIG_SOUND, "PVJ-STANDIN (big one still then sound)", "PVJ-STANDIN (big at once A)", "PVJ-STANDIN (big at once B)",
-       "PVJ-STANDIN (big at once A with sound)", "PVJ-STANDIN (big at once B with sound)", "PVJ-STANDIN (big changes size)", BIG_CHANGES_SOUND)
-THEN_STILL = "PVJ-STANDIN (moving then still with sound)"
-STILL_SHORT_GAP, STILL_LONG_GAP = "PVJ-STANDIN (one still then sound after a short gap)", "PVJ-STANDIN (one still then sound after a long gap)"
-THEN_STILL_GAP = "PVJ-STANDIN (moving then still with sound after a short gap)"
-PAUSES = "PVJ-STANDIN (moving with sound pauses 20 s)"
-LATE = tuple("PVJ-STANDIN (moving with sound late by %s)" % t for t in ("0.2 s", "0.8 s", "5 s"))
+MOVING, SOUND, STILL = "MCTL-STANDIN (moving)", "MCTL-STANDIN (moving with sound)", "MCTL-STANDIN (one still then sound)"
+AT_ONCE_A, AT_ONCE_B, CHANGES = "MCTL-STANDIN (at once A)", "MCTL-STANDIN (at once B)", "MCTL-STANDIN (changes size)"
+BIG_SOUND, BIG_CHANGES_SOUND = "MCTL-STANDIN (big moving with sound)", "MCTL-STANDIN (big changes size with sound)"
+BIG = (BIG_SOUND, "MCTL-STANDIN (big one still then sound)", "MCTL-STANDIN (big at once A)", "MCTL-STANDIN (big at once B)",
+       "MCTL-STANDIN (big at once A with sound)", "MCTL-STANDIN (big at once B with sound)", "MCTL-STANDIN (big changes size)", BIG_CHANGES_SOUND)
+THEN_STILL = "MCTL-STANDIN (moving then still with sound)"
+STILL_SHORT_GAP, STILL_LONG_GAP = "MCTL-STANDIN (one still then sound after a short gap)", "MCTL-STANDIN (one still then sound after a long gap)"
+THEN_STILL_GAP = "MCTL-STANDIN (moving then still with sound after a short gap)"
+PAUSES = "MCTL-STANDIN (moving with sound pauses 20 s)"
+LATE = tuple("MCTL-STANDIN (moving with sound late by %s)" % t for t in ("0.2 s", "0.8 s", "5 s"))
 # sound from another sender (D87): a sender with sound and no picture, and the ways it can come and go
-SOUND_ONLY, SOUND_ONLY_STOPS = "PVJ-STANDIN (sound only)", "PVJ-STANDIN (sound only stops after 12 s)"
-SOUND_ONLY_APPEARS = "PVJ-STANDIN (sound only appears 5 s after the first picture)"
-FLASHES, SOUND_ONLY_CLICKS = "PVJ-STANDIN (flashes)", "PVJ-STANDIN (sound only clicks 200 ms late)"
+SOUND_ONLY, SOUND_ONLY_STOPS = "MCTL-STANDIN (sound only)", "MCTL-STANDIN (sound only stops after 12 s)"
+SOUND_ONLY_APPEARS = "MCTL-STANDIN (sound only appears 5 s after the first picture)"
+FLASHES, SOUND_ONLY_CLICKS = "MCTL-STANDIN (flashes)", "MCTL-STANDIN (sound only clicks 200 ms late)"
 NOT_ALWAYS_THERE = (SOUND_ONLY_APPEARS,)       # the finder does not report it from the start (standin.c says when)
 ONLY_HERE = ((AT_ONCE_A, AT_ONCE_B, THEN_STILL, STILL_SHORT_GAP, STILL_LONG_GAP, THEN_STILL_GAP, PAUSES) + LATE      # for this file and tests/test_ndi_mpv.py
              + (SOUND_ONLY_STOPS, SOUND_ONLY_APPEARS, FLASHES, SOUND_ONLY_CLICKS))
@@ -109,7 +109,7 @@ class Built(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.build = tempfile.mkdtemp(prefix="pvj-standin-")
+        cls.build = tempfile.mkdtemp(prefix="mctl-standin-")
         cls.path = os.path.join(cls.build, ndi.LIB_NAME)
         done = subprocess.run([CC, "-shared", "-fPIC", "-pthread", "-O2", "-Wall", "-Wextra", "-o", cls.path, SOURCE],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
@@ -127,7 +127,7 @@ class Built(unittest.TestCase):
         return self.path
 
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="pvj-standin-run-")
+        self.dir = tempfile.mkdtemp(prefix="mctl-standin-run-")
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.said = []
         self.loaded = self.library()
@@ -410,7 +410,7 @@ class SoundFromAnotherSender(Built):
     because the stand-in counts every receiver that was made in it, and that count is what is read here."""
 
     def library(self):
-        folder = tempfile.mkdtemp(prefix="pvj-standin-own-", dir=self.dir)
+        folder = tempfile.mkdtemp(prefix="mctl-standin-own-", dir=self.dir)
         self.addCleanup(shutil.rmtree, folder, True)
         own = os.path.join(folder, ndi.LIB_NAME)
         shutil.copy(self.path, own)

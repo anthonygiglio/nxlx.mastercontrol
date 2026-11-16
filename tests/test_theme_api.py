@@ -6,8 +6,8 @@ import json
 import os
 import re
 
-from pvj import boxcare, server, support as sp, themes
-from pvj.api import ApiError
+from mctl import boxcare, server, support as sp, themes
+from mctl.api import ApiError
 from tests.test_support import LAN, TUNNEL, SupportBase
 from tests.test_themes import SIGNAL, mine
 

@@ -16,8 +16,8 @@ import tempfile
 import threading
 import unittest
 
-from pvj import httpsbox, server
-from pvj.settings import Settings
+from mctl import httpsbox, server
+from mctl.settings import Settings
 import tests
 from tests.test_boxcert import TOOL, openssls
 from tests.test_server import ServerBase
@@ -52,7 +52,7 @@ class HttpsBase(ServerBase):
                                      now=self.clock, log=self.lines.append)
         self.api.https = self.box
         handler = server.make_handler(self.api, self.auth, self.web, host_names=HOSTS)
-        self.plain = server.PvjServer(("127.0.0.1", 0), handler)
+        self.plain = server.MctlServer(("127.0.0.1", 0), handler)
         self.port = self.plain.server_address[1]
         threading.Thread(target=self.plain.serve_forever, daemon=True).start()
         self.addCleanup(self.plain.server_close)
@@ -600,7 +600,7 @@ class HttpsTest(HttpsBase):
         self.assertEqual(httpsbox.pem_blocks("x\n-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\ny")[0][0], b"\x00")
 
     def test_an_owner_code_from_a_controller_is_refused_over_plain_http_while_the_switch_is_on(self):
-        from pvj import auth as auth_mod
+        from mctl import auth as auth_mod
         secure = self.switched_on()
         with self.settings.lock:
             self.settings.data["controller_code"] = {"enabled": True, "owner": True}
@@ -674,7 +674,7 @@ class HttpsTest(HttpsBase):
     def test_the_routes_are_the_owners_and_pass_the_same_gate_as_every_other(self):
         """D80 met D79 in a merge: each route here has its row in policy.OUTSIDE and asks Api.gate, so an Operator
         (who gained much of what was the Owner's) and a Guest with guest controls open gain nothing here."""
-        from pvj import policy
+        from mctl import policy
         operator = self.call("POST", "/api/devices/invite", {"name": "op", "role": "live"}, token=self.full)[1]["token"]
         routes = sorted(k for k in policy.OUTSIDE if k[1].startswith("/api/https"))
         self.assertEqual(len(routes), 10)
@@ -701,7 +701,7 @@ class HttpsTest(HttpsBase):
         self.assertEqual(sorted(policy.NO_GATE), [("GET", "/api/fleet/card"), ("GET", "/api/https/probe")])
         self.assertEqual(tuple(self.call("GET", "/api/https/probe")[:2]), (200, {"https": False}))
 
-        from pvj import support as support_mod
+        from mctl import support as support_mod
         self.assertTrue(any(p == "/api/https" for p in support_mod.REMOTE_DENY_PREFIX))
 
 
@@ -772,27 +772,31 @@ class ReaderTest(unittest.TestCase):
 
 class OlderReleaseTest(unittest.TestCase):
     def test_master_loads_a_settings_file_with_the_https_key(self):
-        """Rollback: master's own pvj/settings.py (schema 14) loads a file this branch wrote, keeps the key it does
+        """Rollback: master's own mctl/settings.py (schema 14) loads a file this branch wrote, keeps the key it does
         not know and changes nothing. Skipped where origin/master cannot be read."""
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        try:
-            text = subprocess.run(["git", "-C", here, "show", "origin/master:pvj/settings.py"], capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.TimeoutExpired):
-            text = None
+        text = None
+        for name in ("mctl", "pvj"):       # origin/master has the package as mctl/ from the rename's PR 6 on, as pvj/ before
+            try:
+                text = subprocess.run(["git", "-C", here, "show", "origin/master:%s/settings.py" % name], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                text = None
+            if text is not None and text.returncode == 0:
+                break
         if not text or text.returncode != 0:
             self.skipTest("origin/master is not readable here")
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
-        pkg = os.path.join(tmp, "pvjmaster")
+        pkg = os.path.join(tmp, "mctlmaster")
         os.makedirs(pkg)
         open(os.path.join(pkg, "__init__.py"), "w").close()
-        shutil.copy(os.path.join(here, "pvj", "paths.py"), pkg)
+        shutil.copy(os.path.join(here, "mctl", "paths.py"), pkg)
         with open(os.path.join(pkg, "settings.py"), "w") as f:
             f.write(text.stdout)
         import sys
         sys.path.insert(0, tmp)
         self.addCleanup(sys.path.remove, tmp)
-        master = importlib.import_module("pvjmaster.settings")
+        master = importlib.import_module("mctlmaster.settings")
         self.assertEqual(master.SCHEMA, 14, "master moved on: look at the migration before trusting this test")
         path = os.path.join(tmp, "settings.json")
         s = Settings(path)

@@ -9,12 +9,12 @@ import time
 import unittest
 from unittest import mock
 
-from pvj import osc, themes as themes_mod
-from pvj.api import Api
-from pvj.auth import Auth
-from pvj.modules import Registry
-from pvj.osc import OscManager, OscServer
-from pvj.settings import Settings
+from mctl import osc, themes as themes_mod
+from mctl.api import Api
+from mctl.auth import Auth
+from mctl.modules import Registry
+from mctl.osc import OscManager, OscServer
+from mctl.settings import Settings
 from tests.test_boxcare import Base as CareBase
 from tests.test_osc import bundle, msg
 from tests.test_server import FakePlayer
@@ -242,7 +242,7 @@ class KeyTest(LayerBase):
         self.assertEqual(len({osc.new_key() for _ in range(50)}), 50)
 
     def test_the_comparison_is_constant_time(self):
-        with mock.patch("pvj.osc.hmac.compare_digest", side_effect=lambda a, b: a == b) as compare:
+        with mock.patch("mctl.osc.hmac.compare_digest", side_effect=lambda a, b: a == b) as compare:
             self.assertEqual(self.send(msg("/k/%s/mctl/speed" % KEY, 2.0)), 1)
             self.assertEqual(self.send(msg("/k/nope/mctl/speed", 2.0)), 0)
         self.assertEqual([c.args for c in compare.call_args_list], [(KEY.encode(), KEY.encode()), (b"nope", KEY.encode())])
@@ -525,7 +525,7 @@ class ApiTest(CareBase):
         self.assertEqual(self.h("POST", "/api/osc/key", {}, dev, TUNNEL)[0], 200)            # D84: a support session of the Owner's role may, and it is logged
 
     def test_showing_the_key_is_limited_and_leaves_a_journal_line_without_it(self):
-        from pvj import auth as auth_mod
+        from mctl import auth as auth_mod
         lines, t = [], [50.0]
         self.api.log, self.api.osc_clock = lines.append, lambda: t[0]
         self.assertEqual(self.post({"key_on": True})[0], 200)
@@ -702,7 +702,7 @@ def read(path):
 
 
 def boxcare_net(value):
-    from pvj import boxcare
+    from mctl import boxcare
     return boxcare._net(value)
 
 

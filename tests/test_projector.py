@@ -16,7 +16,7 @@ import time
 import unittest
 from unittest import mock
 
-from pvj import osc, projector, scheduler
+from mctl import osc, projector, scheduler
 from tests.test_roles import LAN, TUNNEL, RolesBase
 from tests.test_server import ServerBase
 
@@ -644,8 +644,8 @@ class MonitorTest(unittest.TestCase):
     """The background status: per projector, staggered, stopped with the module, never more than one thread each."""
 
     def setUp(self):
-        from pvj.settings import Settings
-        from pvj.modules import Registry
+        from mctl.settings import Settings
+        from mctl.modules import Registry
         p = LOOPBACK_OK
         p.start()
         self.addCleanup(p.stop)
@@ -1822,8 +1822,8 @@ class ScheduleAndOscTest(unittest.TestCase):
 class ScheduledProjectorTest(unittest.TestCase):
     def test_projector_entries_run_off_the_schedule_thread_and_record_the_result(self):
         import tempfile, os, time as _t
-        from pvj.settings import Settings
-        from pvj.modules import Registry
+        from mctl.settings import Settings
+        from mctl.modules import Registry
         gate = threading.Event()
 
         class Api:
@@ -2411,7 +2411,7 @@ class EpsonRollbackTest(unittest.TestCase):
             subprocess.run(["git", "-C", REPO, "rev-parse", "--verify", "-q", master + "^{commit}"], check=True, capture_output=True)
         except (OSError, subprocess.CalledProcessError):
             self.skipTest("no %s here to read the older release from" % master)
-        from pvj.settings import Settings
+        from mctl.settings import Settings
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "settings.json")

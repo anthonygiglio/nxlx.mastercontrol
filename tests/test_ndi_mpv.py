@@ -36,8 +36,8 @@ import tempfile
 import threading
 import unittest
 
-from pvj import ndi
-from pvj.player import Player
+from mctl import ndi
+from mctl.player import Player
 from tests import ndi_standin
 from tests.ndi_standin import mpvword
 from tests.test_ndi import FakeClient
@@ -49,16 +49,16 @@ FATAL = os.environ.get("PVJ_NDI_FINDINGS_FATAL", "no") == "yes"
 WANT = os.environ.get("PVJ_NDI_MPV_WANT", "")      # the start of the version this run is for, such as "0.40."
 MPV = shutil.which("mpv")
 
-MOVING, SOUND, STILL = "PVJ-STANDIN (moving)", "PVJ-STANDIN (moving with sound)", "PVJ-STANDIN (one still then sound)"
-THEN_STILL = "PVJ-STANDIN (moving then still with sound)"
-STILL_SHORT_GAP, STILL_LONG_GAP = "PVJ-STANDIN (one still then sound after a short gap)", "PVJ-STANDIN (one still then sound after a long gap)"
-THEN_STILL_GAP = "PVJ-STANDIN (moving then still with sound after a short gap)"
-BIG_SOUND, BIG_CHANGES_SOUND = "PVJ-STANDIN (big moving with sound)", "PVJ-STANDIN (big changes size with sound)"
-BIG_A_SOUND, BIG_B_SOUND = "PVJ-STANDIN (big at once A with sound)", "PVJ-STANDIN (big at once B with sound)"
-BIG_CHANGES = "PVJ-STANDIN (big changes size)"
-SOUND_ONLY, SOUND_ONLY_STOPS = "PVJ-STANDIN (sound only)", "PVJ-STANDIN (sound only stops after 12 s)"
-SOUND_ONLY_APPEARS = "PVJ-STANDIN (sound only appears 5 s after the first picture)"
-FLASHES, SOUND_ONLY_CLICKS = "PVJ-STANDIN (flashes)", "PVJ-STANDIN (sound only clicks 200 ms late)"
+MOVING, SOUND, STILL = "MCTL-STANDIN (moving)", "MCTL-STANDIN (moving with sound)", "MCTL-STANDIN (one still then sound)"
+THEN_STILL = "MCTL-STANDIN (moving then still with sound)"
+STILL_SHORT_GAP, STILL_LONG_GAP = "MCTL-STANDIN (one still then sound after a short gap)", "MCTL-STANDIN (one still then sound after a long gap)"
+THEN_STILL_GAP = "MCTL-STANDIN (moving then still with sound after a short gap)"
+BIG_SOUND, BIG_CHANGES_SOUND = "MCTL-STANDIN (big moving with sound)", "MCTL-STANDIN (big changes size with sound)"
+BIG_A_SOUND, BIG_B_SOUND = "MCTL-STANDIN (big at once A with sound)", "MCTL-STANDIN (big at once B with sound)"
+BIG_CHANGES = "MCTL-STANDIN (big changes size)"
+SOUND_ONLY, SOUND_ONLY_STOPS = "MCTL-STANDIN (sound only)", "MCTL-STANDIN (sound only stops after 12 s)"
+SOUND_ONLY_APPEARS = "MCTL-STANDIN (sound only appears 5 s after the first picture)"
+FLASHES, SOUND_ONLY_CLICKS = "MCTL-STANDIN (flashes)", "MCTL-STANDIN (sound only clicks 200 ms late)"
 STANDIN_AT = {SOUND_ONLY_APPEARS: "10.255.255.1:5985"}      # where the stand-in says a source is that its finder does not report yet
 SHOWN = ("path", "idle-active", "core-idle", "pause", "eof-reached", "time-pos", "audio-pts", "track-list/count", "track-list", "video-params",
          "audio-params", "demuxer-cache-state", "paused-for-cache", "seeking", "current-demuxer", "file-format", "mpv-version")
@@ -315,19 +315,19 @@ class NdiOnARealMpv(ServerBase):
 
     def test_31_sync_first_sound_late_by_a_fifth_of_a_second(self):
         # on the code before the sound track began at 0 this gave avsync 0.206 for 1.8 seconds (measured 2026-10-12)
-        self.must(mpvword.case_sync, "PVJ-STANDIN (moving with sound late by 0.2 s)")
+        self.must(mpvword.case_sync, "MCTL-STANDIN (moving with sound late by 0.2 s)")
 
     def test_32_sync_first_sound_late_by_eight_tenths_of_a_second(self):
-        self.must(mpvword.case_sync, "PVJ-STANDIN (moving with sound late by 0.8 s)")
+        self.must(mpvword.case_sync, "MCTL-STANDIN (moving with sound late by 0.8 s)")
 
     def test_33_sync_first_sound_late_by_five_seconds(self):
-        self.must(mpvword.case_sync, "PVJ-STANDIN (moving with sound late by 5 s)")
+        self.must(mpvword.case_sync, "MCTL-STANDIN (moving with sound late by 5 s)")
 
     def test_34_sync_after_a_re_open_at_another_size(self):
         self.must(mpvword.case_sync_resized, BIG_CHANGES_SOUND)
 
     def test_35_sync_across_a_pause_of_twenty_seconds(self):
-        self.must(mpvword.case_sync_paused, "PVJ-STANDIN (moving with sound pauses 20 s)")
+        self.must(mpvword.case_sync_paused, "MCTL-STANDIN (moving with sound pauses 20 s)")
 
     # ---- the hand-overs
     def test_20_the_same_source_twice_in_a_row(self):
@@ -358,7 +358,7 @@ class NdiOnARealMpv(ServerBase):
         self.known("the chain of hand-overs with nothing cleaned between them", mpvword.case_chain)
 
     # ---- sound from another sender (D87): the picture of one source, the sound of another. What each case shows and
-    # what none of them can is in pvj/NDI.md ("Sound from another sender: what the tests show").
+    # what none of them can is in mctl/NDI.md ("Sound from another sender: what the tests show").
     def test_40_the_picture_of_one_source_with_the_sound_of_a_sound_only_source(self):
         self.must(mpvword.case_sound_from, MOVING, SOUND_ONLY, seconds=30)
 

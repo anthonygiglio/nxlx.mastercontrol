@@ -6,7 +6,7 @@
 (function () {
   'use strict';
   var ROLES = [['owner', 'Owner'], ['operator', 'Operator'], ['guest', 'Guest'], ['nobody', 'Not paired']];
-  // The frames of pvj/PANEL.md, section 2: each inside one layout of the panel, none on a breakpoint.
+  // The frames of mctl/PANEL.md, section 2: each inside one layout of the panel, none on a breakpoint.
   var WIDTHS = [['phone', 'Phone 390', 390, 844], ['tablet', 'Tablet 820', 820, 1180], ['laptop', 'Laptop 1440', 1440, 900], ['wide', 'Wide 1728', 1728, 1117]];
   var ui = { role: 'owner', width: 'phone', data: null };
   var $ = function (id) { return document.getElementById(id); };

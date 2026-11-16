@@ -65,7 +65,7 @@ For a fleet, the server, its key and the network can be put in `/etc/pvj/support
 
 ## How it is built
 
-`pvj/support.py` (the panel's side: settings, the session, the code, the rules above) and `pvj/supportd.py` (`pvj-supportd`, a small root helper with only the network-admin capability: it creates the WireGuard interface `wg-pvj` and its firewall table, keeps the deadline itself, and removes both when it starts, stops or the time is up). See D29 in `project-log/DECISIONS.md`.
+`mctl/support.py` (the panel's side: settings, the session, the code, the rules above) and `mctl/supportd.py` (`pvj-supportd`, a small root helper with only the network-admin capability: it creates the WireGuard interface `wg-pvj` and its firewall table, keeps the deadline itself, and removes both when it starts, stops or the time is up). See D29 in `project-log/DECISIONS.md`.
 
 ## Tested
 

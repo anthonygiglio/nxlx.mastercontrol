@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Who is connected now and what each changed last (pvj/presence.py, D126): the 30 second window, what each role is told,
+"""Who is connected now and what each changed last (mctl/presence.py, D126): the 30 second window, what each role is told,
 the support session, and that nothing is ever written to the disk."""
 import json
 import os
@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import presence
+from mctl import presence
 from tests.test_boxcare import Base as CareBase
 
 

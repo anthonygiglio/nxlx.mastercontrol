@@ -5,7 +5,7 @@ import json
 import re
 import unittest
 
-from pvj import auth as auth_mod, pinscreen as pinscreen_mod
+from mctl import auth as auth_mod, pinscreen as pinscreen_mod
 from tests.test_server import ServerBase
 from tests.test_support import LAN, TUNNEL, SupportBase
 

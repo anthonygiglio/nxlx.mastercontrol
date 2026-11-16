@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * A STAND-IN for the library the NDI helper loads. It is NOT NDI and holds nothing of NDI's: it was written from
- * what pvj/ndi.py calls (class CtypesLibrary and the ctypes structures above it) and from nothing else. It sends and
+ * what mctl/ndi.py calls (class CtypesLibrary and the ctypes structures above it) and from nothing else. It sends and
  * receives nothing on any network. It exists so that the whole road from the helper to the player can be run on a
  * machine that has no copy of NDI's library (tests/real_install_test.sh, tests/test_ndi_standin.py).
  *
@@ -52,7 +52,7 @@
  *                    senders share no clock; that is why this is a stand-in's offset and nobody's measurement.)
  *
  * WHAT KIND OF RECEIVER ASKS decides too, as with the library: a receiver made with the bandwidth 10 ("sound
- * alone", what pvj/ndi.py's SoundFeed asks for) is never given a picture by ANY source, only the sound of a source
+ * alone", what mctl/ndi.py's SoundFeed asks for) is never given a picture by ANY source, only the sound of a source
  * that has sound. Every other bandwidth is a receiver that may have a picture.
  *
  * Every receiver that was ever made is counted, by its source's name and its bandwidth, and whether it was given
@@ -69,7 +69,7 @@
  * Nothing comes in the first second after a receiver is made, as a connection to a real sender takes a moment;
  * except from the two "at once" sources, which are there for the hand-over from one source to the next: a helper
  * that has its first picture at once can open the pipe while the player still holds it open from the source
- * before (see pvj/NDI.md, "What the tests prove").
+ * before (see mctl/NDI.md, "What the tests prove").
  *
  * Build:  cc -shared -fPIC -pthread -O2 -o libndi.so.6 standin.c
  */
@@ -82,7 +82,7 @@
 #include <string.h>
 #include <time.h>
 
-/* ---- the structures, field for field as pvj/ndi.py declares them (_Source, _FindCreate, _RecvCreate, _Video,
+/* ---- the structures, field for field as mctl/ndi.py declares them (_Source, _FindCreate, _RecvCreate, _Video,
  * _Audio, _Perf). The unit test compares every size and offset with ctypes (mctl_standin_layout below). */
 typedef struct {
 	const char *name;
@@ -196,33 +196,33 @@ typedef struct {
 } standin_recv;
 
 static const standin_source SOURCES[] = {
-	{"PVJ-STANDIN (moving)", "10.255.255.1:5961"},
-	{"PVJ-STANDIN (moving with sound)", "10.255.255.1:5962"},
-	{"PVJ-STANDIN (one still then sound)", "10.255.255.1:5963"},
-	{"PVJ-STANDIN (at once A)", "10.255.255.1:5964"},
-	{"PVJ-STANDIN (at once B)", "10.255.255.1:5965"},
-	{"PVJ-STANDIN (changes size)", "10.255.255.1:5966"},
-	{"PVJ-STANDIN (big moving with sound)", "10.255.255.1:5967"},
-	{"PVJ-STANDIN (big one still then sound)", "10.255.255.1:5968"},
-	{"PVJ-STANDIN (big at once A)", "10.255.255.1:5969"},
-	{"PVJ-STANDIN (big at once B)", "10.255.255.1:5970"},
-	{"PVJ-STANDIN (big at once A with sound)", "10.255.255.1:5971"},
-	{"PVJ-STANDIN (big at once B with sound)", "10.255.255.1:5972"},
-	{"PVJ-STANDIN (big changes size)", "10.255.255.1:5973"},
-	{"PVJ-STANDIN (big changes size with sound)", "10.255.255.1:5974"},
-	{"PVJ-STANDIN (moving then still with sound)", "10.255.255.1:5975"},
-	{"PVJ-STANDIN (one still then sound after a short gap)", "10.255.255.1:5976"},
-	{"PVJ-STANDIN (one still then sound after a long gap)", "10.255.255.1:5977"},
-	{"PVJ-STANDIN (moving then still with sound after a short gap)", "10.255.255.1:5978"},
-	{"PVJ-STANDIN (moving with sound late by 0.2 s)", "10.255.255.1:5979"},
-	{"PVJ-STANDIN (moving with sound late by 0.8 s)", "10.255.255.1:5980"},
-	{"PVJ-STANDIN (moving with sound late by 5 s)", "10.255.255.1:5981"},
-	{"PVJ-STANDIN (moving with sound pauses 20 s)", "10.255.255.1:5982"},
-	{"PVJ-STANDIN (sound only)", "10.255.255.1:5983"},
-	{"PVJ-STANDIN (sound only stops after 12 s)", "10.255.255.1:5984"},
-	{"PVJ-STANDIN (sound only appears 5 s after the first picture)", "10.255.255.1:5985"},
-	{"PVJ-STANDIN (flashes)", "10.255.255.1:5986"},
-	{"PVJ-STANDIN (sound only clicks 200 ms late)", "10.255.255.1:5987"},
+	{"MCTL-STANDIN (moving)", "10.255.255.1:5961"},
+	{"MCTL-STANDIN (moving with sound)", "10.255.255.1:5962"},
+	{"MCTL-STANDIN (one still then sound)", "10.255.255.1:5963"},
+	{"MCTL-STANDIN (at once A)", "10.255.255.1:5964"},
+	{"MCTL-STANDIN (at once B)", "10.255.255.1:5965"},
+	{"MCTL-STANDIN (changes size)", "10.255.255.1:5966"},
+	{"MCTL-STANDIN (big moving with sound)", "10.255.255.1:5967"},
+	{"MCTL-STANDIN (big one still then sound)", "10.255.255.1:5968"},
+	{"MCTL-STANDIN (big at once A)", "10.255.255.1:5969"},
+	{"MCTL-STANDIN (big at once B)", "10.255.255.1:5970"},
+	{"MCTL-STANDIN (big at once A with sound)", "10.255.255.1:5971"},
+	{"MCTL-STANDIN (big at once B with sound)", "10.255.255.1:5972"},
+	{"MCTL-STANDIN (big changes size)", "10.255.255.1:5973"},
+	{"MCTL-STANDIN (big changes size with sound)", "10.255.255.1:5974"},
+	{"MCTL-STANDIN (moving then still with sound)", "10.255.255.1:5975"},
+	{"MCTL-STANDIN (one still then sound after a short gap)", "10.255.255.1:5976"},
+	{"MCTL-STANDIN (one still then sound after a long gap)", "10.255.255.1:5977"},
+	{"MCTL-STANDIN (moving then still with sound after a short gap)", "10.255.255.1:5978"},
+	{"MCTL-STANDIN (moving with sound late by 0.2 s)", "10.255.255.1:5979"},
+	{"MCTL-STANDIN (moving with sound late by 0.8 s)", "10.255.255.1:5980"},
+	{"MCTL-STANDIN (moving with sound late by 5 s)", "10.255.255.1:5981"},
+	{"MCTL-STANDIN (moving with sound pauses 20 s)", "10.255.255.1:5982"},
+	{"MCTL-STANDIN (sound only)", "10.255.255.1:5983"},
+	{"MCTL-STANDIN (sound only stops after 12 s)", "10.255.255.1:5984"},
+	{"MCTL-STANDIN (sound only appears 5 s after the first picture)", "10.255.255.1:5985"},
+	{"MCTL-STANDIN (flashes)", "10.255.255.1:5986"},
+	{"MCTL-STANDIN (sound only clicks 200 ms late)", "10.255.255.1:5987"},
 };
 #define SOURCE_COUNT ((uint32_t)(sizeof SOURCES / sizeof SOURCES[0]))
 
@@ -395,7 +395,7 @@ static int capture(standin_recv *r, standin_video *video, standin_audio *audio, 
 	}
 }
 
-/* ---- the entry points pvj/ndi.py declares (CtypesLibrary._declare), and no others */
+/* ---- the entry points mctl/ndi.py declares (CtypesLibrary._declare), and no others */
 bool NDIlib_initialize(void)
 {
 	return true;
@@ -546,7 +546,7 @@ void NDIlib_recv_destroy(void *recv)
 
 int NDIlib_recv_capture_v2(void *recv, standin_video *video, void *audio, void *metadata, uint32_t timeout_ms)
 {
-	(void)audio; /* pvj/ndi.py asks this call for the picture only */
+	(void)audio; /* mctl/ndi.py asks this call for the picture only */
 	(void)metadata;
 	return capture(recv, video, NULL, timeout_ms);
 }
@@ -597,7 +597,7 @@ int mctl_standin_receivers(const char *name, int bandwidth, int open_now)
 }
 
 /* ---- for the unit test only: the size of each structure and the place of each field, in the order of the fields
- * above, so that the test can compare them with what ctypes makes of pvj/ndi.py's declarations. Returns how many
+ * above, so that the test can compare them with what ctypes makes of mctl/ndi.py's declarations. Returns how many
  * numbers there are; writes at most `room` of them. */
 int mctl_standin_layout(int *out, int room)
 {

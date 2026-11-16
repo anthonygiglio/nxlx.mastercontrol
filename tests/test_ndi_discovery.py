@@ -15,7 +15,7 @@ import tempfile
 import time
 import unittest
 
-from pvj import boxcare, ndi, ndiscovery as D, ndisetup, support
+from mctl import boxcare, ndi, ndiscovery as D, ndisetup, support
 from tests.test_ndi import wait
 from tests.test_ndi_pads import MASTER, REPO, PadBase
 from tests.test_roles import CONTROLLER_DEVICES, TUNNEL
@@ -289,7 +289,7 @@ class UnitFile(unittest.TestCase):
     def test_the_launcher_is_the_supervisor_and_nothing_else(self):
         with open(os.path.join(REPO, "bin", "pvj-ndi-discovery")) as f:
             text = f.read()
-        self.assertIn("from pvj.ndiscovery import main", text)
+        self.assertIn("from mctl.ndiscovery import main", text)
         self.assertTrue(os.access(os.path.join(REPO, "bin", "pvj-ndi-discovery"), os.X_OK))
 
 

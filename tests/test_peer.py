@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The peer channel (D132, slice 3; pvj/peer.py): one node calling another it approves, over real local TLS servers with
+"""The peer channel (D132, slice 3; mctl/peer.py): one node calling another it approves, over real local TLS servers with
 certificates from throwaway roots that carry the production name constraints. Good peer; another root; the right root and
 the wrong key; a name that does not cover the address, and a certificate that names the host only; an address that is not
 private; a node that hangs; two addresses with the first dead; a lower serial and a higher one; a run-out certificate
@@ -14,7 +14,7 @@ import time
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import fleetlist as FL, handover as hv, peer
+from mctl import fleetlist as FL, handover as hv, peer
 from tests.peerfix import PeerNode, Silent, answer, list_data, make_root, sign_list
 from tests.test_boxcert import openssls
 

@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The one module that knows where runtime files live (pvj/paths.py)."""
+"""The one module that knows where runtime files live (mctl/paths.py)."""
 import os
 import tempfile
 import unittest
 
-from pvj import paths
+from mctl import paths
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 

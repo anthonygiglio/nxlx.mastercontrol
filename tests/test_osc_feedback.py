@@ -12,7 +12,7 @@ import threading
 import time
 import unittest
 
-from pvj import boxcare, osc, oscfeedback as fb, policy, support
+from mctl import boxcare, osc, oscfeedback as fb, policy, support
 from tests.test_osc import bundle, msg
 from tests.test_osc_lockdown import KEY, LayerBase, OTHER, TABLET
 from tests.test_shader_engine import ALL, Live
@@ -225,7 +225,7 @@ class OwnerOnlyTest(Base):
         _t, operator = self.device("live", "192.168.1.31", "op")
         _t, guest = self.device("view", "192.168.1.32", "guest")
         remote = dict(self.owner, remote=True)
-        from pvj import dmx, midi, room
+        from mctl import dmx, midi, room
         for who in (None, guest, operator, midi.MIDI_DEVICE, osc.OSC_DEVICE, dmx.DMX_DEVICE, room.ROOM_DEVICE,
                     {"id": "support-1", "name": "s", "role": "view", "remote": True}, {"id": "support-1", "name": "s", "role": "live", "remote": True}):
             for body in ({"on": True}, {"add": T1}):
@@ -350,7 +350,7 @@ class StateTest(Base):
         self.assertNotIn(b"/secret", b"".join(d for d, _w, _t in self.sock.sent), "a clip's own name, never its folder")
 
     def test_the_table_in_osc_md_is_exactly_what_is_sent(self):
-        text = open(os.path.join(REPO, "pvj", "OSC.md")).read()
+        text = open(os.path.join(REPO, "mctl", "OSC.md")).read()
         part = text[text.index("## State sent back"):]
         part = part[:part.index("\n## ", 5)]
         said = set()
@@ -365,7 +365,7 @@ class StateTest(Base):
         self.assertEqual(said ^ sent, set())
 
     def test_it_is_the_controller_lights_own_state(self):
-        from pvj import boxstate, midi
+        from mctl import boxstate, midi
         self.play()
         self.settings.data["pads"]["banks"][0]["pads"][0]["file"] = "05_x.mp4"
         hub = midi.MidiHub(self.api, self.settings, log=lambda *_: None, lister=lambda: [])
@@ -437,7 +437,7 @@ class ShaderStateTest(Live):
         self.server = osc.OscServer(self.api, log=lambda *_: None)
 
     def state(self):
-        from pvj import boxstate
+        from mctl import boxstate
         holder = type("H", (), {"_player_seen": None, "_player_raw": {}})()
         snap = boxstate.snapshot(self.api, time.monotonic(), True, holder)
         return dict(fb.build(self.api, snap, holder._player_raw)), snap
@@ -533,7 +533,7 @@ class ShaderStateTest(Live):
     def test_the_effect_s_controls_their_names_and_their_kinds(self):
         """The effect that is on: its eight values as /mctl/effect/control/<n> takes them, and what the panel calls
         each (effects.js: the filter's own "amount" is told apart from the effect's Amount)."""
-        from pvj import shaders as S
+        from mctl import shaders as S
         src = '/*{"INPUTS": [{"NAME": "inputImage", "TYPE": "image"}, {"NAME": "amount", "TYPE": "float", "MIN": 0.0, "MAX": 4.0, "DEFAULT": 1.0},' \
               ' {"NAME": "tint", "TYPE": "color", "DEFAULT": [1.0, 1.0, 1.0, 1.0]}, {"NAME": "soft", "TYPE": "bool", "LABEL": "Soft edge", "DEFAULT": true},' \
               ' {"NAME": "shape", "TYPE": "long", "VALUES": [0, 1, 2], "LABELS": ["a", "b", "c"], "DEFAULT": 2}]}*/\n' \
@@ -588,7 +588,7 @@ class ShaderStateTest(Live):
     def test_a_full_state_with_the_longest_names_fits_every_cap(self):
         """The worst sixteen names a file can give (MAX_NAME characters of four bytes each) with every kind: each
         datagram within MAX_DATAGRAM, each second within the target's cap, and all of it out within a second."""
-        from pvj import boxstate
+        from mctl import boxstate
         holder = type("H", (), {"_player_seen": None, "_player_raw": {}})()
         snap = boxstate.snapshot(self.api, time.monotonic(), True, holder)
         usual = fb.build(self.api, snap, holder._player_raw)

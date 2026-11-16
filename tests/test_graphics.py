@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Text and logos on the screen (D129, slice 2 of design/text-and-logo-sources_2026-11-08.md): pvj/graphics.py, the
+"""Text and logos on the screen (D129, slice 2 of design/text-and-logo-sources_2026-11-08.md): mctl/graphics.py, the
 routes, who may use them, OSC, the fonts' licences and the files that build the helper.
 
 Everything here runs without the real helper (a stand-in draws a plain block); the real program's text and logo jobs are
@@ -16,7 +16,7 @@ import time
 import unittest
 
 import tests  # noqa: F401  (the package: ranked locks and a temp folder of its own, as every test module)
-from pvj import api as api_mod, graphics, osc, policy, raster
+from mctl import api as api_mod, graphics, osc, policy, raster
 from tests.test_raster import FakeClient, png
 from tests.test_roles import RolesBase
 from tests.test_server import ServerBase
@@ -656,7 +656,7 @@ class OverlayOrderTest(Base):
     """Design 3.1: the pairing codes and the masks stay on top of the graphics."""
 
     def test_graphics_are_under_the_masks_and_the_masks_under_the_pairing_codes(self):
-        from pvj import overlay, pinscreen, transitions
+        from mctl import overlay, pinscreen, transitions
         top_graphic = graphics.OVERLAY_BASE + graphics.MAX_ITEMS - 1
         self.assertEqual((graphics.OVERLAY_BASE, top_graphic), (20, 27))
         self.assertEqual(overlay.OVERLAY_ID, 30)
@@ -823,7 +823,7 @@ class OscTest(Base):
         self.assertNotIn(("GET", "/api/graphics"), policy.LEGACY_LIVE)
 
     def test_the_documented_addresses_are_the_ones_that_work(self):
-        text = open(os.path.join(HERE, "pvj", "OSC.md"), encoding="utf-8").read()
+        text = open(os.path.join(HERE, "mctl", "OSC.md"), encoding="utf-8").read()
         for address in ("/mctl/graphic/N", "/mctl/graphic/N/text", "/mctl/graphic/N/send", "/mctl/graphic/hide"):
             self.assertIn(address, text)
 
@@ -836,7 +836,7 @@ class FontsTest(unittest.TestCase):
 
     def test_every_font_is_a_bundled_file_with_its_own_licence_text_and_is_listed(self):
         reuse, third = self.read("REUSE.toml"), self.read("THIRD_PARTY_LICENSES.md")
-        folder = os.path.join(HERE, "pvj", "fonts")
+        folder = os.path.join(HERE, "mctl", "fonts")
         self.assertEqual(len(graphics.FONTS), 11)
         for f in graphics.FONTS:
             ttf = os.path.join(folder, f["id"] + ".ttf")
@@ -845,36 +845,57 @@ class FontsTest(unittest.TestCase):
             self.assertIn(data[:4], (b"\x00\x01\x00\x00", b"true"), "a TrueType file")
             sha = hashlib.sha256(data).hexdigest()
             self.assertIn(sha, third, "%s: its checksum is in THIRD_PARTY_LICENSES.md" % f["id"])
-            self.assertIn("pvj/fonts/%s.ttf" % f["id"], reuse, "%s is in REUSE.toml" % f["id"])
+            self.assertIn("mctl/fonts/%s.ttf" % f["id"], reuse, "%s is in REUSE.toml" % f["id"])
             self.assertEqual(f["licence"], "SIL OFL 1.1")
             self.assertIn(f["name"], third)
             self.assertTrue(f["min"] <= f["default"] <= f["max"])
         licences = sorted(n for n in os.listdir(folder) if n.startswith("OFL-"))
         self.assertEqual(len(licences), 11, "one licence text beside each font")
         for n in licences:
-            text = self.read("pvj", "fonts", n)
+            text = self.read("mctl", "fonts", n)
             self.assertIn("SIL OPEN FONT LICENSE Version 1.1", text, n)
             self.assertRegex(text, r"^Copyright", n)
-            self.assertIn("pvj/fonts/" + n, reuse)
+            self.assertIn("mctl/fonts/" + n, reuse)
 
     def test_the_font_files_are_the_releases_unchanged(self):
         # the checksums of the two that were already bundled as web fonts are the ones recorded for them in October
         third = self.read("THIRD_PARTY_LICENSES.md")
         for sha in ("0e094a7d3c7c4c25cf1310c4b30014f1dae9332220b1c2c88f4fa996f0b05053", "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda"):
             self.assertIn(sha, third)
-            self.assertIn(sha, {hashlib.sha256(open(os.path.join(HERE, "pvj", "fonts", n), "rb").read()).hexdigest() for n in ("archivo.ttf", "jetbrains-mono.ttf")})
+            self.assertIn(sha, {hashlib.sha256(open(os.path.join(HERE, "mctl", "fonts", n), "rb").read()).hexdigest() for n in ("archivo.ttf", "jetbrains-mono.ttf")})
 
     def test_a_font_that_is_not_bundled_is_archivo_and_no_browser_is_sent_a_font(self):
         self.assertEqual(graphics.font_of("papyrus")["id"], "archivo")
         self.assertEqual(sorted(graphics.FONT_IDS), sorted(set(graphics.FONT_IDS)))
-        api = self.read("pvj", "api.py") + self.read("pvj", "server.py")
+        api = self.read("mctl", "api.py") + self.read("mctl", "server.py")
         self.assertNotIn("fonts_dir", api, "nothing serves the folder")
+
+    def test_the_picture_helper_finds_the_fonts_in_either_layout_of_a_release(self):
+        """A rollback to the release before the rename only repoints "current": the unit written by the newer install
+        stays, and that release has pvj/fonts. The unit's command must find the fonts in both."""
+        import subprocess
+        import tempfile
+        unit = self.read("install", "pvj-raster@.service")
+        line = [l for l in unit.splitlines() if l.startswith("ExecStart=")][0]
+        self.assertTrue(line.startswith("ExecStart=/bin/sh -c '") and line.endswith("'"), line)
+        script = line[len("ExecStart=/bin/sh -c '"):-1].replace("$$", "$")
+        for layout in ("mctl", "pvj"):
+            root = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, root, True)
+            os.makedirs(os.path.join(root, layout, "fonts"))
+            os.makedirs(os.path.join(root, "render"))
+            prog = os.path.join(root, "render", "pvj-raster")
+            with open(prog, "w") as f:
+                f.write('#!/bin/sh\necho "$@"\n')
+            os.chmod(prog, 0o755)
+            done = subprocess.run(["/bin/sh", "-c", script.replace("@PVJ_DIR@", root)], capture_output=True, text=True, timeout=20)
+            self.assertEqual((done.returncode, done.stdout.strip()), (0, "--fonts " + os.path.join(root, layout, "fonts")), layout)
 
     def test_the_helper_is_built_with_freetype_and_told_where_the_fonts_are(self):
         self.assertIn("freetype2", self.read("render", "Makefile"))
         self.assertIn("gfx.inc.c", self.read("render", "Makefile"))
         unit = self.read("install", "pvj-raster@.service")
-        self.assertRegex(unit, r"ExecStart=@PVJ_DIR@/render/pvj-raster --fonts @PVJ_DIR@/pvj/fonts\n")
+        self.assertIn("exec @PVJ_DIR@/render/pvj-raster --fonts \"$$f\"'\n", unit)
         sh = self.read("install", "install.sh")
         self.assertIn("libfreetype-dev", sh)
         self.assertIn("pkg-config --exists libpng libjpeg freetype2", sh)
@@ -884,18 +905,18 @@ class FontsTest(unittest.TestCase):
         self.assertNotIn("ReadWritePaths", unit)
 
     def test_the_paths_of_the_font_folder(self):
-        from pvj import paths
-        self.assertEqual(paths.fonts_dir({}), os.path.join(HERE, "pvj", "fonts"))
+        from mctl import paths
+        self.assertEqual(paths.fonts_dir({}), os.path.join(HERE, "mctl", "fonts"))
         self.assertEqual(paths.fonts_dir({"PVJ_FONTS_DIR": "/x"}), "/x")
 
 
 class RealPlayerTest(ServerBase):
-    """The real pvj.player.Player over a stand-in for mpv on its socket (tests/fakempv.py, which checks that an overlay's
+    """The real mctl.player.Player over a stand-in for mpv on its socket (tests/fakempv.py, which checks that an overlay's
     file is long enough for what it is told): what the engine really sends, with the real player's own calls."""
 
     def setUp(self):
         super().setUp()
-        from pvj.player import Player
+        from mctl.player import Player
         from tests.fakempv import FakeMpv
         self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"), size=(1280, 720))
         self.addCleanup(self.mpv.stop)

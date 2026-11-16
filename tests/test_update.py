@@ -12,8 +12,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from pvj import update
-from pvj.update import UpdateError, Updater
+from mctl import update
+from mctl.update import UpdateError, Updater
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -33,12 +33,12 @@ def root_for_main():
 
 def make_tree(version, schema=None):
     d = tempfile.mkdtemp()
-    for sub in ("pvj", "bin", "install"):
+    for sub in ("mctl", "bin", "install"):
         shutil.copytree(os.path.join(REPO, sub), os.path.join(d, sub), ignore=shutil.ignore_patterns("__pycache__"))
-    with open(os.path.join(d, "pvj", "__init__.py"), "w") as f:
+    with open(os.path.join(d, "mctl", "__init__.py"), "w") as f:
         f.write('__version__ = "%s"\n' % version)
     if schema is not None:
-        p = os.path.join(d, "pvj", "settings.py")
+        p = os.path.join(d, "mctl", "settings.py")
         with open(p) as f:
             text = f.read()
         with open(p, "w") as f:
@@ -50,7 +50,7 @@ def make_bundle(version, schema=None, top=True):
     tree = make_tree(version, schema)
     out = os.path.join(tempfile.mkdtemp(), "pvj-%s.tar.gz" % version)
     with tarfile.open(out, "w:gz") as tar:
-        for sub in ("pvj", "bin", "install"):
+        for sub in ("mctl", "bin", "install"):
             tar.add(os.path.join(tree, sub), arcname=("pvj-%s/%s" % (version, sub)) if top else sub)
     with open(out + ".sha256", "w") as f:
         f.write(update.sha256_file(out) + "  " + os.path.basename(out) + "\n")
@@ -152,6 +152,18 @@ class HelperTest(unittest.TestCase):
         self.assertEqual(info["version"], "2.3.4")
         self.assertGreaterEqual(info["schema"], 1)
         os.unlink(os.path.join(tree, "bin", "pvj-web"))
+        with self.assertRaises(UpdateError):
+            update.inspect_bundle(tree)
+
+    def test_inspect_bundle_takes_the_layout_before_the_rename_too(self):
+        """For one release a rollback bundle with the package folder under its old name (pvj/) passes."""
+        tree = make_tree("2.3.4")
+        self.addCleanup(shutil.rmtree, tree, True)
+        os.rename(os.path.join(tree, "mctl"), os.path.join(tree, "pvj"))
+        info = update.inspect_bundle(tree)
+        self.assertEqual(info["version"], "2.3.4")
+        self.assertGreaterEqual(info["schema"], 1)
+        os.unlink(os.path.join(tree, "pvj", "__init__.py"))
         with self.assertRaises(UpdateError):
             update.inspect_bundle(tree)
 

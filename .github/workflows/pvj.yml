@@ -291,6 +291,10 @@ jobs:
           # The old code knows only the old request header and cookie (D138 renamed them; the new code takes both for one
           # release), so the copied tests speak the old family to it here and nowhere else.
           su ci -c "grep -rlE 'X-MCTL-Request|mctl_token' /tmp/stuck/tests | xargs -r sed -i -e 's/X-MCTL-Request/X-PVJ-Request/g' -e 's/mctl_token/pvj_token/g'"
+          # The same for the package: the old code is the folder pvj, so the copied tests import pvj here. Only the
+          # package's own spellings: "mctl." and "mctl " (imports, patch targets), "mctl" in quotes (path parts) and
+          # mctl/ at the start of a path. Not /mctl/ (OSC), mctl-... or mctl_... names, which the copied tests keep.
+          su ci -c "grep -rlw 'mctl' /tmp/stuck/tests | xargs -r sed -i -E -e 's/(^|[^A-Za-z0-9_-])mctl([. ])/\\1pvj\\2/g' -e 's/\"mctl\"/\"pvj\"/g' -e 's#(^|[^/A-Za-z0-9_-])mctl/#\\1pvj/#g'"
           bad=0
           for t in test_13_one_still_picture_then_only_sound_for_thirty_five_seconds test_15_one_still_picture_then_sound_after_a_short_gap test_16_one_still_picture_then_sound_after_a_long_gap; do
             if su ci -c "cd /tmp/stuck && PVJ_NDI_MPV_TEST=1 PVJ_NDI_FINDINGS_FATAL=yes python3 -m unittest tests.test_ndi_mpv.NdiOnARealMpv.$t" > /tmp/stuck/out.txt 2>&1; then

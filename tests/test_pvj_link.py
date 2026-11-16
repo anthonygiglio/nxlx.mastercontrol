@@ -15,7 +15,7 @@ import time
 import unittest
 
 import tests  # noqa: F401  (test_lockrank: the package's temp folder and lock checks, also when started alone)
-from pvj import link
+from mctl import link
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HELPER = os.path.join(HERE, "render", "pvj-link")

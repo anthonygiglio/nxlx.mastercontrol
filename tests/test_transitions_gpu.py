@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The crossfade (pvj/transitions.py, D71) on a real mpv that really draws: the rig of tests/test_effects_gpu.py (mpv's
+"""The crossfade (mctl/transitions.py, D71) on a real mpv that really draws: the rig of tests/test_effects_gpu.py (mpv's
 GPU output in a window on a virtual display, Mesa's software GPU), judged on screenshots of the window.
 
 CI's three effects-gpu jobs run these: tests/test_effects_gpu.py, the module the workflow names, loads this one when
@@ -19,8 +19,8 @@ import threading
 import time
 import unittest
 
-from pvj import transitions as T
-from pvj.player import PlayerError
+from mctl import transitions as T
+from mctl.player import PlayerError
 from tests.test_effects_gpu import CLIP, GPU, H, INVERT, ONLY, W, FxCase, clip, differ, grid
 from tests.test_server import ServerBase
 from tests.test_transitions import png
@@ -527,7 +527,7 @@ class ScaledCase(CrossCase):
         self.cleaned()
 
     def test_an_effect_and_the_brightness_are_in_a_still_of_the_clip(self):
-        # what pvj/transitions.py says of the "video" kind, held on this mpv: the effect (hooked where the effects
+        # what mctl/transitions.py says of the "video" kind, held on this mpv: the effect (hooked where the effects
         # hook) and the player's brightness are in it, so laid over the clip it is the screen
         self.play(clip("160x90"))
         self.fx.upload("invert.fs", INVERT)

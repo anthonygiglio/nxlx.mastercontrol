@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Effects: ISF filters over the playing picture (pvj/effects.py). The translator with hostile filter files, the
+"""Effects: ISF filters over the playing picture (mctl/effects.py). The translator with hostile filter files, the
 library, and the engine's whole life against the real Player class with a stand-in for mpv behind it (properties in
 a dict, nothing drawn). What a real mpv draws is in tests/test_effects_gpu.py."""
 import hashlib
@@ -14,9 +14,9 @@ import threading
 import time
 import unittest
 
-from pvj import effects as E, midi as M, shaderlive as L, shaders as S
-from pvj.api import ApiError
-from pvj.player import Player, PlayerError
+from mctl import effects as E, midi as M, shaderlive as L, shaders as S
+from mctl.api import ApiError
+from mctl.player import Player, PlayerError
 from tests.test_server import ServerBase
 from tests.test_shaders import FakeTap, REFUSAL, WELL_KNOWN
 
@@ -1079,7 +1079,7 @@ class LifeTest(Base):
         self.assertEqual(self.texts(), [])
         self.assertEqual((fresh.state()["on"], fresh.state()["last"]), (None, "the panel was restarted"))
         import inspect
-        from pvj import server
+        from mctl import server
         self.assertIn("api.effects.tidy()", inspect.getsource(server.build))
 
     def test_the_gpu_refusing_a_filter_leaves_the_picture_as_it_was(self):
@@ -1517,7 +1517,7 @@ class ValuesTest(Base):
         self.assertEqual(c.exception.status, 409)
 
     def test_presets_go_round_with_the_settings_and_a_damaged_one_is_only_itself(self):
-        from pvj import boxcare
+        from mctl import boxcare
         self.fx.put("all.fs", {"k": 1.5})
         self.fx.preset_save("Warm")
         section = boxcare.check_shaders(self.settings.data["shaders"], None)
@@ -1591,7 +1591,7 @@ class ValuesTest(Base):
         held, go = threading.Event(), threading.Event()
 
         def busy():
-            with self.fx._lock, self.player._lock:      # in the order of the locks (pvj/locks.py): the engine's, then the player's
+            with self.fx._lock, self.player._lock:      # in the order of the locks (mctl/locks.py): the engine's, then the player's
                 held.set()
                 go.wait(10)
         t = threading.Thread(target=busy)
@@ -1802,8 +1802,8 @@ class DetailTest(Base):
         self.assertIn("undeclared", s["error"]["message"])
 
     def test_the_setting_goes_round_through_a_settings_file_and_a_factory_reset_clears_it(self):
-        from pvj import boxcare
-        from pvj.settings import default_settings
+        from mctl import boxcare
+        from mctl.settings import default_settings
         self.pi4()
         full, _ = self.pair()
         self.fx.set_detail(540)

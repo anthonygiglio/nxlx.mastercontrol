@@ -17,8 +17,8 @@ import types
 import unittest
 from unittest import mock
 
-from pvj import ndi, ndisetup, paths, server
-from pvj import support as sp
+from mctl import ndi, ndisetup, paths, server
+from mctl import support as sp
 from tests.test_server import ServerBase
 from tests.test_support import TUNNEL, SupportBase
 
@@ -785,7 +785,7 @@ class RollbackTest(unittest.TestCase):
     release from before the NDI input must not leave a unit that fails for ever."""
 
     def test_the_updater_restarts_a_running_helper_with_the_release_it_switched_to(self):
-        from pvj.update import Updater
+        from mctl.update import Updater
         ran = []
         u = Updater(root="", run=lambda command, **kw: ran.append(command))
         real = os.path.isdir
@@ -818,7 +818,7 @@ class SnapshotOfAStillSourceTest(ServerBase):
         self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
         self.fifo = os.path.join(self.tmp, "ndi.fifo")
         self.api.ndi = ndi.Input(Untouchable(), self.fifo, lambda: (True, []), log=lambda *_: None)
-        from pvj.player import PlayerError
+        from mctl.player import PlayerError
 
         def no_picture(path, quality=60, with_text=True):
             raise PlayerError("mpv: error running command")
@@ -857,7 +857,7 @@ class SnapshotOfAStillSourceTest(ServerBase):
             js = f.read()
         self.assertIn("d.error.indexOf('NDI') >= 0", js)
         self.assertIn("'Nothing is on the screen right now.'", js)
-        from pvj import api as api_mod
+        from mctl import api as api_mod
         self.assertIn("NDI", api_mod.NDI_NO_SNAPSHOT)
 
 
@@ -989,7 +989,7 @@ class LiveSpeedTest(ServerBase):
 
     def test_a_mix_speed_the_player_did_not_take_keeps_the_hold_until_it_does(self):
         """L3. The hold was cleared even when giving the Mix speed back failed."""
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.control(1.5)
         self.api._started_playing(ndi=True)
         real = self.api._player_call
@@ -1008,7 +1008,7 @@ class LiveSpeedTest(ServerBase):
         self.assertEqual(self.speeds(), [1.5])
 
     def test_a_player_that_went_away_does_not_stop_the_play(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
 
         def gone(fn, *a):
             raise ApiError(503, "player service is not running")
@@ -1154,7 +1154,7 @@ class TunnelSameAsStreamsTest(SupportBase):
                 self.assertEqual(routes[streams][0], routes[ndi_route][0], ndi_route)
             else:       # D80: the list of senders is the Operator's; a Guest has no page for it (Streams kept its old "view")
                 self.assertEqual((routes[streams][0], routes[ndi_route][0]), ("view", "live"))
-        from pvj.api import Api
+        from mctl.api import Api
         for words in ("is_remote", "need_local", "remote"):                    # neither handler has a rule of its own for the tunnel
             self.assertEqual(words in inspect.getsource(Api.set_streams), words in inspect.getsource(Api.set_ndi), words)
             self.assertEqual(words in inspect.getsource(Api.get_streams), words in inspect.getsource(Api.get_ndi), words)

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """A pairing code on the box's display, asked for by a hold on a MIDI controller (D61).
 
-Every rule of pvj/controllercode.py has a test here: off unless switched on, the full-access kind behind its own
+Every rule of mctl/controllercode.py has a test here: off unless switched on, the full-access kind behind its own
 switch, a hold that ends with letting go and nothing else, once, two minutes, a few an hour, the PIN's lockout, the
 display only, no way in but a MIDI device on the box, and what a full-access device sees and can end.
 No controller, no Pi and no screen were used: a fake clock, a fake player and messages handed to the hub."""
@@ -15,9 +15,9 @@ import tempfile
 import types
 import unittest
 
-from pvj import auth as auth_mod, boxcare, controllercode, dmx, midi, osc, pinscreen, room, scheduler, settings as settings_mod, support, sync
-from pvj.auth import Auth, AuthError
-from pvj.settings import Settings
+from mctl import auth as auth_mod, boxcare, controllercode, dmx, midi, osc, pinscreen, room, scheduler, settings as settings_mod, support, sync
+from mctl.auth import Auth, AuthError
+from mctl.settings import Settings
 from tests.test_pinscreen import Api as PinApi
 from tests.test_server import ServerBase
 
@@ -599,8 +599,8 @@ class BoxTest(BoxBase):
             got = osc.translate(address, [1])
             self.assertFalse(got and "access" in got[0], address)
         # 4. the only callers of the two functions that make a code
-        import pvj
-        folder = os.path.dirname(pvj.__file__)
+        import mctl
+        folder = os.path.dirname(mctl.__file__)
         users = {"create_controller_code": [], "controller_codes.request": [], "codes.request": []}
         for name in sorted(os.listdir(folder)):
             if name.endswith(".py"):
@@ -626,7 +626,7 @@ class BoxTest(BoxBase):
         self.on()
 
         def gone(*cmd):
-            from pvj.player import PlayerError
+            from mctl.player import PlayerError
             raise PlayerError("no reply from mpv")
         self.player.ipc.request = gone
         self.hold()

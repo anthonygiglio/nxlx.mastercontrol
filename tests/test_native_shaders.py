@@ -4,7 +4,7 @@
 with their inputs as uniforms set every frame, run for real (headless, Mesa's software GPU) like tests/test_mctl_render.
 
 What is held here:
-* the program file the panel writes (pvj/shaders.py and pvj/effects.py, translate_native) and what mctl-render's
+* the program file the panel writes (mctl/shaders.py and mctl/effects.py, translate_native) and what mctl-render's
   reader refuses;
 * every bundled generator and effect drawn by mctl-render's own program against the same shader drawn by libmpv inside
   the same mctl-render (the path the New renderer had before), by the pixels, within the tolerance below;
@@ -35,15 +35,15 @@ import time
 import unittest
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import effects as E, paths, shaders as S
-from pvj.player import Ipc, Player, PlayerError, is_program
-from pvj.transitions import read_still
+from mctl import effects as E, paths, shaders as S
+from mctl.player import Ipc, Player, PlayerError, is_program
+from mctl.transitions import read_still
 from tests.test_mctl_render import (BIN, BLACK, BLUE, GREEN, H, RED, STRICT, W, Renderer, SourcesBase, fd_count, need_program, png,
                                    thread_count)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-GENERATORS = sorted(glob.glob(os.path.join(REPO, "pvj", "shaders.d", "*.fs")) + glob.glob(os.path.join(REPO, "pvj", "shaders.d", "*", "*.fs")))
-EFFECTS = sorted(glob.glob(os.path.join(REPO, "pvj", "effects.d", "*.fs")) + glob.glob(os.path.join(REPO, "pvj", "effects.d", "*", "*.fs")))
+GENERATORS = sorted(glob.glob(os.path.join(REPO, "mctl", "shaders.d", "*.fs")) + glob.glob(os.path.join(REPO, "mctl", "shaders.d", "*", "*.fs")))
+EFFECTS = sorted(glob.glob(os.path.join(REPO, "mctl", "effects.d", "*.fs")) + glob.glob(os.path.join(REPO, "mctl", "effects.d", "*", "*.fs")))
 P99, MEAN, OFF_SHARE = 3, 0.6, 0.005
 STEPS = {"isf-duotone.fs", "isf-posterize.fs", "isf-rgb-halftone.fs"}     # effects that are a step of their input (above)
 
@@ -76,7 +76,7 @@ class NativeBase(unittest.TestCase):
 
     def setUp(self):
         need_program(self)
-        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(*self.ARGS)
         self.addCleanup(lambda: self.r.close())
@@ -536,7 +536,7 @@ class StillTest(NativeBase):
         path = os.path.join(self.tmp, "still.png")
         open(path, "w").close()                         # the panel makes the file; the player writes over it
         self.r("screenshot-to-file", path, "window")
-        w, h, px = read_still(path, (W, H))             # the crossfade's own reader (pvj/transitions.py)
+        w, h, px = read_still(path, (W, H))             # the crossfade's own reader (mctl/transitions.py)
         self.assertEqual((w, h), (W, H))
         self.assertTrue(all(abs(a - b) <= 1 for a, b in zip(px[0:3], (0, 128, 64))), tuple(px[0:3]))   # BGRA of FLAT's (64, 128, 0)
         jpg = os.path.join(self.tmp, "preview.jpg")
@@ -563,7 +563,7 @@ class StillTest(NativeBase):
 
 
 class EngineTest(NativeBase):
-    """The panel's own engines on the real program, through the real Player (pvj/shaders.py, pvj/effects.py)."""
+    """The panel's own engines on the real program, through the real Player (mctl/shaders.py, mctl/effects.py)."""
 
     def setUp(self):
         need_program(self)
@@ -572,7 +572,7 @@ class EngineTest(NativeBase):
         self.server.setUp()
         self.addCleanup(self.server.doCleanups)
         rundir = self.server.rundir
-        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer()
         self.addCleanup(lambda: self.r.close())
@@ -641,7 +641,7 @@ class EngineTest(NativeBase):
     def test_a_refused_generator_leaves_black_never_the_carrier(self):
         broken = "/*{}*/\nvoid main() { gl_FragColor = vec4(nonsense, 1.0); }\n"
         self.api.shaders.upload("broken.fs", broken)
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         with self.assertRaises(ApiError) as e:
             self.api.shaders.play("broken.fs")
         self.assertEqual(e.exception.status, 422)
@@ -709,7 +709,7 @@ class ShotPaceTest(NativeBase):
 
         def take(path):
             try:
-                ipc = __import__("pvj.player", fromlist=["Ipc"]).Ipc(self.r.sock, timeout=10.0)
+                ipc = __import__("mctl.player", fromlist=["Ipc"]).Ipc(self.r.sock, timeout=10.0)
                 for _ in range(5):
                     open(path, "w").close()
                     ipc.request("screenshot-to-file", path, "window")
@@ -747,7 +747,7 @@ class SlowBuildTest(NativeBase):
             if STRICT:
                 self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
-        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.n = 0
 
@@ -755,7 +755,7 @@ class SlowBuildTest(NativeBase):
         self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
         self.addCleanup(lambda: self.r.close())
         self.r("set_property", "image-display-duration", "inf")
-        d = tempfile.mkdtemp(prefix="pvj-native-run-")
+        d = tempfile.mkdtemp(prefix="mctl-native-run-")
         self.addCleanup(shutil.rmtree, d, True)
         os.symlink(self.r.sock, os.path.join(d, paths.PLAYER_SOCKET))
         return Player(rundir=d)
@@ -966,11 +966,11 @@ class ChainSlowBuildTest(unittest.TestCase):
             if STRICT:
                 self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
-        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer("--sources=4", env={"PVJ_RENDER_TEST_SLOW_BUILD": "4000"})
         self.addCleanup(lambda: self.r.close())
-        d = tempfile.mkdtemp(prefix="pvj-native-run-")
+        d = tempfile.mkdtemp(prefix="mctl-native-run-")
         self.addCleanup(shutil.rmtree, d, True)
         os.symlink(self.r.sock, os.path.join(d, paths.PLAYER_SOCKET))
         self.player = Player(rundir=d)
@@ -994,7 +994,7 @@ class ChainSlowBuildTest(unittest.TestCase):
 
 
 class ChainApiTest(unittest.TestCase):
-    """The API of the chains (pvj/fxchain.py) on the real program through the real Player, with four sources."""
+    """The API of the chains (mctl/fxchain.py) on the real program through the real Player, with four sources."""
 
     def setUp(self):
         need_program(self)
@@ -1028,7 +1028,7 @@ class ChainApiTest(unittest.TestCase):
         self.assertEqual(chains.on[(2, 1)]["path"], path)                  # no new file: a value, not a build
         self.assertEqual([r["id"] for r in chains.state()["chains"]], ["fx-grade.fs"])
         chains.api_post({"source": 1, "slot": 2, "id": "fx-grade.fs"}, None, None)
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         for body in ({"source": 1, "slot": 1, "id": "fx-grade.fs"}, {"source": 5, "slot": 1, "id": "fx-grade.fs"},
                      {"source": 2, "slot": 0, "id": "fx-grade.fs"}, {"source": 2, "slot": True, "id": "fx-grade.fs"},
                      {"source": 2, "slot": 1, "id": "nxlx-silk.fs"}, {"source": 2, "slot": 1, "id": "fx-grade.fs", "values": {"nope": 1}},
@@ -1049,7 +1049,7 @@ class ChainApiTest(unittest.TestCase):
         self.assertEqual([n for n in os.listdir(self.server.rundir) if n.startswith("nxlx-chain")], [])
 
     def test_classic_has_no_chain(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.player._native_seen = (self.player._seen_pid or self.player._note_pid(self.player.ipc.request("get_property", "pid")), False)
         with self.assertRaises(ApiError) as e:
             self.api.chains.api_post({"source": 2, "slot": 1, "id": "fx-grade.fs"}, None, None)
@@ -1106,7 +1106,7 @@ class PassParseTest(unittest.TestCase):
     def test_the_weight_of_an_effect_counts_every_pass_and_the_limit_does_not(self):
         """The reviews of #170 and #172: a filter of two passes draws twice, so its weight takes the count times the
         passes; the count itself, which already sums both PASSINDEX branches, is what the upload's limit judges."""
-        from pvj import effects as E
+        from mctl import effects as E
         two_reads = INVERT.replace("vec4 c = IMG_THIS_PIXEL(inputImage);", "vec4 c = 0.5 * (IMG_THIS_PIXEL(inputImage) + IMG_NORM_PIXEL(inputImage, isf_FragNormCoord));")
         one = E.estimate(S.parse(two_reads, S.FILTER))
         two = E.estimate(S.parse(two_reads.replace('"image"}]}*/', '"image"}], "PASSES": [{"TARGET": "buf"}, {}]}*/'), S.FILTER, passes=True))
@@ -1315,7 +1315,7 @@ class GeneratorSourceTest(SourcesBase):
 
 
 class GeneratorSourceApiTest(unittest.TestCase):
-    """A shader pad, or a shader by name, played to Source 2 (the API, pvj/fxchain.py), on the real program."""
+    """A shader pad, or a shader by name, played to Source 2 (the API, mctl/fxchain.py), on the real program."""
 
     def setUp(self):
         need_program(self)
@@ -1366,7 +1366,7 @@ class GeneratorSourceApiTest(unittest.TestCase):
         self.assertTrue(self.r.wait(lambda: self.slot(2, 0)["state"] == "off", 3))
         self.assertEqual(self.api.chains.state()["chains"], [])
         # source 1's generator stays the shader engine's: slot 0 of source 1 is not the chain's
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         with self.assertRaises(ApiError):
             self.api.chains.api_post({"source": 1, "slot": 0, "values": {"sheen": 0.5}}, dev, "t")
 
@@ -1375,7 +1375,7 @@ class GeneratorSourceApiTest(unittest.TestCase):
 
     def test_a_refused_shader_leaves_the_clip_playing_and_a_taken_one_stops_it(self):
         """The review of #171: the clip stops only once the shader is taken; a refusal never leaves the source black."""
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         dev = {"id": "t", "role": "full"}
         png(os.path.join(self.server.media, "blue.png"), W, H, lambda x, y: BLUE)
         self.api.play({"file": "blue.png", "source": 2}, dev, "t")
@@ -1517,7 +1517,7 @@ class GeneratorSourceApiTest(unittest.TestCase):
         self.assertEqual(len(calls), 1, calls)
 
     def test_on_classic_a_shader_to_a_source_is_refused_as_before(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.player._native_seen = (self.player._seen_pid or self.player._note_pid(self.player.ipc.request("get_property", "pid")), False)
         with self.assertRaises(ApiError) as e:
             self.api.play({"shader": "nxlx-silk.fs", "source": 2}, {"id": "t", "role": "full"}, "t")
@@ -1753,7 +1753,7 @@ class LayerLoadAnswerTest(NativeBase):
             if STRICT:
                 self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
-        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": "3500"})
         self.addCleanup(lambda: self.r.close())
@@ -2132,7 +2132,7 @@ class ProgramFadeSlowBuildTest(ProgramFadeBase):
             if STRICT:
                 self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
-        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
         self.addCleanup(lambda: self.r.close())
@@ -2237,12 +2237,12 @@ class ManyProgramFadesTest(ProgramFadeBase):
 
 
 class PlayerProgramFadeTest(ProgramFadeBase):
-    """The panel's player (pvj/player.py) over the real renderer: fade_to_program, and play() out of a program. Not asked by
+    """The panel's player (mctl/player.py) over the real renderer: fade_to_program, and play() out of a program. Not asked by
     the panel before its slice 3, so these are the only callers."""
 
     def setUp(self):
         super().setUp()
-        d = tempfile.mkdtemp(prefix="pvj-native-run-")
+        d = tempfile.mkdtemp(prefix="mctl-native-run-")
         self.addCleanup(shutil.rmtree, d, True)
         os.symlink(self.r.sock, os.path.join(d, paths.PLAYER_SOCKET))
         self.player = Player(rundir=d)
@@ -2339,7 +2339,7 @@ class ProgramBuildDoesNotHoldTheLayersTest(ProgramFadeBase):
             if STRICT:
                 self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
-        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
         self.addCleanup(lambda: self.r.close())
@@ -2543,13 +2543,13 @@ class TwoClientStressTest(ProgramFadeBase):
 
 
 class PlayerShaderLayerTest(ProgramFadeBase):
-    """D130, slice 3, the player (pvj/player.py): a shader on the New renderer is the front layer's picture with no blank
+    """D130, slice 3, the player (mctl/player.py): a shader on the New renderer is the front layer's picture with no blank
     clip under it, the stand-in name keeps the panel's checks working, the lists are touched, and a fade whose answer is lost
     is reconciled with what the renderer holds."""
 
     def setUp(self):
         super().setUp()
-        d = tempfile.mkdtemp(prefix="pvj-native-run-")
+        d = tempfile.mkdtemp(prefix="mctl-native-run-")
         self.addCleanup(shutil.rmtree, d, True)
         os.symlink(self.r.sock, os.path.join(d, paths.PLAYER_SOCKET))
         self.player = Player(rundir=d)
@@ -2663,7 +2663,7 @@ class EngineFadeTest(NativeBase):
         png(self.green, W, H, lambda x, y: GREEN)
         for n, p in (("red.png", self.red), ("green.png", self.green)):
             shutil.copy(p, os.path.join(self.api.media_dir, n))
-        self.T = __import__("pvj.transitions", fromlist=["stored"])
+        self.T = __import__("mctl.transitions", fromlist=["stored"])
         self.api.settings.data["mix"] = self.T.stored("crossfade", 3.0)
 
     def st(self):
@@ -2733,7 +2733,7 @@ class EngineFadeTest(NativeBase):
         self.assertEqual(self.api.shaders.on_screen()["id"], "nxlx-aurora.fs")
 
     def test_a_shader_the_gpu_refuses_leaves_the_screen_and_says_why(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.api.play({"file": "red.png"}, None, "t")
         self.api.shaders.play("nxlx-bloom.fs")
         self.settled()

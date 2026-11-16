@@ -1,0 +1,738 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""Which program draws the screen: classic mpv, or mctl-render, the box's own renderer (render/, D95).
+
+mctl-render is a separate program (GPL-3.0-or-later, in render/) that speaks the same JSON socket as mpv, so nothing
+that talks to the player changes: the switch is which program the player's service starts.
+
+Who does what, as for the screen's mode (mctl/screenmode.py, D90):
+
+* The panel owns the setting (`renderer` in the settings: {"use": "classic"|"new", "detail": "auto"|540|720|"output"},
+  since D101 an optional "sources": 1 to 8, and since D108 an optional "final": "full"|720, read with defaults, no
+  schema change; no key is this board's own number and Automatic). The player may not read settings.json, so the
+  panel writes the wish alone to
+  WANTED in the state folder, at its start and on a change, and restarts the player for a change (`Renderer`).
+* The player's service (`pvj-player serve`, the display's account) reads WANTED just before it would become mpv. With
+  "new" it stays a small supervisor instead (`serve`): it starts mctl-render with the screen's arguments that
+  screenmode chose for mpv, waits for its socket to answer, and watches it. It falls back to classic mpv by itself
+  (the same exec as before) when mctl-render is missing, does not start, or ends twice in a row, and writes what it
+  did and why to REPORT in its own folder, which the panel reads as data from a less trusted account.
+* While mctl-render draws, the supervisor also reads WANTED every half second. When it no longer says what this run
+  was started with (the Owner chose classic, or another detail), the supervisor ends mctl-render itself: it asks it
+  to quit on its socket, then sends SIGTERM after QUIT_SECONDS, then SIGKILL after TERM_SECONDS more, writes how it
+  ended to REPORT (the page shows it), and ends the service, which systemd starts again with the new wish. The
+  panel's own quit on the socket is only the polite half: on the first Pi run a jammed mctl-render never heard it,
+  and the box stayed on the new renderer until the service was restarted by hand (2026-10-18).
+* The final pass may draw at 720 lines and let the display's scaler bring it to the output (D108). `final` is the
+  setting: "full" is mctl-render as it always was; 720 is always on; "auto" allows it on a Pi 3 or 4, and the
+  supervisor, which looks at mctl-render's counters at every WATCH_SECONDS anyway, applies `final_rule`.
+"""
+
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+from . import hardware, paths, profile, screenmode
+
+USES = ("classic", "new")
+DETAILS = ("auto", 540, 720, "output")
+DEFAULT = {"use": "classic", "detail": "auto"}
+WANTED = "renderer.json"                # in the state folder: the panel writes it, the player reads it
+REPORT = paths.RENDERER_REPORT          # in the player's folder: the player writes it, the panel reads it
+START_SECONDS = 10.0                    # mctl-render must answer on its socket this soon after it is started
+HEALTHY_SECONDS = 600.0                 # an end after this long a run is not "in a row" with the one before
+STOP_SECONDS = 5.0                      # systemd's stop: this long for mctl-render to end before it is killed
+QUIT_SECONDS = 2.0                      # a switch: this long for mctl-render to end when asked on its socket, then SIGTERM
+TERM_SECONDS = 3.0                      # ... and this long after SIGTERM, then SIGKILL
+WATCH_SECONDS = 0.5                     # how often the supervisor reads WANTED while mctl-render draws
+FINAL_POLL_SECONDS = 0.2                # the final pass's look at mctl-render: a jammed one must not hold up the watch (D108)
+FINAL_ASK_SECONDS = 1.0                 # ... and a change of it, asked only of a mctl-render that has just answered
+# Sources (D101) and the Pi 3 or 4 group (was SMALL_BOARDS) are in mctl/profile.py, one row per tier.
+SOURCES_MAX = profile.SOURCES_MAX
+# Hardware decoding for mctl-render (D124), a setting with no page: only the copy variants, because mctl-render makes its render
+# context without a display, so a zero-copy import is not attempted. "no" (software) is the default and passes nothing.
+HWDECS = ("no", "auto-copy", "v4l2m2m-copy", "vaapi-copy", "nvdec-copy", "drm-copy")
+FINALS = ("auto", "full", 720)          # the final pass (D108): Automatic, always the output's size, always 720 lines
+
+
+# Automatic for the final pass (D108): 720 lines when the box is busy, the output's size while it has room, because
+# the scaler costs something on the screen (mapped edges and renderer text a little softer, thin lines in a squeezed
+# mapped area can break into dashes). Busy is more than BUSY_SHARE of the vblanks missed over BUSY_SECONDS. It goes back
+# only when the load has become lighter than it was at the switch and has stayed so for LIGHTER_SECONDS, and at least
+# HOLD_SECONDS after the switch down: so it never needs a trial at full size to know, and a load that stays as it
+# was stays at 720 for good, which is what stops it flapping.
+BUSY_SHARE = 0.05
+BUSY_SECONDS = 2.0
+LIGHTER_SECONDS = 5.0
+HOLD_SECONDS = 30.0
+
+
+def final_rule(state, now, missed, load, hz):
+    """One look at the box: what the final pass should draw at. `state` is what the last look returned, {"final":
+    "full"} at the start; `now` seconds on any clock, `missed` mctl-render's vblanks missed so far, `load` the number of
+    things it draws now (sources that play, their programs, the mapping), `hz` the output's rate. Returns the next
+    state, whose "final" is "full" or 720 and whose "why" says why in words. Asks nothing and changes nothing, so
+    a test can drive it with made-up numbers."""
+    state = dict(state)
+    if state.get("t0") is None or missed < state["m0"]:
+        state.update(t0=now, m0=missed)
+    if state["final"] == "full":
+        seconds = now - state["t0"]
+        if seconds < BUSY_SECONDS:
+            return state
+        share = (missed - state["m0"]) / (seconds * hz) if hz > 0 else 0.0
+        state.update(t0=now, m0=missed)
+        # With nothing drawn there is nothing to lighten: a stall of the box is no reason, and "lighter than nothing"
+        # could never bring it back.
+        if share > BUSY_SHARE and load > 0:
+            state.update(final=720, since=now, load=load, lighter=None,
+                         why="the node was busy: %d in 100 frames came late with a load of %d" % (round(share * 100), load))
+        return state
+    if load >= state["load"]:
+        state["lighter"] = None
+        return state
+    if state.get("lighter") is None:
+        state["lighter"] = now
+    if now - state["lighter"] >= LIGHTER_SECONDS and now - state["since"] >= HOLD_SECONDS:
+        state.update(final="full", t0=now, m0=missed, why="")
+    return state
+
+
+def source_cap(board_kind):
+    return profile.sources_cap(board_kind)
+
+
+def sources_for(board_kind, chosen=None):
+    """The sources mctl-render is started with on this board: the Owner's number, or the board's default, never over
+    its cap."""
+    n = chosen if isinstance(chosen, int) and not isinstance(chosen, bool) and 1 <= chosen <= SOURCES_MAX else \
+        profile.sources_default(board_kind)
+    return min(n, source_cap(board_kind))
+
+
+def binary(env=None):
+    """Where the program is built: render/mctl-render beside mctl/ in this release (PVJ_RENDER_BIN overrides, tests)."""
+    env = os.environ if env is None else env
+    return env.get("PVJ_RENDER_BIN") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "render", "mctl-render")
+
+
+def available(env=None):
+    path = binary(env)
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+HEAVY_LINES = 720                       # a clip taller than this is "1080p" for the warning below
+WARN_TEXT = "this may drop frames on this node; 720p clips are lighter"
+
+
+def source_warning(rows, target, board_kind):
+    """The panel's warning (D101) when a clip of more than 720 lines plays on source `target` while two or more other
+    sources play, on a board whose numbers say that is past what it decodes (a Pi 3 or 4); else None. `rows`:
+    Player.sources_state()."""
+    if not profile.small(board_kind):
+        return None
+    mine = [r for r in rows if r.get("source") == target]
+    others = [r for r in rows if r.get("source") != target and not r.get("idle")]
+    height = mine[0].get("height") if mine else None
+    if isinstance(height, int) and height > HEAVY_LINES and len(others) >= 2:
+        return WARN_TEXT
+    return None
+
+
+def clean(data):
+    """{"use", "detail"} from a settings section or the wanted file; anything else is the default. "sources" (D101)
+    only when it is a number from 1 to SOURCES_MAX: no key is the board's own number, so a file without it is as
+    before. "final" (D108) the same way, only when it is "full" or 720."""
+    data = data if isinstance(data, dict) else {}
+    use = data.get("use") if data.get("use") in USES else DEFAULT["use"]
+    detail = data.get("detail")
+    if isinstance(detail, bool) or detail not in DETAILS:
+        detail = DEFAULT["detail"]
+    out = {"use": use, "detail": detail}
+    n = data.get("sources")
+    if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= SOURCES_MAX:
+        out["sources"] = n
+    final = data.get("final")
+    if final == "full" or (final == 720 and isinstance(final, int) and not isinstance(final, bool)):
+        out["final"] = final                # no key is Automatic: a file without it is as before (D108)
+    if data.get("loop_lists") is False:
+        out["loop_lists"] = False           # the kill switch of the loop lists (D118), no page shows it: no key is on
+    if data.get("deblock") is True:
+        out["deblock"] = True               # the way back to the video's deblocking on a Pi (D120), no page shows it
+    hw = data.get("hwdec")
+    if isinstance(hw, str) and hw in HWDECS and hw != "no":
+        out["hwdec"] = hw                   # hardware decoding, copy variants only (D124), no page shows it: no key is software
+    return out
+
+
+def loop_lists(data):
+    """Whether a looping clip may play through a generated list (mctl/looplist.py): `renderer.loop_lists` in the
+    settings, read with defaults like the other keys here, so a file from before it is on and a rollback loses nothing."""
+    return clean(data).get("loop_lists", True)
+
+
+def wanted_path(env=None):
+    return os.path.join(paths.state_dir(env), WANTED)
+
+
+def detail_arg(detail, board_kind):
+    """--detail for mctl-render: lines inside, or the output's own size. Automatic: 540 on a Pi 3 or 4, else the output."""
+    if detail == "auto":
+        detail = profile.inside_lines(board_kind) or "output"
+    return "--detail=%s" % detail
+
+
+def final_arg(final, board_kind):
+    """--final for mctl-render (D108), or None: without it mctl-render flips as it always has. Automatic is allowed on
+    a Pi 3 or 4 only; elsewhere the GPU has the room, so it is off."""
+    if final == 720:
+        return "--final=720"
+    return "--final=auto" if final == "auto" and profile.small(board_kind) else None
+
+
+def command(socket_path, screen_args, detail, board_kind, env=None, sources=None, final=None, deblock=False, hwdec=None):
+    """mctl-render's argv: the socket, the screen's arguments as screenmode chose them for mpv, the detail, mpv's
+    cheap scalers on a Pi (as classic's --profile=fast), no deblocking on a Pi unless the settings keep it (D120), the
+    number of sources (D101) and the final pass (D108)."""
+    args = [binary(env), "--socket=" + socket_path]
+    args += [a for a in screen_args if a.startswith(("--drm-device=", "--drm-connector=", "--drm-mode="))]
+    args.append(detail_arg(detail, board_kind))
+    if hwdec and hwdec != "no" and hwdec in HWDECS:
+        args.append("--hwdec=" + hwdec)     # only when the settings set it (D124): every other argument list is as it was
+    if profile.small(board_kind):
+        args.append("--fast")
+        if not deblock:
+            args.append("--skip-deblock")
+    args.append("--sources=%d" % sources_for(board_kind, sources))
+    hz = re.search(r"^--drm-mode=\d+x\d+@([0-9.]+)$", next((a for a in screen_args if a.startswith("--drm-mode=")), ""))
+    rate = profile.fx_fps(board_kind, hz.group(1) if hz else None)
+    if rate:
+        args.append("--fx-fps=%d" % rate)       # only the full tier; the others keep mctl-render's 30, their argv as it was
+    extra = final_arg(final, board_kind)
+    if extra:
+        args.append(extra)
+    return args
+
+
+GLES2_WHY = "mctl-render needs OpenGL ES 3 and this node's graphics chip only has version 2"
+EXIT_NO_GPU = 5                         # mctl-render's exit when its screen is drawn by a software rasteriser (render/src/mctl.h)
+NO_GPU_WHY = "this node has no graphics chip the new renderer can use"
+
+
+def gles2_only(board_kind):
+    """A board whose graphics chip is OpenGL ES 2 (VC4: a Pi 3 class board, and a Pi 1 or Zero, which are pi-other), so
+    mctl-render cannot start on it. An arm-other board may have ES 3 (an RK3588 has 3.2): it keeps trying."""
+    return hardware.tier(board_kind) == "lean" or board_kind == "pi-other"
+
+
+def chosen(rundir, extra_args, windowed, env=None, board_kind=None):
+    """(use, detail, why) for the start that is about to happen. "new" only where mctl-render can draw in phase 1: on
+    a node without a desktop, where the player draws through DRM itself (`--gpu-context=drm`), and not on a board whose
+    graphics chip is OpenGL ES 2 (gles2_only): classic at once, with the reason, and the choice stays saved."""
+    want = clean(screenmode.read_json(wanted_path(env)))
+    if want["use"] != "new":
+        return "classic", want["detail"], ""
+    if board_kind is None:
+        board_kind = hardware.detect_board().get("kind", "")
+    if gles2_only(board_kind):
+        return "classic", want["detail"], GLES2_WHY
+    if windowed or "--gpu-context=drm" not in extra_args:
+        return "classic", want["detail"], "mctl-render draws only on a node without a desktop (phase 1)"
+    if not available(env):
+        return "classic", want["detail"], "mctl-render is not built on this node"
+    return "new", want["detail"], ""
+
+
+def board_profile():
+    """The tier and each value of this node's profile with its reason (profile.describe), as the wish says it is in
+    effect, or None if the board cannot be read."""
+    try:
+        board = hardware.detect_board()
+        return profile.describe(board.get("kind", ""), board.get("model", ""), clean(screenmode.read_json(wanted_path())))
+    except Exception:
+        return None
+
+
+def write_report(rundir, data, log=None):
+    data = dict(data, pid=os.getpid(), at=int(time.time()), boot=screenmode.boot_id())
+    if "profile" not in data:
+        data["profile"] = board_profile()        # the tier and what it gives, with the reasons, beside what is drawing
+    try:
+        screenmode.write_json(os.path.join(rundir, REPORT), data)
+    except OSError as e:
+        if log:
+            log("pvj-player: renderer: the report was not written (%s)" % e)
+
+
+# ---- the player's side: the supervisor ---------------------------------------------------------------------------
+class Supervisor:
+    """Runs mctl-render and says when to fall back. `run()` returns the reason to fall back to classic mpv, or ends
+    the process (SystemExit) when mctl-render was asked to quit or systemd stops the service."""
+
+    def __init__(self, cmd, socket_path, rundir, detail, log=print, spawn=None, clock=time.monotonic, sleep=time.sleep,
+                 ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS, wanted=None, sources=None,
+                 final=None, deblock=False, hwdec=None):
+        self.cmd, self.socket_path, self.rundir, self.detail = list(cmd), socket_path, rundir, detail
+        self.sources = sources              # the Owner's number of sources this run was started with (None: the board's)
+        self.final = final                  # the final pass this run was started with: "full" or 720 (None: Automatic)
+        self.deblock = deblock              # this run was started keeping the video's deblocking (D120)
+        self.hwdec = hwdec                  # this run was started with --hwdec=this (D124), or None
+        self.final_rule = None              # final_rule's state, while it decides for this run
+        self.final_watch = False            # mctl-render was started with --final and has not said it cannot
+        self.final_now = ("full", "")       # what the report says: what the final pass draws at, and why
+        self.final_ipc = None
+        self.log, self.clock, self.sleep = log, clock, sleep
+        self.spawn = spawn or (lambda argv: subprocess.Popen(argv, stdin=subprocess.DEVNULL, close_fds=True))
+        self.ready = ready or self._ready
+        self.start_seconds, self.healthy_seconds = start_seconds, healthy_seconds
+        self.wanted = wanted                # WANTED's path: a change of the wish ends this run (None: not watched)
+        self.proc = None
+        self.stopping = False
+        self.stop_at = None                 # when systemd's stop came (the clock), for the kill after STOP_SECONDS
+
+    def _ready(self, proc):
+        """True once mctl-render answers on its socket with its own pid."""
+        from .player import Ipc, PlayerError
+        ipc = Ipc(self.socket_path, timeout=1.0)
+        try:
+            return ipc.request("get_property", "pid") == proc.pid
+        except PlayerError:
+            return False
+
+    def _stop(self, signum=None, frame=None):
+        """systemd's stop (SIGTERM) or Ctrl-C: passed on to mctl-render, which ends cleanly."""
+        self.stopping = True
+        if self.stop_at is None:
+            self.stop_at = self.clock()
+        if self.proc is not None and self.proc.poll() is None:
+            try:
+                self.proc.send_signal(signal.SIGTERM)
+            except OSError:
+                pass
+
+    def _wish_changed(self):
+        """The wish in WANTED, if it is no longer this run's ({"use": "new", "detail": self.detail}); else None. A
+        missing or unreadable file is no change (the panel writes it whole, by a rename)."""
+        if not self.wanted:
+            return None
+        data = screenmode.read_json(self.wanted)
+        if not data:
+            return None
+        wish = clean(data)
+        wish.pop("loop_lists", None)        # the panel's switch, which the file carries: nothing of this run's (D118)
+        mine = {"use": "new", "detail": self.detail}
+        if self.sources is not None:
+            mine["sources"] = self.sources
+        if self.final is not None:
+            mine["final"] = self.final
+        if self.deblock:
+            mine["deblock"] = True
+        if self.hwdec:
+            mine["hwdec"] = self.hwdec
+        return wish if wish != mine else None
+
+    def _ask_quit(self):
+        from .player import Ipc, PlayerError
+        try:
+            Ipc(self.socket_path, timeout=1.0).request("quit")
+            return True
+        except PlayerError:
+            return False
+
+    def _switch(self, wish):
+        """End mctl-render for a new wish whatever state it is in: asked on its socket, then SIGTERM, then SIGKILL.
+        Returns how it ended, in words for the page."""
+        self.log("pvj-player: renderer: the wish is now %s (%s); ending mctl-render" % (wish["use"], wish["detail"]))
+        heard = self._ask_quit()
+        how = None
+        for sig, seconds, words in ((None, QUIT_SECONDS, "it quit when asked"),
+                                    (signal.SIGTERM, TERM_SECONDS, "it did not quit within %d s when asked%s, so it was sent SIGTERM"
+                                     % (QUIT_SECONDS, "" if heard else " (its socket did not answer)")),
+                                    (signal.SIGKILL, 5.0, "it did not quit within %d s when asked%s nor %d s after SIGTERM, so it was killed (SIGKILL)"
+                                     % (QUIT_SECONDS, "" if heard else " (its socket did not answer)", TERM_SECONDS))):
+            if sig is not None and self.proc.poll() is None:
+                try:
+                    self.proc.send_signal(sig)
+                except OSError:
+                    pass
+            try:
+                self.proc.wait(seconds)
+                how = words
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        how = how or "it did not end even after SIGKILL"
+        self.log("pvj-player: renderer: switched from mctl-render: %s" % how)
+        write_report(self.rundir, {"chosen": wish["use"], "drawing": "classic" if wish["use"] == "classic" else "new",
+                                   "why": "", "detail": wish["detail"], "switched": how}, self.log)
+        return how
+
+    def _end(self):
+        if self.proc is None:
+            return
+        if self.proc.poll() is None:
+            try:
+                self.proc.send_signal(signal.SIGTERM)
+                self.proc.wait(STOP_SECONDS)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait(5)
+            except OSError:
+                pass
+
+    def _report(self, drawing, why):
+        write_report(self.rundir, {"chosen": "new", "drawing": drawing, "why": why, "detail": self.detail,
+                                   "final": self.final_now[0], "final_why": self.final_now[1]}, self.log)
+
+    def _final_begin(self):
+        """mctl-render is up: the final pass starts at the output's size, whatever the last run came to."""
+        from .player import Ipc
+        self.final_now = ("full", "")
+        self.final_watch = any(a.startswith("--final=") for a in self.cmd)
+        self.final_rule = {"final": "full"} if "--final=auto" in self.cmd else None
+        self.final_ipc = Ipc(self.socket_path, timeout=FINAL_POLL_SECONDS)
+
+    def _final_say(self, final, why):
+        if (final, why) != self.final_now:
+            self.final_now = (final, why)
+            self._report("new", "")
+
+    def _final_tick(self):
+        """A look at mctl-render's counters while it draws (D108): under Automatic the rule's word goes to mctl-render,
+        and the report says what the final pass draws at and why. A mctl-render that does not answer is looked at
+        again next time: it is not this watch's business."""
+        if not self.final_watch:
+            return
+        from .player import PlayerError
+        try:
+            state = self.final_ipc.request("get_property", "mctl-render")
+        except PlayerError:
+            return
+        if not isinstance(state, dict):
+            return
+        refused = state.get("final-why")
+        if refused:
+            self.final_watch = False            # said once by mctl-render, and it stays at the output's size
+            self._final_say("full", refused if isinstance(refused, str) else "")
+            return
+        words = ""
+        if self.final_rule is not None:
+            before = self.final_rule["final"]
+            self.final_rule = final_rule(self.final_rule, self.clock(), state.get("missed-vblanks") or 0, state.get("load") or 0,
+                                         state.get("output-fps") or 60.0)
+            words = self.final_rule.get("why", "")
+            if self.final_rule["final"] != before:
+                self.log("pvj-player: renderer: the final pass goes to %s (%s)" % (self.final_rule["final"], words or "the load is lighter"))
+                try:
+                    self.final_ipc.request("mctl-final", self.final_rule["final"], wait=FINAL_ASK_SECONDS)
+                except PlayerError as e:
+                    self.log("pvj-player: renderer: the final pass stays as it is (%s)" % e)
+                    self.final_rule, self.final_watch = None, False
+                    self._final_say("full", "mctl-render did not take the change")
+                    return
+        self._final_say(720 if state.get("final-lines") == 720 else "full", words)
+
+    def run(self):
+        ends = 0
+        while True:
+            try:
+                os.unlink(self.socket_path)          # an old socket must not be taken for the new one's answer
+            except OSError:
+                pass
+            started = self.clock()
+            try:
+                self.proc = self.spawn(self.cmd)
+            except OSError as e:
+                return "mctl-render could not be started (%s)" % (e.strerror or e)
+            up = False
+            while self.clock() - started < self.start_seconds and not self.stopping:
+                if self.proc.poll() is not None:
+                    break
+                if self.ready(self.proc):
+                    up = True
+                    break
+                self.sleep(0.1)
+            if self.stopping:
+                self._end()
+                raise SystemExit(0)
+            if not up:
+                code = self.proc.poll()
+                self._end()
+                if code == EXIT_NO_GPU:
+                    return NO_GPU_WHY
+                return ("mctl-render did not start (exit %s)" % code) if code is not None else \
+                    "mctl-render did not answer within %d seconds" % self.start_seconds
+            self._final_begin()
+            self._report("new", "")
+            self.log("pvj-player: renderer: mctl-render is drawing (pid %d)" % self.proc.pid)
+            while True:
+                try:
+                    code = self.proc.wait(WATCH_SECONDS)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+                if self.stopping:
+                    if self.clock() - self.stop_at >= STOP_SECONDS:
+                        try:
+                            self.proc.kill()    # SIGTERM was not enough: killed, before systemd's own timeout
+                        except OSError:
+                            pass
+                    continue
+                wish = self._wish_changed()
+                if wish is not None:
+                    self._switch(wish)
+                    raise SystemExit(0)         # systemd starts the service again, which reads the new wish
+                self._final_tick()
+            if self.stopping:
+                raise SystemExit(0)
+            if code == 0:
+                # asked to quit (the panel restarts the player): the service starts again and reads the wish again
+                self.log("pvj-player: renderer: mctl-render quit")
+                raise SystemExit(0)
+            ends = 1 if self.clock() - started >= self.healthy_seconds else ends + 1
+            what = ("exit %d" % code) if code > 0 else "signal %d" % -code
+            if ends >= 2:
+                return "mctl-render ended twice in a row (%s)" % what
+            self.log("pvj-player: renderer: mctl-render ended (%s); starting it once more" % what)
+
+
+def serve(player, screen_args, detail, log, env=None):
+    """Run mctl-render under a Supervisor in this process. Returns the reason to fall back to classic mpv; never
+    returns while mctl-render draws."""
+    board = hardware.detect_board().get("kind", "")
+    wish = clean(screenmode.read_json(wanted_path(env)))
+    sources, final = wish.get("sources"), wish.get("final")
+    deblock = wish.get("deblock", False)
+    hwdec = wish.get("hwdec")
+    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env, sources, final or "auto", deblock, hwdec), player.socket_path, player.rundir,
+                     detail, log=log, wanted=wanted_path(env), sources=sources, final=final, deblock=deblock, hwdec=hwdec)
+    signal.signal(signal.SIGTERM, sup._stop)
+    signal.signal(signal.SIGINT, sup._stop)
+    try:
+        why = sup.run()
+    finally:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+    return why
+
+
+def fallback(rundir, detail, why, log):
+    log("pvj-player: renderer: classic mpv draws: %s" % why)
+    write_report(rundir, {"chosen": "new", "drawing": "classic", "why": why, "detail": detail}, log)
+
+
+# ---- the panel's side --------------------------------------------------------------------------------------------
+REPORT_WORDS = 200
+PROFILE_ROWS = 16
+
+
+def clean_profile(data):
+    """The profile in the report, as data from a less trusted account: a tier from the list, short plain sentences."""
+    if not isinstance(data, dict) or not isinstance(data.get("tier"), str) or data["tier"] not in profile.PROFILES:
+        return None
+    def words(v):
+        return screenmode._WHY.sub("", v)[:REPORT_WORDS] if isinstance(v, str) else ""
+    rows = [{k: words(r.get(k)) for k in ("name", "value", "why")} for r in (data.get("values") if isinstance(data.get("values"), list) else [])[:PROFILE_ROWS] if isinstance(r, dict)]
+    return {"tier": data["tier"], "tier_words": profile.TIER_WORDS[data["tier"]], "model": words(data.get("model")), "values": rows}
+
+
+
+
+def clean_report(data):
+    """The player's report, read by the panel: written by the account that plays untrusted media, so every field is
+    checked and nothing in it is more than a word from a list, a number or a short plain sentence."""
+    if not data:
+        return None
+    pid = data.get("pid")
+    return {"chosen": data.get("chosen") if data.get("chosen") in USES else None,
+            "drawing": data.get("drawing") if data.get("drawing") in USES else None,
+            "why": screenmode._WHY.sub("", data["why"])[:REPORT_WORDS] if isinstance(data.get("why"), str) else "",
+            "switched": screenmode._WHY.sub("", data["switched"])[:REPORT_WORDS] if isinstance(data.get("switched"), str) else "",
+            "detail": clean({"detail": data.get("detail")})["detail"],
+            "final": clean({"final": data.get("final")}).get("final"),
+            "final_why": screenmode._WHY.sub("", data["final_why"])[:REPORT_WORDS] if isinstance(data.get("final_why"), str) else "",
+            "profile": clean_profile(data.get("profile")),
+            "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
+            "boot": screenmode._WHY.sub("", data["boot"])[:64] if isinstance(data.get("boot"), str) else "",
+            "at": data.get("at") if isinstance(data.get("at"), int) and not isinstance(data.get("at"), bool) else None}
+
+
+class RendererError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status, self.message = status, message
+
+
+class Renderer:
+    """The panel's half: the setting, the wish for the player, a restart for a change, and what the page says."""
+
+    def __init__(self, api, settings, state_dir, player_dir, log=print, env=None):
+        self.api, self.settings, self.log, self.env = api, settings, log, env
+        self.wanted_file = os.path.join(state_dir, WANTED)
+        self.report_file = os.path.join(player_dir, REPORT)
+
+    def saved(self):
+        return clean(self.settings.data.get("renderer"))
+
+    def _write(self):
+        screenmode.write_json(self.wanted_file, self.saved())
+
+    def _restart(self, why):
+        self.log("pvj-web: renderer: restarting the player (%s)" % why)
+        note = getattr(self.api, "event", None)
+        if note:
+            note("player", "The player was restarted: %s." % why, urgent=False)
+        try:
+            self.api.player.quit()
+        except Exception as e:
+            self.log("pvj-web: renderer: the player did not take the restart (%s)" % e)
+
+    def start(self):
+        """At the panel's start: WANTED says what the settings say (nothing is restarted: the player reads it at its
+        next start, and the one that runs was started with what the last panel wrote)."""
+        if screenmode.read_json(self.wanted_file) == self.saved():
+            return False
+        self._write()
+        return True
+
+    def sync(self):
+        """After a factory reset (or an import, which never carries it): WANTED follows the settings, and the player is
+        restarted if that changed what it should run."""
+        before = clean(screenmode.read_json(self.wanted_file))
+        self._write()
+        if before != self.saved():
+            self._restart("the settings changed")
+
+    def report(self):
+        try:
+            if not os.path.isfile(self.report_file) or os.path.islink(self.report_file):
+                return None
+        except OSError:
+            return None
+        return clean_report(screenmode.read_json(self.report_file))
+
+    def drawing(self):
+        """Which program draws now, and why it is not the one chosen: from the report of the player that runs (its
+        pid), else classic (a player started with classic writes no report)."""
+        rep = self.report()
+        try:
+            pid = self.api.player.ipc.request("get_property", "pid")
+        except Exception:
+            pid = None
+        if rep and rep["drawing"] and (pid is None or rep["pid"] is None or self._same_run(rep, pid)):
+            return rep["drawing"], rep["why"]
+        return "classic", ""
+
+    def _same_run(self, rep, pid):
+        # the supervisor writes its own pid; mctl-render is its child and classic mpv is the supervisor itself (exec)
+        if rep["drawing"] == "classic":
+            return rep["pid"] == pid
+        try:
+            with open("/proc/%d/stat" % int(pid)) as f:
+                return int(f.read().rsplit(") ", 1)[1].split()[1]) == rep["pid"]
+        except (OSError, ValueError, IndexError):
+            return True
+
+    def board(self):
+        board = getattr(self.api, "board", None)
+        return board.get("kind", "") if isinstance(board, dict) else hardware.detect_board().get("kind", "")
+
+    def settings_profile(self, drawing=None):
+        """(profile, note) for the card: this node's tier and each value with its reason (profile.describe), from the
+        board the panel read and the settings saved. While mctl-render draws it is the report's own (what the player
+        started with); the note says so in one line when the two differ."""
+        board = getattr(self.api, "board", None)
+        board = board if isinstance(board, dict) else {}
+        own = profile.describe(board.get("kind", ""), board.get("model", ""), self.saved())
+        rep = self.report() if drawing == "new" else None
+        if rep and rep.get("profile"):
+            theirs = rep["profile"]
+            if (theirs["tier"], theirs["model"]) != (own["tier"], own["model"]):
+                return theirs, "The player reports %s (%s); this panel reads %s (%s)." % (theirs["tier"], theirs["model"], own["tier"], own["model"])
+            return theirs, ""
+        return own, ""
+
+    def sources(self):
+        """What the page says of sources (D101): the Owner's number or None (the board's own), this board's default
+        and cap, and the number mctl-render is started with."""
+        kind = self.board()
+        chosen = self.saved().get("sources")
+        return {"chosen": chosen, "default": sources_for(kind), "cap": source_cap(kind), "starts": sources_for(kind, chosen)}
+
+    def state(self):
+        saved = self.saved()
+        drawing, why = self.drawing()
+        out = {"use": saved["use"], "detail": saved["detail"], "drawing": drawing, "available": available(self.env),
+               "uses": list(USES), "details": list(DETAILS), "sources": self.sources(),
+               "final": saved.get("final", "auto"), "finals": list(FINALS)}
+        out["profile"], note = self.settings_profile(drawing)
+        if note:
+            out["profile_note"] = note
+        if saved["use"] == "new" and drawing == "classic":
+            out["why"] = why or "the player has not started mctl-render yet"
+        rep = self.report()
+        if rep and drawing == "new" and rep["final"]:
+            out["final_now"] = {"final": rep["final"], "why": rep["final_why"]}      # what the final pass draws at now (D108)
+        if rep and rep["switched"]:
+            # how the player ended mctl-render at the last change of the wish (Supervisor._switch)
+            out["switched"], out["switched_at"] = rep["switched"], rep["at"]
+        return out
+
+    def brief(self):
+        s = self.state()
+        return {"use": s["use"], "drawing": s["drawing"], "why": s.get("why", "")}
+
+    def choose(self, use, detail=None, sources=None, final=None):
+        """`sources` (D101): None keeps the number as it is, "auto" is the board's own, 1 to the board's cap a
+        number of the Owner's. `final` (D108): None keeps it as it is, else one of FINALS."""
+        if use not in USES:
+            raise RendererError(400, "use must be classic or new")
+        detail = self.saved()["detail"] if detail is None else detail
+        if isinstance(detail, bool) or detail not in DETAILS:
+            raise RendererError(400, "detail must be auto, 540, 720 or output")
+        if final is None:
+            final = self.saved().get("final", "auto")
+        if isinstance(final, bool) or final not in FINALS or isinstance(final, float):
+            raise RendererError(400, "final must be auto, full or 720")
+        cap = source_cap(self.board())
+        if sources is None:
+            sources = self.saved().get("sources")
+        elif sources == "auto":
+            sources = None
+        elif isinstance(sources, bool) or not isinstance(sources, int) or not 1 <= sources <= cap:
+            raise RendererError(400, "sources must be auto or 1 to %d on this node" % cap)
+        if use == "new" and gles2_only(self.board()):
+            raise RendererError(409, GLES2_WHY)
+        if use == "new" and not available(self.env):
+            raise RendererError(409, "mctl-render is not built on this node")
+        before = self.saved()
+        with self.settings.lock:
+            self.settings.data["renderer"] = {"use": use, "detail": detail}
+            if sources is not None:
+                self.settings.data["renderer"]["sources"] = sources
+            if final != "auto":
+                self.settings.data["renderer"]["final"] = final
+            if before.get("loop_lists") is False:
+                self.settings.data["renderer"]["loop_lists"] = False
+            if before.get("deblock"):
+                self.settings.data["renderer"]["deblock"] = True
+            if before.get("hwdec"):
+                self.settings.data["renderer"]["hwdec"] = before["hwdec"]
+            self.settings.save()
+        try:
+            self._write()
+        except OSError as e:
+            raise RendererError(500, "the wish for the player was not written (%s)" % e)
+        if self.saved() != before:
+            self._restart("the renderer is now %s" % ("mctl-render" if use == "new" else "classic mpv"))
+        elif use == "new":
+            # New chosen again while the player fell back to classic (mctl-render ended twice in a row, or did not
+            # start): a restart of the player is what tries mctl-render again (D95), so choosing New again does it,
+            # instead of leaving the box on classic until something else restarts the player (the 2-hour soak, D106)
+            drawing, why = self.drawing()
+            if drawing == "classic" and why and why != GLES2_WHY:
+                self._restart("New chosen again after classic took over (%s)" % why)
+        return self.state()

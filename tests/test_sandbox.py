@@ -137,7 +137,7 @@ class PrivateEnvTest(unittest.TestCase):
     """The second review of #155: every helper's folder the panel can reach is the box's own, Link (D117) and NDI too."""
 
     def test_helper_folders_are_the_boxs_own(self):
-        from pvj import paths
+        from mctl import paths
         saved = dict(os.environ)
 
         def restore():
@@ -435,7 +435,7 @@ class WholeSandboxTest(unittest.TestCase):
                 break
             out += line
         self.assertIn("Stop with", out)
-        # the running box's folder (beside it the box's own pvj-t-* of tests/tmpguard.py, which it removes at exit)
+        # the running box's folder (beside it the box's own mctl-t-* of tests/tmpguard.py, which it removes at exit)
         folders = [os.path.join(tmp, d) for d in os.listdir(tmp) if d.startswith("nxlx-sandbox-") and os.path.isdir(os.path.join(tmp, d))]
         self.assertEqual(len(folders), 1)
         if shutil.which("mpv"):
@@ -450,7 +450,7 @@ class WholeSandboxTest(unittest.TestCase):
             time.sleep(0.1)
         self.assertEqual(holders(folder), [])                 # no box, no mpv
         self.assertFalse(os.path.exists(folder))
-        for _ in range(50):                                   # the box's pvj-t-* goes with its last breath
+        for _ in range(50):                                   # the box's mctl-t-* goes with its last breath
             if not os.listdir(tmp) or not also_log:
                 break
             time.sleep(0.1)

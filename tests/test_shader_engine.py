@@ -12,10 +12,10 @@ import threading
 import time
 from unittest import mock
 
-from pvj import boxcare, midi, osc, scheduler, shaderlive as L, shaders as S, vibes as V
-from pvj.api import ApiError
-from pvj.midi import MidiMapper
-from pvj.settings import SCHEMA
+from mctl import boxcare, midi, osc, scheduler, shaderlive as L, shaders as S, vibes as V
+from mctl.api import ApiError
+from mctl.midi import MidiMapper
+from mctl.settings import SCHEMA
 from tests.test_shaders import (AMBIENT, AUTO_540, FIRST_TEN, GOOD, HEAVY, HEAVY_1440, IN_VIBES, MEDIUM, MEDIUM_1440, PACK_HEAVY, PACK_HEAVY_1440,
                                 PACK_MEDIUM, PACK_MEDIUM_1440, PACKED, PERFORMANCE, REFUSAL, ROTATION, ROTATION_1440, Base, FakeTap)
 
@@ -254,7 +254,7 @@ class BoardTest(Live):
         self.assertEqual((saved["v"], [e["name"] for e in saved["sets"]], saved["sets"][0]["dwell"], saved["sets"][0]["vary"]), (2, ["Ambient", "Show"], 50, False))
         self.assertEqual([r["id"] for r in saved["sets"][0]["shaders"]], ids)
         self.assertEqual(self.engine.vibes_ids(), ids)
-        from pvj.settings import MIGRATIONS
+        from mctl.settings import MIGRATIONS
         self.assertFalse([m for m in MIGRATIONS.values() if "shader" in (m.__doc__ or "").lower()])     # no settings migration for shaders
 
     def test_a_pack_shader_has_everything_the_projects_own_have(self):
@@ -1849,5 +1849,5 @@ class RolesAndSettingsTest(Live):
             with self.assertRaises(ValueError, msg=(key, bad)):
                 boxcare.check_shaders(dict(saved, **{key: bad}), None)
         self.assertEqual(L.check_extra({}), {})                       # a file of the first version: nothing is made up
-        from pvj.settings import default_settings
+        from mctl.settings import default_settings
         self.assertNotIn("shaders", default_settings())               # which is why a factory reset leaves none of it behind

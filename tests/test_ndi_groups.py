@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 
-from pvj import ndi, ndisetup, paths
+from mctl import ndi, ndisetup, paths
 from tests.test_ndi_pads import MASTER, REPO, PadBase
 from tests.test_roles import CONTROLLER_DEVICES, TUNNEL
 
@@ -291,7 +291,7 @@ class Scope(PadBase):
         self.assertEqual((got["groups"], got["discovery"], got["sound"], got["addresses"], [r["id"] for r in got["sources"]]),
                          (["Leyline"], ["10.0.0.2"], True, [], [self.pad()["ndi"]]))
         self.assertEqual(ndi.validate_saved(got), got)
-        from pvj import boxcare
+        from mctl import boxcare
         self.assertEqual(boxcare.check_ndi(got, None), got)
 
     def test_a_pads_source_is_looked_for_only_where_the_box_looks(self):

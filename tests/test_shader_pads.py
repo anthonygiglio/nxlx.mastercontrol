@@ -9,9 +9,9 @@ import threading
 import time
 import unittest
 
-from pvj import autostart, boxcare, midi, vibes as V
-from pvj.api import Api, ApiError
-from pvj.settings import Settings
+from mctl import autostart, boxcare, midi, vibes as V
+from mctl.api import Api, ApiError
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 from tests.test_shaders import REFUSAL, Base, FakeTap
 
@@ -1011,7 +1011,7 @@ class StepsBesides(Steps):
         self.open_all()
         self.assertTrue(self.idle())
         self.assertTrue(self.wait(lambda: self.on() == self.ids[300 % len(self.ids)]), self.on())
-        from pvj import shaderlive
+        from mctl import shaderlive
         self.gate.clear()
         for epoch in range(1000, 1040):             # something else took the screen between every two presses
             ch.step(1, epoch, None)
@@ -1511,7 +1511,7 @@ class FromEverywhere(PadBase):
         self.assertLessEqual(len(self.engine._chain[0]), 6, self.engine._chain)
         for n in range(40):
             self.engine.adopt(1000 + n, 2000 + n)
-        from pvj import shaderlive
+        from mctl import shaderlive
         self.assertLessEqual(len(self.engine._adopted), shaderlive.ADOPTED)
 
     def test_the_library_says_how_many_pads_hold_a_shader(self):
@@ -1523,7 +1523,7 @@ class FromEverywhere(PadBase):
 
     def test_osc_dmx_and_a_room_scene_name_a_pad_by_its_place_only(self):
         # none of them reads what the pad holds: each sends {"pad": [bank, index]} to the same play
-        from pvj import dmx, osc, room
+        from mctl import dmx, osc, room
         self.assertEqual(osc.translate("/mctl/play/pad", [1, 3]), ("/api/play", {"pad": [0, 2]}))
         self.assertEqual(dmx.pad_of(dmx.PAD_STEP * 3), 2)
         self.assertEqual(room.BOX["pad"][1]({"pad": [0, 2]}), [("/api/play", {"pad": [0, 2]})])
@@ -1554,8 +1554,8 @@ class Mixed(ServerBase):
 
     def setUp(self):
         super().setUp()
-        from pvj import transitions as T
-        from pvj.player import Player
+        from mctl import transitions as T
+        from mctl.player import Player
         from tests.fakempv import FakeMpv
         self.T = T
         self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"))

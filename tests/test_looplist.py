@@ -10,9 +10,9 @@ import threading
 import time
 import unittest
 
-from pvj import looplist, renderer, settings as settings_mod
-from pvj.player import Ipc, Player, PlayerError, expand_media, names_other_files
-from pvj.sync import SyncManager
+from mctl import looplist, renderer, settings as settings_mod
+from mctl.player import Ipc, Player, PlayerError, expand_media, names_other_files
+from mctl.sync import SyncManager
 from tests.fakempv import FakeMpv
 import tests        # the run's own temp folder and the locks' checker (tests/__init__.py)
 
@@ -313,7 +313,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings_mod.default_settings()["schema"], settings_mod.SCHEMA)
 
     def test_a_change_of_renderer_keeps_the_switch_off(self):
-        with open(os.path.join(REPO, "pvj", "renderer.py")) as f:
+        with open(os.path.join(REPO, "mctl", "renderer.py")) as f:
             source = f.read()
         self.assertIn('if before.get("loop_lists") is False:', source)
         self.assertEqual(renderer.clean({"use": "new", "loop_lists": False})["loop_lists"], False)
@@ -697,7 +697,7 @@ class RendererSourceTest(unittest.TestCase):
         for word in ("safe", "protocol_whitelist", "demuxer-lavf-o", "access-references"):
             for name in ("LOAD_KEYS", "FADE_KEYS", "SETTABLE"):
                 self.assertNotIn('"%s"' % word, self.listed(name))
-        from pvj.player import Player as P
+        from mctl.player import Player as P
         self.assertIn("--access-references=no", P(rundir=tempfile.mkdtemp()).mpv_command())
 
 

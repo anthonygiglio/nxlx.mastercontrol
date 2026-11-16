@@ -1314,7 +1314,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(await page.isDisabled('.oscsender button:text-is("Allow this one")'), 'a full list takes no more');
     await page.unroute('**/api/osc', oscWide);
     await page.unroute('**/api/osc/messages', oscWideLog);
-    // The title bar stays at the top while a screen scrolls (pvj/PROPOSALS.md, 2): on a tablet, also with the strip's
+    // The title bar stays at the top while a screen scrolls (mctl/PROPOSALS.md, 2): on a tablet, also with the strip's
     // More open; on a phone under 800 px high it scrolls away; the offline banner shows above it.
     const headAt = () => page.evaluate(() => ({ top: Math.round(document.getElementById('wshead').getBoundingClientRect().top),
       pos: getComputedStyle(document.getElementById('wshead')).position, y: Math.round(window.scrollY) }));
@@ -2790,7 +2790,7 @@ function startServer(env) {          // env: more for the harness's environment 
       // The fleet list (the follow-up to slice 5): what is held, and loading the two files chosen together
       assert(/^Holding "rig", serial 3, signed 2026-11-09, naming 2 nodes\.$/.test(await page.textContent('#clusterlistheld')), 'the held list is described');
       const fs = require('fs');
-      const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'pvj-fleet-'));
+      const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mctl-fleet-'));
       fs.writeFileSync(path.join(dir, 'fleet.json'), '{"v":1,"name":"rig"}');
       fs.writeFileSync(path.join(dir, 'fleet.sig'), 'c2lnbmF0dXJl');
       await page.setInputFiles('#clusterlistpick', [path.join(dir, 'fleet.json')]);
@@ -4081,7 +4081,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // the big button on Pads, open the page from the link next to it, choose one shader by hand (which ends the
     // rotation), move a slider, change the settings, add and remove a file. The harness player draws nothing
     // (--vo=null), so this checks the panel and the API, not the picture; that is tests/test_shaders_gpu.py.
-    const BUNDLED_SHADERS = 39;         // the files in pvj/shaders.d (named one by one in tests/test_shaders.py)
+    const BUNDLED_SHADERS = 39;         // the files in mctl/shaders.d (named one by one in tests/test_shaders.py)
     await go(page, 'play/pads');
     await page.waitForSelector('.pads');
     assert.strictEqual(await page.locator('#vibes').count(), 0, 'no Vibes button while the module is off');

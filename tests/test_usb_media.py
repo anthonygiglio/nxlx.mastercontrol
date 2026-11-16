@@ -36,10 +36,10 @@ class UsbMediaTest(ServerBase):
 
     def scans_at(self, now, gets=1):
         """How many directory scans `gets` requests for the media list cost when the panel's clock stands at `now`.
-        The cache's age is taken from time.monotonic in pvj.api; the clock is held there, so the machine's speed plays no part.
+        The cache's age is taken from time.monotonic in mctl.api; the clock is held there, so the machine's speed plays no part.
         Only scans of this test's own drives count: os.scandir is one function for the whole process, and a thread left
         by an earlier test (the shaders' "shader-changes" thread globs /sys now and then, and glob scans) is not the cache."""
-        from pvj import api as api_mod
+        from mctl import api as api_mod
 
         class Held:
             monotonic = staticmethod(lambda: now)
@@ -54,7 +54,7 @@ class UsbMediaTest(ServerBase):
             if os.fspath(path).startswith(mine):
                 calls.append(path)
             return real(path)
-        with mock.patch.object(api_mod, "time", Held()), mock.patch("pvj.api.os.scandir", counting):
+        with mock.patch.object(api_mod, "time", Held()), mock.patch("mctl.api.os.scandir", counting):
             for _ in range(gets):
                 self.assertEqual(self.call("GET", "/api/media", token=self.token)[0], 200)
             os.scandir(self.tmp).close()                                     # somebody else's scan, as a stray thread would make
@@ -116,7 +116,7 @@ class UsbMediaTest(ServerBase):
         self.assertEqual((st, body["files"]), (200, 2))                     # the preset applies the same name rules
 
     def test_a_huge_directory_is_scanned_only_up_to_a_limit_and_cached(self):
-        from pvj import api as api_mod
+        from mctl import api as api_mod
         drive = os.path.join(self.usb, "OTHER")
         for i in range(60):
             open(os.path.join(drive, "f%03d.mp4" % i), "wb").write(b"x")
@@ -128,7 +128,7 @@ class UsbMediaTest(ServerBase):
         self.assertEqual(self.scans_at(self.api._usb_cache[0] + api_mod.USB_CACHE_SECONDS - 0.001, gets=5), 0)   # served from the cache
 
     def test_after_the_caches_lifetime_the_drives_are_scanned_again_once(self):
-        from pvj import api as api_mod
+        from mctl import api as api_mod
         self.call("GET", "/api/media", token=self.token)
         filled = self.api._usb_cache[0]
         open(os.path.join(self.usb, "OTHER", "new.mp4"), "wb").write(b"x")
@@ -140,7 +140,7 @@ class UsbMediaTest(ServerBase):
         self.assertEqual([f["name"] for f in self.api._usb_cache[1][1]["files"]], ["new.mp4"])
 
     def test_a_preset_queues_at_most_a_bounded_number_of_files(self):
-        from pvj import api as api_mod
+        from mctl import api as api_mod
         drive = os.path.join(self.usb, "NXLX-USB")
         for i in range(30):
             open(os.path.join(drive, "m%02d.mp4" % i), "wb").write(b"x")
@@ -240,7 +240,7 @@ class UsbImportTest(ServerBase):
 
             def close(self):
                 self.inner.close()
-        with mock.patch("pvj.api.os.fdopen", lambda fd, mode="r", *a, **k: Failing(fd) if mode == "rb" else real_fdopen(fd, mode, *a, **k)):
+        with mock.patch("mctl.api.os.fdopen", lambda fd, mode="r", *a, **k: Failing(fd) if mode == "rb" else real_fdopen(fd, mode, *a, **k)):
             self.call("POST", "/api/media/import", {"usb": "SHOW/film.mp4"}, token=self.full)
             self.assertIn("stopped answering", self.wait()["error"])
         self.assertFalse([n for n in os.listdir(self.media) if n.startswith(".upload-")])      # the half file is gone
@@ -270,7 +270,7 @@ class UsbDriveAndAutostartPadTest(UsbMediaTest):
         self.assertEqual(self.call("POST", "/api/play", {"usb_drive": "LINKED"}, token=self.token)[0], 404)
 
     def test_autostart_refuses_an_empty_pad_and_media_says_usb_autostart_is_on(self):
-        from pvj import autostart
+        from mctl import autostart
         self.api.autostart = autostart.Autostart(self.api, self.settings, log=lambda *_: None)
         st, body, _ = self.call("POST", "/api/autostart", {"mode": "pad", "pad": [2, 11]}, token=self.token)
         self.assertEqual((st, body["error"]), (400, "choose a pad that has a clip or a shader"))

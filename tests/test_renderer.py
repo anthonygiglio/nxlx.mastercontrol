@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Which program draws (pvj/renderer.py, D95): the choice, mctl-render's arguments, the supervisor in the player's
+"""Which program draws (mctl/renderer.py, D95): the choice, mctl-render's arguments, the supervisor in the player's
 service and its fallback to classic mpv, the report read as untrusted data, and the panel's routes.
 
 mctl-render itself is tested in tests/test_mctl_render.py. Here a stand-in helper (a small Python program that answers
@@ -18,8 +18,8 @@ import unittest
 from unittest import mock
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import boxcare, renderer, screenmode, settings as settings_mod
-from pvj.player import Ipc, Player, PlayerError
+from mctl import boxcare, renderer, screenmode, settings as settings_mod
+from mctl.player import Ipc, Player, PlayerError
 
 # The stand-in: answers get_property pid with its own pid (and quit) on --socket=PATH, as mctl-render does. What it
 # does is read from STANDIN_MODE: "ok" (a quit ends it with 0), "die:SECONDS:CODE" (answer, then end with CODE),
@@ -368,7 +368,7 @@ class ChoiceTest(Base):
             self.assertEqual(self.chosen({"use": "new", "detail": 720}, board_kind=kind), ("new", 720, ""), kind)
 
     def test_a_pi_400_and_a_cm4_command_is_a_pi_4s(self):
-        from pvj import hardware
+        from mctl import hardware
         screen = ["--drm-device=/dev/dri/card1", "--drm-mode=1920x1080@60.00"]
         master = [self.standin, "--socket=/run/s"] + screen + ["--detail=540", "--fast", "--skip-deblock", "--sources=4"]
         self.assertEqual(renderer.command("/run/s", screen, "auto", "pi4", self.env), master)
@@ -608,11 +608,11 @@ class ServeTest(Base):
             raise Exec()
         with mock.patch.object(screenmode, "prepare", lambda *a, **k: ["--drm-mode=1920x1080@60.00"]), \
                 mock.patch.object(renderer.paths, "state_dir", lambda e=None: state), \
-                mock.patch("pvj.player.detach_socket_opener", opener), \
+                mock.patch("mctl.player.detach_socket_opener", opener), \
                 mock.patch("os.execvp", execvp), \
                 mock.patch.object(renderer, "START_SECONDS", 3.0), \
                 mock.patch.object(renderer.hardware, "drm_connectors", lambda root="/": []), \
-                mock.patch("pvj.latescreen.start", lambda *a, **k: False), \
+                mock.patch("mctl.latescreen.start", lambda *a, **k: False), \
                 mock.patch.object(renderer.hardware, "detect_board", lambda: {"kind": "pi4"}):
             try:
                 p.serve()

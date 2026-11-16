@@ -4,14 +4,14 @@ SPDX-PackageName = "nxlx.mastercontrol"
 # Files that cannot carry a comment header, and documentation, written for this fork.
 [[annotations]]
 path = [
-  "pvj/modules.d/**",
-  "pvj/themes.d/**",
-  "pvj/controllers.d/**",
-  "pvj/shaders.d/*.fs",
-  "pvj/shaders.d/isf-files/SHA256SUMS",
-  "pvj/effects.d/*.fs",
-  "pvj/effects.d/isf-files/SHA256SUMS",
-  "pvj/*.md",
+  "mctl/modules.d/**",
+  "mctl/themes.d/**",
+  "mctl/controllers.d/**",
+  "mctl/shaders.d/*.fs",
+  "mctl/shaders.d/isf-files/SHA256SUMS",
+  "mctl/effects.d/*.fs",
+  "mctl/effects.d/isf-files/SHA256SUMS",
+  "mctl/*.md",
   "install/README.md",
   "image/README.md",
   "image/config",
@@ -33,16 +33,16 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 NXLX.Systems and contributors"
 SPDX-License-Identifier = "Apache-2.0"
 
-# Third-party shader packs: generators (pvj/shaders.d/isf-files) and filters (pvj/effects.d/isf-files) from Vidvox
+# Third-party shader packs: generators (mctl/shaders.d/isf-files) and filters (mctl/effects.d/isf-files) from Vidvox
 # ISF-Files (https://github.com/Vidvox/ISF-Files), unchanged, under the MIT licence of that repository. Its LICENSE
 # names no copyright holder ("Copyright (c) 2018"); each file names its author in its CREDIT field. See
 # THIRD_PARTY_LICENSES.md for the commit, the file lists and the notices.
 [[annotations]]
 path = [
-  "pvj/shaders.d/isf-files/*.fs",
-  "pvj/shaders.d/isf-files/LICENSE",
-  "pvj/effects.d/isf-files/*.fs",
-  "pvj/effects.d/isf-files/LICENSE",
+  "mctl/shaders.d/isf-files/*.fs",
+  "mctl/shaders.d/isf-files/LICENSE",
+  "mctl/effects.d/isf-files/*.fs",
+  "mctl/effects.d/isf-files/LICENSE",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2018 the authors of ISF-Files (VIDVOX and the people named in each file's CREDIT)"
@@ -52,9 +52,9 @@ SPDX-License-Identifier = "MIT"
 # kept beside them. This annotation comes last, so it is the one that counts for these three files.
 [[annotations]]
 path = [
-  "pvj/shaders.d/isf-files/isf-simplex-noise.fs",
-  "pvj/shaders.d/isf-files/isf-ridgelines.fs",
-  "pvj/shaders.d/isf-files/LICENSE.webgl-noise",
+  "mctl/shaders.d/isf-files/isf-simplex-noise.fs",
+  "mctl/shaders.d/isf-files/isf-ridgelines.fs",
+  "mctl/shaders.d/isf-files/LICENSE.webgl-noise",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = [
@@ -70,8 +70,8 @@ SPDX-License-Identifier = "MIT"
 # each family's own OFL.txt, with its copyright line, is kept beside the fonts.
 [[annotations]]
 path = [
-  "pvj/web/fonts/archivo-latin.06fa7831.woff2",
-  "pvj/web/fonts/OFL-Archivo.txt",
+  "mctl/web/fonts/archivo-latin.06fa7831.woff2",
+  "mctl/web/fonts/OFL-Archivo.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)"
@@ -79,21 +79,21 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/web/fonts/jetbrains-mono-500-latin.6c95bc2f.woff2",
-  "pvj/web/fonts/OFL-JetBrainsMono.txt",
+  "mctl/web/fonts/jetbrains-mono-500-latin.6c95bc2f.woff2",
+  "mctl/web/fonts/OFL-JetBrainsMono.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
 SPDX-License-Identifier = "OFL-1.1"
 
-# Fonts the node draws text with (pvj/fonts, D129 slice 2 of design/text-and-logo-sources_2026-11-08.md). Eleven families, each
+# Fonts the node draws text with (mctl/fonts, D129 slice 2 of design/text-and-logo-sources_2026-11-08.md). Eleven families, each
 # the unchanged TrueType file of the release in https://github.com/google/fonts (commit and checksums in THIRD_PARTY_LICENSES.md), each with
 # its own OFL.txt beside it, read from the same release. None is this project's work; all are SIL OFL 1.1. They are read by pvj-raster,
 # never sent to a browser.
 [[annotations]]
 path = [
-  "pvj/fonts/archivo.ttf",
-  "pvj/fonts/OFL-Archivo.txt",
+  "mctl/fonts/archivo.ttf",
+  "mctl/fonts/OFL-Archivo.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)"
@@ -101,8 +101,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/jetbrains-mono.ttf",
-  "pvj/fonts/OFL-JetBrainsMono.txt",
+  "mctl/fonts/jetbrains-mono.ttf",
+  "mctl/fonts/OFL-JetBrainsMono.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
@@ -110,8 +110,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/inter.ttf",
-  "pvj/fonts/OFL-Inter.txt",
+  "mctl/fonts/inter.ttf",
+  "mctl/fonts/OFL-Inter.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2020 The Inter Project Authors (https://github.com/rsms/inter)"
@@ -119,8 +119,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/bebas-neue.ttf",
-  "pvj/fonts/OFL-BebasNeue.txt",
+  "mctl/fonts/bebas-neue.ttf",
+  "mctl/fonts/OFL-BebasNeue.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2010 by Dharma Type"
@@ -128,8 +128,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/oswald.ttf",
-  "pvj/fonts/OFL-Oswald.txt",
+  "mctl/fonts/oswald.ttf",
+  "mctl/fonts/OFL-Oswald.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont)"
@@ -137,8 +137,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/anton.ttf",
-  "pvj/fonts/OFL-Anton.txt",
+  "mctl/fonts/anton.ttf",
+  "mctl/fonts/OFL-Anton.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2020 The Anton Project Authors (https://github.com/googlefonts/AntonFont.git)"
@@ -146,8 +146,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/montserrat.ttf",
-  "pvj/fonts/OFL-Montserrat.txt",
+  "mctl/fonts/montserrat.ttf",
+  "mctl/fonts/OFL-Montserrat.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2024 The Montserrat.Git Project Authors (https://github.com/JulietaUla/Montserrat.git)"
@@ -155,8 +155,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/orbitron.ttf",
-  "pvj/fonts/OFL-Orbitron.txt",
+  "mctl/fonts/orbitron.ttf",
+  "mctl/fonts/OFL-Orbitron.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2018 The Orbitron Project Authors (https://github.com/theleagueof/orbitron), with Reserved Font Name \"Orbitron\""
@@ -164,8 +164,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/press-start-2p.ttf",
-  "pvj/fonts/OFL-PressStart2P.txt",
+  "mctl/fonts/press-start-2p.ttf",
+  "mctl/fonts/OFL-PressStart2P.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2012 The Press Start 2P Project Authors (cody@zone38.net), with Reserved Font Name \"Press Start 2P\""
@@ -173,8 +173,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/roboto-condensed.ttf",
-  "pvj/fonts/OFL-RobotoCondensed.txt",
+  "mctl/fonts/roboto-condensed.ttf",
+  "mctl/fonts/OFL-RobotoCondensed.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2011 The Roboto Project Authors (https://github.com/googlefonts/roboto-classic)"
@@ -182,8 +182,8 @@ SPDX-License-Identifier = "OFL-1.1"
 
 [[annotations]]
 path = [
-  "pvj/fonts/noto-sans.ttf",
-  "pvj/fonts/OFL-NotoSans.txt",
+  "mctl/fonts/noto-sans.ttf",
+  "mctl/fonts/OFL-NotoSans.txt",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)"

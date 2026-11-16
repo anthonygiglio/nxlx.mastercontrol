@@ -5,7 +5,7 @@
 The tests make several hundred temp folders a run and most never removed one, so each run left them in the
 system's temp folder; on 2026-10-08 that filled the development Mac's disk. A test needs nothing new for this:
 `tempfile.mkdtemp()` and friends, and every program a test starts (it inherits TMPDIR), now land in one folder,
-`<temp>/pvj-t-XXXXXX`, and that folder goes when the process ends.
+`<temp>/mctl-t-XXXXXX`, and that folder goes when the process ends.
 
     PVJ_KEEP_TMP=1   keep the folder (to look at what a failing test left); its path is printed at the end
     PVJ_TEST_TMP     set by this module: the folder of the running suite; a Python that a test starts uses the
@@ -18,7 +18,7 @@ What ends a run and what happens to the folder:
                                             once it is two hours old and the process that made it is gone
 
 Nothing is ever removed that is not provably this suite's: a real folder (not a link) directly in the temp folder,
-named pvj-t-*, owned by this user, holding the marker file this module wrote. The marker is the proof; the name
+named mctl-t-*, owned by this user, holding the marker file this module wrote. The marker is the proof; the name
 only says where to look, and is short because a socket's path in a test's folder has about 100 bytes in all. Two
 runs at the same time (two worktrees) have a folder each and leave the other's alone: its process is alive. A
 folder whose process is alive is left for fourteen days, because a process number alone cannot tell a run that
@@ -42,8 +42,8 @@ import tempfile
 import threading
 import time
 
-PREFIX = "pvj-t-"
-MARKER = ".pvj-test-tmp"
+PREFIX = "mctl-t-"
+MARKER = ".mctl-test-tmp"
 MADE_BY = "nxlx.mastercontrol tests/tmpguard.py"
 ENV = "PVJ_TEST_TMP"
 KEEP = "PVJ_KEEP_TMP"

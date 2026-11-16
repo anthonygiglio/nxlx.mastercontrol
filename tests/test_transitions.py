@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The crossfade (pvj/transitions.py, D71) against a player that records what it is told. What a real mpv draws is in
+"""The crossfade (mctl/transitions.py, D71) against a player that records what it is told. What a real mpv draws is in
 tests/test_transitions_gpu.py, which CI's effects-gpu jobs run."""
 import os
 import struct
@@ -8,8 +8,8 @@ import time
 import unittest
 import zlib
 
-from pvj import transitions as T
-from pvj.player import PlayerError
+from mctl import transitions as T
+from mctl.player import PlayerError
 from tests.test_server import FakePlayer, ServerBase
 
 GONE = object()         # a property the player cannot give: "mpv: property unavailable"
@@ -39,8 +39,8 @@ class Screen(FakePlayer):
         self.still_bytes = None         # what the next still holds instead of the screen
         self.fail = set()               # names of calls that raise PlayerError
         self.on_overlay = None
-        # as pvj.player.Player: one lock for every change of what plays, and an epoch that a generator must hold
-        from pvj import locks
+        # as mctl.player.Player: one lock for every change of what plays, and an epoch that a generator must hold
+        from mctl import locks
         self._lock = locks.make("player", reentrant=True)       # at the player's place in the order of the locks
         self.source_epoch, self.source_shader, self.path, self.carrier = 0, None, None, None
         self.socket_path = os.path.join(rundir, "player.sock")
@@ -216,10 +216,10 @@ class Screen(FakePlayer):
 
 
 class Helper:
-    """A live input's helper as pvj.capture.Capture is to the panel: prepare stops the one before, start runs one."""
+    """A live input's helper as mctl.capture.Capture is to the panel: prepare stops the one before, start runs one."""
 
     def __init__(self, rundir):
-        from pvj import locks
+        from mctl import locks
         self.lock = locks.make("capture", reentrant=True)       # at the live input's place in the order of the locks
         self.fifo = os.path.join(rundir, "capture.fifo")
         self.running, self.most, self.stops = 0, 0, 0
@@ -255,7 +255,7 @@ class Names(unittest.TestCase):
         self.assertEqual(T.named(None), "cut")
 
     def test_the_stored_form_is_one_the_release_before_reads_as_a_dip(self):
-        # what pvj/api.py and pvj/boxcare.py did before this: `mode not in ("cut", "dip")` refused, and a play
+        # what mctl/api.py and mctl/boxcare.py did before this: `mode not in ("cut", "dip")` refused, and a play
         # looked only at `transition == "dip"`
         kept = T.stored("crossfade", 1.0)
         self.assertIn(kept["transition"], ("cut", "dip"))
@@ -393,7 +393,7 @@ class Crossfade(Base):
 
     def test_the_masks_stay_on_during_and_after_a_crossfade(self):
         # D100: the masks are overlay 10, the still is 63; a crossfade never takes the masks off nor draws over their slot
-        from pvj import overlay as overlay_mod
+        from mctl import overlay as overlay_mod
         self.assertNotEqual(T.OVERLAY_ID, overlay_mod.OVERLAY_ID)
         from tests.test_masks import png as rgba_png
         rgba_png(os.path.join(self.media, "frame.png"), 2, 2, lambda x, y: (0, 0, 0, 255))
@@ -580,7 +580,7 @@ class Crossfade(Base):
     def test_an_effect_changed_during_it_does_not_touch_it(self):
         # an effect is a shader under the still: nothing in the effects engine ends a transition
         import inspect
-        from pvj import effects
+        from mctl import effects
         self.assertNotIn("transitions", inspect.getsource(effects))
 
     # -- a player that goes away --
@@ -708,7 +708,7 @@ class Crossfade(Base):
         self.assertIn("larger than", self.api.status({}, None, "t")["mix"]["fallback"])
 
     def test_a_clip_the_operator_froze_after_a_good_crossfade_stays_frozen_when_the_next_play_fails(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.play()                                 # a good one: it froze a clip that was playing
         self.player.props["pause"] = True           # Freeze
         self.player.fail = {"play"}
@@ -725,7 +725,7 @@ class Crossfade(Base):
         self.assertTrue(any("a cut instead" in line for line in self.lines), self.lines)
 
     def test_a_new_clip_that_does_not_start_leaves_the_old_one_playing_with_no_still_over_it(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.player.fail = {"play"}
         with self.assertRaises(ApiError) as e:
             self.play()
@@ -735,7 +735,7 @@ class Crossfade(Base):
         self.assertEqual(self.left(), [])
 
     def test_a_clip_somebody_froze_stays_frozen_when_the_new_one_does_not_start(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.player.props["pause"] = True
         self.player.fail = {"play"}
         with self.assertRaises(ApiError):
@@ -1110,7 +1110,7 @@ class FrozenByAPanelThatDied(Base):
         self.assertTrue(self.player.props["pause"], "the operator's freeze is not the fix's to undo")
 
     def test_a_hold_that_fails_or_is_abandoned_removes_its_record(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.player.fail = {"play"}
         with self.assertRaises(ApiError):
             self.play()
@@ -1218,7 +1218,7 @@ class Settings(Base):
         self.assertEqual(self.api.status({}, None, "t")["mix"]["transition"], "cut")
 
     def test_the_schema_is_not_touched(self):
-        from pvj import settings as S
+        from mctl import settings as S
         self.assertNotIn("style", S.default_settings()["mix"])
         self.assertEqual(S.default_settings()["mix"]["transition"], "dip")
 
@@ -1257,8 +1257,8 @@ class Threads(ServerBase):
         self.held = []                          # threads the panel asked for and the test has not started yet
 
     def hold_threads_back(self):
-        """From now on a thread that pvj/api.py starts is only noted; `release()` runs them, in the order given."""
-        import pvj.api as api_module
+        """From now on a thread that mctl/api.py starts is only noted; `release()` runs them, in the order given."""
+        import mctl.api as api_module
         test = self
 
         class Held:
@@ -1389,7 +1389,7 @@ class Threads(ServerBase):
             self.api.fader.cancel()
 
     def test_a_controllers_play_answers_at_once_and_its_blackout_is_not_held_behind_the_still(self):
-        from pvj.midi import MIDI_DEVICE
+        from mctl.midi import MIDI_DEVICE
         self.player.still = self.slow_still
         took = self.timed(lambda: self.api.play({"file": "a.mp4"}, MIDI_DEVICE, "midi"))
         self.assertLess(took, 5.0, "the controller's thread waited for the still")
@@ -1431,7 +1431,7 @@ class Threads(ServerBase):
 
     def test_a_stop_that_is_handled_before_the_controllers_thread_starts_is_seen_by_it(self):
         # M2: the snapshot was taken on the new thread, so a Stop that came before the thread ran was not newer
-        from pvj.midi import MIDI_DEVICE
+        from mctl.midi import MIDI_DEVICE
         self.hold_threads_back()
         self.assertEqual(self.api.play({"file": "a.mp4"}, MIDI_DEVICE, "midi"), {"playing": "a.mp4", "pending": True})
         self.assertEqual(len(self.held), 1)
@@ -1561,7 +1561,7 @@ class Threads(ServerBase):
 
     def test_of_many_plays_from_a_controller_the_last_wins_and_one_still_is_taken(self):
         # M3: one thread and one still each, in turn, and the last asked for need not be the last loaded
-        from pvj.midi import MIDI_DEVICE
+        from mctl.midi import MIDI_DEVICE
         for order in (None, [4, 3, 2, 1, 0], [2, 4, 0, 3, 1]):
             self.hold_threads_back()
             del self.player.calls[:], self.player.plays[:]
@@ -1577,7 +1577,7 @@ class Threads(ServerBase):
             self.assertIsNone(self.tr.running)
 
     def test_a_flood_of_plays_on_real_threads_ends_with_the_last_one(self):
-        from pvj.midi import MIDI_DEVICE
+        from mctl.midi import MIDI_DEVICE
         names = ["flood%02d.mp4" % i for i in range(13)]
         for name in names:
             open(os.path.join(self.media, name), "w").close()
@@ -1714,7 +1714,7 @@ class Threads(ServerBase):
 
     def test_a_play_that_fails_is_still_the_newest_wish(self):
         # stated in D71: the operator's last tap was the one that failed; what it overtook is not brought back
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.player.still = self.slow_still
         t, out = self.background(lambda: self.api.play({"file": "a.mp4"}, None, "t"))
         self.assertTrue(self.inside.wait(5))
@@ -1880,7 +1880,7 @@ class Threads(ServerBase):
         self.api.fader.cancel()
 
     def test_a_callback_is_never_called_under_the_faders_lock(self):
-        from pvj.api import Fader
+        from mctl.api import Fader
         seen = []
         fader = Fader(lambda level: None)
         done = self.threading.Event()
@@ -1914,7 +1914,7 @@ class Threads(ServerBase):
         self.assertEqual(helper.running, 1)
 
     def test_a_step_that_was_on_its_way_does_not_land_after_a_level_that_was_set(self):
-        from pvj.api import Fader
+        from mctl.api import Fader
         written, in_step, let_go = [], self.threading.Event(), self.threading.Event()
 
         def apply(level):
@@ -2357,7 +2357,7 @@ class Threads(ServerBase):
 
 
 class RealPlayer(ServerBase):
-    """The real pvj.player.Player over a stand-in for mpv on its socket (tests/fakempv.py): what player.py itself
+    """The real mctl.player.Player over a stand-in for mpv on its socket (tests/fakempv.py): what player.py itself
     does with its lock and with what it remembers, which the fakes of the other tests rewrote and so never tested.
     The locks know their place here as everywhere (tests/lockrank.py): a taking out of order fails the test."""
 
@@ -2365,7 +2365,7 @@ class RealPlayer(ServerBase):
         super().setUp()
         import threading
         import time
-        from pvj.player import Player
+        from mctl.player import Player
         from tests.fakempv import FakeMpv
         self.threading, self.time, self.FakeMpv = threading, time, FakeMpv
         self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"))
@@ -2445,7 +2445,7 @@ class RealPlayer(ServerBase):
         self.assertEqual(self.helper.running, 0)
 
     def test_a_pipe_that_was_not_loaded_is_not_what_plays(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.mpv.fail.add("loadfile")
         with self.assertRaises(ApiError):
             self.api.play({"capture": {"device": "video0", "mode": "720p30"}}, None, "t")
@@ -2462,7 +2462,7 @@ class RealPlayer(ServerBase):
 
     def test_a_restart_the_player_does_not_answer_stops_the_helper_all_the_same(self):
         # the seventh review's M2: Player.quit raised, and the stopping of the helper after it was skipped
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.live_input()
         self.mpv.dies = True                        # the process goes at once: no answer, the connection closes
         with self.assertRaises(ApiError):
@@ -2472,7 +2472,7 @@ class RealPlayer(ServerBase):
         self.assertFalse(self.player.pipe_playing)
 
     def test_a_restart_that_is_refused_stops_the_helper_too(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.live_input()
         self.mpv.fail.add("quit")
         with self.assertRaises(ApiError):
@@ -2493,7 +2493,7 @@ class RealPlayer(ServerBase):
         self.mpv._reset()
         self.assertFalse(self.player.pipe_playing)
 
-    # -- the level on a player that has just started (the watcher's call, pvj/autostart.py) --
+    # -- the level on a player that has just started (the watcher's call, mctl/autostart.py) --
     def test_the_level_goes_back_on_a_restarted_player_as_the_mix_has_it(self):
         # on the real Player, so the locks' checker sees this path too (the seventh review's M3)
         self.player.play([self.clip], spawn=False)
@@ -2516,7 +2516,7 @@ class RealPlayer(ServerBase):
         self.assertEqual(self.mpv.props["brightness"], -100)
 
     def test_the_watcher_puts_the_level_back_after_the_panels_restart(self):
-        from pvj import autostart
+        from mctl import autostart
         watcher = autostart.Autostart(self.api, self.settings, log=lambda *_: None, sleep=lambda s: None)
         watcher.tick()                              # the player it knows
         self.api.blackout({"on": True}, None, "t")
@@ -2719,7 +2719,7 @@ class LayeredCrossfade(ServerBase):
         super().setUp()
         import threading
         import time
-        from pvj.player import Player
+        from mctl.player import Player
         from tests.fakempv import FakeMpv
         self.threading, self.time = threading, time
         self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"))
@@ -2979,7 +2979,7 @@ class Stress(ServerBase):
     | n  the level put back after a Stop whoever has taken the fader since                      | 0 of 3       | yes               |
     | o  Vibes' step taking the level's lock before the player's (the deadlock of round six)    | 3 of 3       | yes               |
     | p  the player forgetting nothing at its restart (the pipe "plays" on)                     | 3 of 3       | yes               |
-    | q  a clip that is loaded leaving the pipe "playing" (a fault inside pvj/player.py)        | 3 of 3       | yes               |
+    | q  a clip that is loaded leaving the pipe "playing" (a fault inside mctl/player.py)        | 3 of 3       | yes               |
     | r  a shader pad's shader shown while the play holds the player's lock (D73)               | 3 of 3       | yes               |
     | s  a shader pad taking the play's ticket before its shader: two newest wishes for one tap | 0 of 3       | yes               |
     | t  a queued shader refused by the queue's own job before it (the older tap stays on)      | not in it    | yes               |
@@ -3052,7 +3052,7 @@ class Stress(ServerBase):
     # Seconds a Blackout may take here, whatever else goes on: two writes of a level at the stand-in's slowest (one
     # on its way, and its own; see RealPlayer.BOUND) and a margin for a machine that runs a dozen threads of the
     # round at once, twice the hand test's. What it would wait for if the rule were broken is a load's wait for
-    # its path (three seconds in pvj/player.py) or for ever.
+    # its path (three seconds in mctl/player.py) or for ever.
     BLACKOUT = 2 * LAGS["opacity"] + 2 * 0.5
 
     def setUp(self):
@@ -3060,10 +3060,10 @@ class Stress(ServerBase):
         import re as re_module
         import threading
         import time
-        from pvj.player import Player
+        from mctl.player import Player
         from tests.fakempv import FakeMpv
         self.threading, self.time, self.re = threading, time, re_module
-        # the REAL player (pvj/player.py), talking to a stand-in for mpv on its socket: its lock, what it remembers
+        # the REAL player (mctl/player.py), talking to a stand-in for mpv on its socket: its lock, what it remembers
         # of what it loaded and the order of its questions are what is tested, and a fault put into player.py shows
         # The limit after which the box gives up on transitions is a matter of time on a real clock, and this test
         # runs its clock ten times fast: a still had a tenth of a second, and a runner that stalled for 80 ms failed
@@ -3215,7 +3215,7 @@ class Stress(ServerBase):
             vibes._undip()
 
     def act(self, kind, index):
-        from pvj.midi import MIDI_DEVICE
+        from mctl.midi import MIDI_DEVICE
         api = self.api
         if kind in self.PLAYS:
             style = {"cut": "cut", "dip": "dip", "crossfade": "crossfade", "wipe": "wipe-from-left", "slide": "slide-up"}[kind.split()[-1]]
@@ -3267,7 +3267,7 @@ class Stress(ServerBase):
 
     def one_round(self, seed, number, effects=False):
         import random
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         api, player, mpv, time = self.api, self.player, self.mpv, self.time
         rng = random.Random("%d/%d" % (seed, number))           # this round's own numbers, whatever came before it
         chosen = [rng.choice(self.KINDS) for _ in range(rng.randint(3, 6))]
@@ -3838,7 +3838,7 @@ class ScaledRealPlayer(ServerBase):
 
     def setUp(self):
         super().setUp()
-        from pvj.player import Player
+        from mctl.player import Player
         from tests.fakempv import FakeMpv
         self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"))
         self.addCleanup(self.mpv.stop)

@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from pvj import rootfs
+from mctl import rootfs
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 

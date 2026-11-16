@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import unittest
 
-from pvj import pinscreen
-from pvj.player import PlayerError
+from mctl import pinscreen
+from mctl.player import PlayerError
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 

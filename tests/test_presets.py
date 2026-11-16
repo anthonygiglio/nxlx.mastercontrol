@@ -7,8 +7,8 @@ import re
 import tempfile
 import unittest
 
-from pvj import presets
-from pvj.player import PlayerError
+from mctl import presets
+from mctl.player import PlayerError
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 SYNC = os.path.join(os.path.dirname(__file__), "..", "sync")

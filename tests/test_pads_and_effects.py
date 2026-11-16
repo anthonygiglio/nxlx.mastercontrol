@@ -14,8 +14,8 @@ import threading
 import time
 import unittest
 
-from pvj import midi as M, vibes as V
-from pvj.api import ApiError
+from mctl import midi as M, vibes as V
+from mctl.api import ApiError
 from tests import test_effects as TE
 from tests.test_effects import CARRIER_VIDEO, DUMP, FxTap, GenTap
 

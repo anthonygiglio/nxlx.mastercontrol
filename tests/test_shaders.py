@@ -10,9 +10,9 @@ import threading
 import time
 import unittest
 
-from pvj import autostart, osc, scheduler, shaders as S, vibes as V
-from pvj.api import ApiError
-from pvj.settings import SCHEMA
+from mctl import autostart, osc, scheduler, shaders as S, vibes as V
+from mctl.api import ApiError
+from mctl.settings import SCHEMA
 from tests.test_server import ServerBase
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -44,7 +44,7 @@ PERFORMANCE = ["bars", "beam", "burst", "checker", "chevron", "glitch", "grid", 
 BUNDLED = len(FIRST_TEN) + len(AMBIENT) + len(PERFORMANCE)
 # The classes a Raspberry Pi 4 measured, named one by one: a light shader holds 30 frames a second at 720 lines, a
 # medium one at 540 lines only, a heavy one drops frames at 540 lines too. All that is not named here is light. Two
-# runs, each at its own output (D93): PI4 in pvj/shaderlive.py at 1920 x 1080, the screen these tests' player has
+# runs, each at its own output (D93): PI4 in mctl/shaderlive.py at 1920 x 1080, the screen these tests' player has
 # (SourcePlayer.osd_size), and PI4_1440 at 2560 x 1440, which the project's own COST notes follow.
 # measured classes: begin
 MEDIUM = ["aurora", "lantern", "nebula"]
@@ -835,7 +835,7 @@ class FakeIpc:
 
 
 class SourcePlayer:
-    """A player with the shader-source calls of pvj.player.Player and nothing behind them."""
+    """A player with the shader-source calls of mctl.player.Player and nothing behind them."""
     TEST_PATTERN = "av://lavfi:smptehdbars=size=1920x1080:rate=25"
     TEST_TONES = {}
 
@@ -845,9 +845,9 @@ class SourcePlayer:
         self.calls, self.drawn, self.down, self.pass_ns = [], [], False, 1500000
         self.level, self.carrier = 100.0, None
         self.ipc = FakeIpc(self)
-        # as pvj.player.Player: its own lock around every change of what plays, at the same place in the order of
-        # the locks (pvj/locks.py), so that the engines are tested against the order as against the real player
-        from pvj import locks
+        # as mctl.player.Player: its own lock around every change of what plays, at the same place in the order of
+        # the locks (mctl/locks.py), so that the engines are tested against the order as against the real player
+        from mctl import locks
         self._lock = locks.make("player", reentrant=True)
 
     def osd_size(self):
@@ -857,7 +857,7 @@ class SourcePlayer:
         return {"running": True, "path": self.path}
 
     def play_source(self, shader, carrier, epoch=None, spawn=False):
-        from pvj.player import PlayerError
+        from mctl.player import PlayerError
         with self._lock:
             if self.down:
                 raise PlayerError("player service is not running")
@@ -992,9 +992,9 @@ class EngineTest(Base):
         self.engine.tidy()
         self.assertEqual(self.generated(), [])
         self.player.is_running = lambda: True
-        # the build of the panel does it (pvj/server.py), so an old text does not wait for the first play
+        # the build of the panel does it (mctl/server.py), so an old text does not wait for the first play
         import inspect
-        from pvj import server
+        from mctl import server
         self.assertIn("api.shaders.tidy()", inspect.getsource(server.build))
         # a shader that is on keeps its text; Stop removes it
         loaded[:] = []
@@ -1033,7 +1033,7 @@ class EngineTest(Base):
             with self.assertRaises(ApiError) as c:
                 call()
             self.assertEqual(c.exception.status, 409)
-        from pvj.modules import Registry
+        from mctl.modules import Registry
         rows = {m["id"]: m for m in Registry(self.settings, "pi3").list()}
         self.assertEqual((rows["shaders"]["supported"], rows["shaders"]["enabled"], rows["shaders"]["channel"]), (False, False, "beta"))
         for board in ("pi4", "pi5", "x86"):
@@ -1435,7 +1435,7 @@ class EngineTest(Base):
         self.assertEqual((self.player.path, self.generated()), (None, []))
 
     def test_settings_need_no_migration_and_are_checked(self):
-        from pvj.settings import MIGRATIONS
+        from mctl.settings import MIGRATIONS
         self.assertFalse([m for m in MIGRATIONS.values() if "shader" in (m.__doc__ or "").lower()])     # no settings migration for shaders
         self.assertNotIn("shaders", self.settings.data)               # nothing is written until something changes
         self.assertEqual(self.engine.state()["config"], {"dwell": 180, "vary": True, "height": 720, "guard": True, "clock": "carrier", "faster": False})

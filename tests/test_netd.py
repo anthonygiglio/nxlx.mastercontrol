@@ -10,9 +10,9 @@ import tempfile
 import threading
 import unittest
 
-from pvj import netcfg
-from pvj.netcfg import NetError
-from pvj.netd import NetdClient, NetServer, NetService
+from mctl import netcfg
+from mctl.netcfg import NetError
+from mctl.netd import NetdClient, NetServer, NetService
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
@@ -416,7 +416,7 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(oct(os.stat(self.state).st_mode & 0o777), "0o600")
 
     def test_state_directory_must_be_private(self):
-        from pvj import netd
+        from mctl import netd
         good = tempfile.mkdtemp()
         os.chmod(good, 0o700)
         loose = tempfile.mkdtemp()
@@ -723,9 +723,9 @@ class SocketTest(unittest.TestCase):
         # writes only once the helper has closed. The peer check is stood in for, so this also runs without
         # SO_PEERCRED.
         from unittest import mock
-        from pvj import netd
-        from pvj.supportd import SupportdClient
-        from pvj.sysd import SysdClient
+        from mctl import netd
+        from mctl.supportd import SupportdClient
+        from mctl.sysd import SysdClient
         closed = threading.Event()
 
         class Server(NetServer):

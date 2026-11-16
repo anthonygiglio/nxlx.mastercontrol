@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""D75: OSC reaches what the controllers reach, from the table of actions it shares with MIDI (pvj/actions.py).
+"""D75: OSC reaches what the controllers reach, from the table of actions it shares with MIDI (mctl/actions.py).
 
 Every message here goes through the real parser; the last class sends over a real UDP socket on loopback. Nothing
 here has met a TouchOSC layout or a real sender."""
@@ -8,8 +8,8 @@ import socket
 import time
 import unittest
 
-from pvj import actions, midi, osc
-from pvj.osc import OscServer
+from mctl import actions, midi, osc
+from mctl.osc import OscServer
 from tests.test_osc import ServerLogicTest, msg
 from tests.test_shader_engine import ALL, Live
 

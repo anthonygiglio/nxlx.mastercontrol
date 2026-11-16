@@ -3,7 +3,7 @@
 import json
 import unittest
 
-from pvj import sync
+from mctl import sync
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
@@ -301,7 +301,7 @@ class TwoRealPlayersTest(unittest.TestCase):
     """A real server and a real client, two headless mpv players, over UDP on this machine."""
 
     def setUp(self):
-        from pvj.player import Player
+        from mctl.player import Player
         self.dir = tempfile.mkdtemp()
         self.clip = os.path.join(self.dir, "show.mkv")
         subprocess.run(["mpv", "av://lavfi:testsrc=size=160x120:rate=25", "--length=30", "--o=" + self.clip, "--no-terminal"],

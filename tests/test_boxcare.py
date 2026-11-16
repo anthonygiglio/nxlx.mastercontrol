@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Settings export and import, the diagnostics file and factory reset (pvj/boxcare.py)."""
+"""Settings export and import, the diagnostics file and factory reset (mctl/boxcare.py)."""
 import copy
 import json
 import re
@@ -12,8 +12,8 @@ import time
 import unittest
 from unittest import mock
 
-from pvj import boxcare, settings as settings_mod, streams as streams_mod
-from pvj.api import ApiError
+from mctl import boxcare, settings as settings_mod, streams as streams_mod
+from mctl.api import ApiError
 from tests.test_streams import ADDRESSES
 from tests.test_support import CFG, LAN, TUNNEL, SupportBase
 
@@ -231,7 +231,7 @@ class ImportTest(Base):
         self.assertIn("the pad it starts has no clip and no shader", out["error"])
 
     def test_round_trip_keeps_access_and_a_backup(self):
-        from pvj import autostart
+        from mctl import autostart
         file = self.export()
         before = copy.deepcopy(self.settings.data)
         before["autostart"] = autostart.validate({}, before["autostart"])      # the check fills in keys added since
@@ -431,7 +431,7 @@ class ImportTest(Base):
 
     def test_shaders_and_vibes_settings_and_what_uses_vibes_go_round(self):
         """The Vibes settings, and the DMX, MIDI, autostart and schedule entries that drive Vibes, import as exported."""
-        from pvj import scheduler
+        from mctl import scheduler
         self.assertNotIn("shaders", self.export()["settings"])                    # nothing changed yet: nothing to export
         self.assertIn("is not in the file", " ".join(self.send(self.export())[1]["notes"]))
         d = self.settings.data
@@ -588,7 +588,7 @@ class ImportTest(Base):
     def test_room_groups_and_scenes_go_round(self):
         """The Room module's groups and scenes, and the schedule and MIDI entries that apply a scene, import as
         exported, checked by the module's own rules. Nothing is sent to a projector by an import."""
-        from pvj import room, scheduler
+        from mctl import room, scheduler
         d = self.settings.data
         d["room"] = room.validate({
             "groups": [{"id": "cccc0001", "name": "Main wall", "projectors": ["aaaa0001"]}],
@@ -792,7 +792,7 @@ class ImportTest(Base):
         self.assertEqual(self.settings.data["modules"]["enabled"], {"scheduler": True, "projector": True, "mapper": True})
 
     def test_a_full_mapper_is_larger_than_an_ordinary_request_and_still_imports(self):
-        from pvj import server
+        from mctl import server
         file = self.export()
         grid = {"id": "cccc0001", "type": "grid", "name": "Dome", "on": True, "cols": 8, "rows": 7,
                 "vertices": [[100.123456 * c + 10, 90.654321 * r + 10] for r in range(8) for c in range(9)],
@@ -937,7 +937,7 @@ class ImportTest(Base):
 
 
     def test_a_crossfade_is_exported_and_imported_in_the_form_an_older_release_reads(self):
-        from pvj import transitions
+        from mctl import transitions
         self.settings.data["mix"] = transitions.stored("crossfade", 2.0)
         self.settings.save()
         file = self.export()
@@ -1036,7 +1036,7 @@ class DiagnosticsTest(Base):
         self.assertEqual(s["pads"]["banks"][0]["pads"][0]["file"], "a.mp4")
         self.assertEqual(s["osc"]["port"], 9001)
         self.assertNotIn("auth", s)
-        from pvj import __version__
+        from mctl import __version__
         self.assertEqual((file["version"], file["settings_schema"], file["board"]["kind"]), (__version__, settings_mod.SCHEMA, "x86"))
         self.assertIn("overall", file["health"])
         self.assertTrue(any(m["id"] == "scheduler" for m in file["modules"]))
@@ -1390,7 +1390,7 @@ class FactoryResetTest(Base):
         self.assertEqual(self.settings.data["devices"], [])
 
     def test_the_pin_screen_returns_even_when_a_clip_was_looping_behind_a_blackout(self):
-        from pvj.pinscreen import PinScreen
+        from mctl.pinscreen import PinScreen
         self.player.running = True                # a clip plays until the player is told to clear
         self.player.status = lambda: {"running": True, "path": None if ("clear",) in self.player.calls else "/media/a.mp4"}
         self.assertEqual(self.h("POST", "/api/blackout", {"on": True}, self.full_dev)[0], 200)
@@ -1441,7 +1441,7 @@ class FactoryResetTest(Base):
 
 class RoutesTest(unittest.TestCase):
     def test_the_api_table_in_the_readme_lists_them(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "pvj", "README.md")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "mctl", "README.md")) as f:
             text = f.read()
         for path in ("/api/system/settings/export", "/api/system/settings/import", "/api/system/diagnostics", "/api/system/factory-reset"):
             self.assertIn(path, text)

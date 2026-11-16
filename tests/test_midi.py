@@ -6,9 +6,9 @@ import threading
 import time
 import unittest
 
-from pvj import midi
-from pvj.midi import MidiHub, MidiInput, MidiMapper
-from pvj.settings import Settings
+from mctl import midi
+from mctl.midi import MidiHub, MidiInput, MidiMapper
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 

@@ -8,11 +8,11 @@ import json
 import time
 import unittest
 
-from pvj import boxcare, midi, osc
-from pvj.midi import MidiMapper
+from mctl import boxcare, midi, osc
+from mctl.midi import MidiMapper
 from tests.test_lights import LightsHubBase
 from tests.test_midi import Recorder
-from pvj.osc import OscServer
+from mctl.osc import OscServer
 from tests.test_controllers import BY_ID, HubBase, NANO, PAD
 from tests.test_osc import msg
 
@@ -263,7 +263,7 @@ class SwitchAndModeTest(Base):
         self.allow()
         clean = boxcare.check_control(self.settings.data["control"], None)
         self.assertNotIn("mapping", clean)                          # an import leaves it off
-        from pvj.settings import default_control
+        from mctl.settings import default_control
         self.assertNotIn("mapping", default_control())              # and so does a factory reset
 
 

@@ -43,7 +43,7 @@ request from another site is refused).
 ## What each part is
 
 - `serve.py`: the switcher, its page (`page/`), and the one box process it starts per scenario.
-- `box.py`: one box: the real panel (`pvj/server.py`'s own build and handler) in a temporary folder, with the fakes of
+- `box.py`: one box: the real panel (`mctl/server.py`'s own build and handler) in a temporary folder, with the fakes of
   the browser test's harness (`tests/ui/harness.py`), one paired device per role, and the scenario put in place through
   the box's own routes. A new scenario is a new process, so nothing is left from the one before.
 - `scenarios/`: one JSON file per scenario. `_base.json` is shared and not listed.

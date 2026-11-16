@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 """Themes the owner makes (D60): the design tokens and their limits, the contrast a theme is held to, reading an
-untrusted file, and where added themes are kept (pvj/themes.py)."""
+untrusted file, and where added themes are kept (mctl/themes.py)."""
 import json
 import os
 import re
@@ -9,7 +9,7 @@ import stat
 import tempfile
 import unittest
 
-from pvj import themes
+from mctl import themes
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 SIGNAL = themes.load_themes()["signal"]

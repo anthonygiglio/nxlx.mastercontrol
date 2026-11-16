@@ -76,7 +76,7 @@ if [ -n "$ROOT_FP" ]; then
 fi
 
 # One way of writing a folder: no slash at the end and no doubled one. The prefix goes into install.json and from
-# there into units (the NDI helper's, pvj/ndisetup.py), which take it only as this script would have written it.
+# there into units (the NDI helper's, mctl/ndisetup.py), which take it only as this script would have written it.
 while [ "${#PREFIX}" -gt 1 ] && [ "${PREFIX%/}" != "$PREFIX" ]; do PREFIX="${PREFIX%/}"; done
 case "$PREFIX" in *//*) die "--prefix must not contain //" ;; esac
 case "$PREFIX" in /*) ;; *) die "--prefix must be an absolute path" ;; esac
@@ -113,14 +113,14 @@ LINK_UNIT="$ROOT/etc/systemd/system/pvj-link.service"        # the Ableton Link 
 RASTER_UNIT="$ROOT/etc/systemd/system/pvj-raster@.service"   # the picture helper (D129): decodes uploaded logos, one process per job
 RASTER_SOCKET_UNIT="$ROOT/etc/systemd/system/pvj-raster.socket"
 # The NDI input is opt-in per box (D62): none of these four files exists unless root ran "pvj-ndi-runtime install"
-# at the box (pvj/ndisetup.py). The panel's drop-in is the mark of that; this installer never writes it.
+# at the box (mctl/ndisetup.py). The panel's drop-in is the mark of that; this installer never writes it.
 NDI_UNIT="$ROOT/etc/systemd/system/pvj-ndi.service"
 NDI_MARK="$ROOT/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf"
 NDI_PLAYER_DROPIN="$ROOT/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf"
 NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi.service"      # the link "systemctl enable" makes
 NDI_TMPFILES="$ROOT/etc/tmpfiles.d/pvj-ndi.conf"                                  # root's pipe folder and pipe (M3, 2026-10-11)
 # The NDI discovery server is opt-in per box too (D85): these exist only where root ran "pvj-ndi-runtime server install"
-# (pvj/ndiscovery.py). The panel's second drop-in is the mark of that; this installer never writes it.
+# (mctl/ndiscovery.py). The panel's second drop-in is the mark of that; this installer never writes it.
 NDISC_UNIT="$ROOT/etc/systemd/system/pvj-ndi-discovery.service"
 NDISC_MARK="$ROOT/etc/systemd/system/pvj-web.service.d/50-pvj-ndisc.conf"
 NDISC_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi-discovery.service"
@@ -131,8 +131,8 @@ WG_LOAD="$ROOT/etc/modules-load.d/pvj-wireguard.conf"
 USB_RULE="$ROOT/etc/udev/rules.d/99-pvj-usb.rules"
 TMPFILES="$ROOT/etc/tmpfiles.d/pvj.conf"
 BIN_LINKS="$ROOT/usr/local/bin"
-VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC/pvj/__init__.py")"
-[ -n "$VERSION" ] || die "cannot read version from pvj/__init__.py"
+VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC/mctl/__init__.py")"
+[ -n "$VERSION" ] || die "cannot read version from mctl/__init__.py"
 RELEASE="$ROOT$PREFIX/releases/$VERSION"
 
 uninstall() {
@@ -327,7 +327,7 @@ else
 	fi
 fi
 
-# Nothing is installed for the NDI input here, not avahi either: that is opt-in per box (pvj/ndisetup.py, D62).
+# Nothing is installed for the NDI input here, not avahi either: that is opt-in per box (mctl/ndisetup.py, D62).
 
 # --- accounts -----------------------------------------------------------
 if [ -z "$PVJ_USER" ] && [ -f "$ETC/install.json" ]; then
@@ -395,7 +395,7 @@ run mkdir -p "$ROOT$PREFIX/releases"
 run rm -rf "$RELEASE.new"
 run mkdir -p "$RELEASE.new"
 if [ "$DRY" = 0 ]; then
-	cp -a "$SRC/pvj" "$SRC/bin" "$RELEASE.new/"
+	cp -a "$SRC/mctl" "$SRC/bin" "$RELEASE.new/"
 	[ -d "$SRC/render" ] && cp -a "$SRC/render" "$RELEASE.new/"
 	find "$RELEASE.new" -name __pycache__ -type d -prune -exec rm -rf {} +
 	# The renderer (D95), built from source here and never shipped as a binary. A failed build leaves the box as it
@@ -642,7 +642,7 @@ fix_run_folder() {
 if [ "$REAL" = 0 ] && [ "$DRY" = 0 ]; then prepare_run_folder; fix_run_folder; fi
 
 # The NDI helper, ONLY on a box that opted in (the mark is there): its unit and the two drop-ins are written again
-# by the program just installed, which is their one writer (pvj/ndisetup.py; it also makes sure the account and the
+# by the program just installed, which is their one writer (mctl/ndisetup.py; it also makes sure the account and the
 # group are there, because the player and the panel name the group in their drop-ins and systemd does not start a
 # unit that names a group the system does not have). A box without the mark gets nothing: no unit, no account, no
 # package. If this fails the install goes on: the files of the earlier install are still there and still right.

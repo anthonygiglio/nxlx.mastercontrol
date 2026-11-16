@@ -10,8 +10,8 @@ import tempfile
 import time
 import unittest
 
-from pvj import actions, clock as clk, dmx, midi, osc, sound, soundout
-from pvj.clock import Clock, ClockError
+from mctl import actions, clock as clk, dmx, midi, osc, sound, soundout
+from mctl.clock import Clock, ClockError
 from tests.test_roles import TUNNEL, RolesBase
 from tests.test_sound import FakeApi, proc_dir, record
 from tests.test_vibes_control import Recorder
@@ -398,7 +398,7 @@ class BeatMessageTest(unittest.TestCase):
     """What `plan` sends as /nxlx/sound/beat across hand-overs, a clear and a nudge."""
     def setUp(self):
         self.f = Fake(1000.0)
-        self.dir = tempfile.mkdtemp(prefix="pvj-clock-beats-")
+        self.dir = tempfile.mkdtemp(prefix="mctl-clock-beats-")
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.path = os.path.join(self.dir, "levels")
         self.out = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path=self.path, clock=self.f, log=lambda *_: None)
@@ -474,7 +474,7 @@ class BeatMessageTest(unittest.TestCase):
 class ConsumerTest(unittest.TestCase):
     def setUp(self):
         self.f = Fake(1000.0)
-        self.dir = tempfile.mkdtemp(prefix="pvj-clock-")
+        self.dir = tempfile.mkdtemp(prefix="mctl-clock-")
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.path = os.path.join(self.dir, "levels")
         self.out = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path=self.path, clock=self.f, log=lambda *_: None)
@@ -608,7 +608,7 @@ class ClockRoutesTest(RolesBase):
     def setUp(self):
         super().setUp()
         self.f = Fake(500.0)
-        self.sdir = tempfile.mkdtemp(prefix="pvj-clock-api-")
+        self.sdir = tempfile.mkdtemp(prefix="mctl-clock-api-")
         self.addCleanup(shutil.rmtree, self.sdir, True)
         self.api.sound = soundout.Sound(self.api, socket_path=os.path.join(self.sdir, "none.sock"),
                                         levels_path=os.path.join(self.sdir, "levels"), clock=self.f, proc=proc_dir(self), log=lambda *_: None)

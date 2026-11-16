@@ -6,8 +6,8 @@ import re
 import tempfile
 import unittest
 
-from pvj import modules, themes
-from pvj.settings import Settings
+from mctl import modules, themes
+from mctl.settings import Settings
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 

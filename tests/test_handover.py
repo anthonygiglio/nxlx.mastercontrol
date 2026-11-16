@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""What a node keeps and decides about the nodes it trusts (D132, slice 2; pvj/handover.py): the signed list checked
+"""What a node keeps and decides about the nodes it trusts (D132, slice 2; mctl/handover.py): the signed list checked
 against the pinned root and stored beside tls/, acceptance by a fingerprint typed back, the deny file, the switch,
 the card, and the one question "is this node approved". Every root is a throwaway; nothing here calls another node."""
 import copy
@@ -12,8 +12,8 @@ import tempfile
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import fleetlist as FL, handover as hv
-from pvj.settings import Settings
+from mctl import fleetlist as FL, handover as hv
+from mctl.settings import Settings
 from tests.test_boxcert import boxcert, make_request, openssls
 from tests.test_fleetlist import FleetListBase, PASS
 

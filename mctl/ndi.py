@@ -1,0 +1,3307 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""NDI input: receive a sender's picture and hand it to the one mpv as raw frames in a pipe (D62, mctl/NDI.md).
+
+NDI(R) is a registered trademark of Vizrt NDI AB. Nothing of NDI's is in this file or this repository: the runtime
+library (libndi.so.6) is proprietary and is put on the box by its owner (`pvj-ndi-runtime`, below). It is loaded
+with ctypes; the structures further down were written from the layout the SDK's public headers describe.
+
+Three parts, in one file so the bounds live in one place:
+
+* `pvj-ndi` (Service, Receiver, CtypesLibrary): a small daemon under its own account and sandbox. It is the only
+  process that loads the library, so a library taken over by a bad packet has that account's reach and no more: no
+  player socket, no PIN, no settings, no internet (mctl/systemd/pvj-ndi.service).
+* the panel's side (Client, Input): asks the daemon over a Unix socket and tells the player to read the pipe.
+* `pvj-ndi-runtime` (runtime_main): root's command that sets NDI up on a box: it copies the library into place after
+  checking what it is, then installs the helper (mctl/ndisetup.py). Until it is run a box has no helper at all.
+
+Everything that comes from the network, through a closed-source library, is hostile until checked: source names
+(clean_name), where a source is (clean_sources), and every number of a frame (check_frame), each against a fixed
+bound and with fullmatch. The library itself is behind a seam of a few methods (CtypesLibrary); the tests drive
+everything above the seam with a fake. Run once against the real library, a real sender and mpv on a Pi 4
+(2026-10-08, one short run by SSH, nobody at the monitor: mctl/NDI.md); what was changed after it has not been.
+"""
+
+import array
+import collections
+import ctypes
+import errno
+import fcntl
+import hashlib
+import ipaddress
+import json
+import math
+import os
+import re
+import select
+import shutil
+import stat
+import struct
+import sys
+import tempfile
+import termios
+import threading
+import time
+import unicodedata
+
+from . import locks, paths
+
+LIB_DIR = "/opt/pvj-ndi"                  # the application's own folder, root's: NDI asks that the library stay off the system path
+LIB_NAME = "libndi.so.6"
+LIB_MAX_BYTES = 96 * 1024 * 1024
+MAX_SOURCES = 64
+SCAN_ROWS = 2048                          # rows of the library's list that are looked at, whatever it says it has
+MAX_NAME = 128
+MAX_MARKS = 2                             # combining marks in a row that a name may have, after NFC
+MAX_NAME_WIRE = 768                       # and as the helper's answer writes it (6 bytes for an accented letter, 12 for an emoji)
+MAX_WHERE = 100                           # a host and a port
+REPLY_LIMIT = 65536                       # what a helper's client reads of one answer (netd.exchange)
+MAX_ADDRESSES = 16
+MIN_SIDE, MAX_WIDTH, MAX_HEIGHT = 16, 3840, 2160
+MAX_STRIDE_PAD = 256                      # a line may be padded; never by more than this
+FOURCC_UYVY = 0x59565955                  # "UYVY", read as a little-endian number
+FOURCC_UYVA = 0x41565955                  # "UYVA": a UYVY plane and then an alpha plane, which is never read
+PROGRESSIVE, INTERLACED = 1, (0, 2, 3)      # the frame format values: 0 two fields in one frame, 2 and 3 single fields
+FIRST_FRAME_SECONDS = 6.0
+PIPE_OPEN_SECONDS = 10.0
+# How long an open waits for the player to let go of the pipe after the source before (Service._clear_pipe). The pipe
+# is one pipe for every source (root's, never unlinked), so the reader of the last source and the reader of the next
+# are told apart only by the pipe having been without a reader in between.
+PIPE_CLEAR_SECONDS = 2.0
+# With sound (Matroska), a picture that no other has followed for this long is written once more, so that the player
+# has a picture AFTER it: mpv shows a picture only when it has the next one (it wants to know how long each lasts),
+# and mpv 0.38 and later do not finish OPENING a stream until its picture track has had two blocks with different
+# times (demux_mkv.c, probe_if_image). Once for each picture that stands, never again and again: 4 MB for a 1080p
+# source each time it goes still. (The stream's first picture is written again at once: see Receiver._writer.) Measured on the Pi with mpv 0.40 on 2026-10-12 (NDI.md).
+STILL_AGAIN_SECONDS = 0.5
+QUIET_SECONDS = 2.0                       # no frame for this long: "still" (or "waiting", if the connection dropped)
+# ---- sound (D62, 2026-10-08). Every figure of a block of sound is the sender's and is held to these.
+AUDIO_FLTP = 0x70544C46                   # "FLTp": 32-bit floats, one plane a channel; the only form the library hands out
+AUDIO_RATES = (32000, 44100, 48000, 88200, 96000)
+MAX_AUDIO_CHANNELS = 64                   # what a sender may say it has; only the first AUDIO_PLANES are ever read
+AUDIO_PLANES = 2                          # the first two channels are played (one, for a mono source); NDI says no layout
+MAX_AUDIO_SAMPLES = 48000                 # in one block, for each channel, and never more than one second of it
+# A block of sound reaches the helper when its last sample exists, so the sound in the pipe trails the picture by a
+# block's length, and the player holds that much picture waiting for it (uncompressed: 4 MB a frame at 1080p). The
+# longest block is therefore bounded, and the player's queue is sized from the bound (player.py, _play_pipe). The
+# real senders measured on 2026-10-08 sent 0.1 s (NDI Tools "Test Patterns") and 0.017 s ("macOS AV Output"); a
+# quarter of a second is two and a half times the longest of them. A longer block is refused, counted and said
+# on the page; the picture goes on.
+MAX_AUDIO_BLOCK = 0.25
+# NDI's sound is floating point in which 1.0 is a professional reference level (+4 dBu), not full scale: a sender
+# may go well above 1.0. NDI's own helpers for 16-bit sound are told a "reference level" in dB for this, and its
+# header advises 20 for receiving: full scale is then 20 dB above reference. The same here, in one place. Measured
+# on 2026-10-08 against NDI Tools' Test Patterns (a 1 kHz tone at SMPTE alignment level): the floats peak at
+# exactly 1.0, so what the box plays peaks at -20 dBFS, which is where that tone belongs.
+AUDIO_HEADROOM_DB = 20
+AUDIO_GAIN = 10 ** (-AUDIO_HEADROOM_DB / 20.0)
+AUDIO_ABSURD = 1000.0                     # a sample 60 dB over reference is not sound: the block is played as silence
+AUDIO_WAIT = 0.5                          # after the first picture: how long sound may take to show that there is some
+# A source that sent no sound within AUDIO_WAIT on its last open is remembered as one without (Service.no_sound), and
+# the next open of it waits only this long for sound: half a second of every switch to a picture sender with no sound
+# was spent just so (the gap measured on the node, 2026-10-31: 0.83 s median, of which 0.5 s this wait). A source that
+# starts to send sound after all ends its stream as "changed" and is opened again with sound, as late sound always
+# did, and is forgotten as silent at once. Sources that send sound are never made to wait: the wait ends at the first block.
+AUDIO_WAIT_SILENT = 0.1
+NO_SOUND_SECONDS = 600.0                  # how long "this source had no sound" is believed; then it is given the whole AUDIO_WAIT again
+# A picture waiting for the panel to let go of the pipe (open, then handover) that the panel never hands over is given
+# up after this long, and what was held from the source before goes with it: a frozen old picture never stays for good.
+HANDOVER_SECONDS = 10.0
+AUDIO_QUEUE_SECONDS = 1.0                 # sound waiting for the player; beyond it the oldest is dropped, never kept
+AUDIO_QUEUE_BLOCKS = 256                  # and never more blocks than this, however short a sender makes them
+AUDIO_WINDOW = 0.3                        # sound this far behind the clock is a gap: silence is put in, never a wait
+# How far the sound's count may stand from the helper's clock before it is brought back, in seconds. A block cannot
+# arrive before its last sample exists, so a block that shows the count AHEAD of the clock by this much proves it
+# (lateness on the way only hides a lead): that much sound is cut at once, and the times stay one after another. The
+# count BEHIND the clock is only believed when every block of a second said so (one late block proves nothing):
+# then that much silence is put in. 0.04 s is one picture at 25 a second, and about where sound that comes before
+# its picture begins to be noticed.
+AUDIO_SYNC = 0.04
+AUDIO_SYNC_SECONDS = 1.0                  # how long the count must have been seen behind before silence is put in
+AUDIO_LOST = "lost"                       # what recv_audio answers while the connection is down
+MIN_TURN = 0.1                            # a call into the library that came back with nothing sooner than this is waited out
+AUDIO_SILENT_DB = -70.0                   # a second whose loudest sample is under this is "silent" on the page
+SOUND_DELAY_MS = (-250, 500)              # ndi.sound_delay_ms: how far the panel may move the sound against the picture (the player's audio-delay)
+SOUND_STATES = ("playing", "ready", "away", "twins", "restless")      # the one sound source, as the helper says it (Service._sound_source)
+# The sound source's sound can END a picture's stream as "changed": when it changes form (rate, channels: the new
+# track needs a new stream), and when it starts under a picture that was opened without it. Once. If it would end a
+# stream again before it has been calm for a while, its sound is not handed to any picture for a pause that doubles
+# with every ending, 3 s, 6, 12 ... to a minute (the pauses of Input.tick), and goes back to 3 s only after ten
+# minutes without one (SoundPace); the picture plays on WITHOUT it meanwhile, and when the pause is over it may end a
+# stream once more. Another sender must never be able to take the picture off
+# the screen in a loop (#132, M4). The count is kept by the Service for the source (SoundPace), not by a connection:
+# it outlives every close and re-open of the sound's connection (twins that come and go, an idle close, a fault).
+FEED_QUIET_SECONDS, FEED_QUIET_MAX = 3.0, 60.0
+FEED_RESET_SECONDS = 600.0                # no ending of a stream by the sound source for this long: its pauses begin at 3 s again
+FEED_IDLE_SECONDS = 30.0                  # a sound connection that no picture has used for this long is given back
+FEED_RETRY_SECONDS = 2.0                  # between looks for a sound source that was not on the network
+SOUND_ONLY_SECONDS = 600.0                # how long a sender stays labelled "sound only" after a press that got sound and no picture
+OPEN_TRIES = 3                            # a source that changes size while it is being opened is opened again: this many tries in all
+# The whole of an open, every try in it, is over this long after the time a first picture may take: 13 seconds on a
+# box, one less than the panel waits for the answer (Input.open: OPEN_WAIT_EXTRA). A later try is started only if what
+# it needs at the least still fits (TRY_LEAST for its first picture, the wait for sound, the look at the pipe), and
+# waits for its first picture no longer than what is left after those.
+OPEN_BUDGET_EXTRA = 7.0
+OPEN_WAIT_EXTRA = 8.0
+TRY_LEAST = 0.5
+CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
+PLAYER_STUCK = "the player did not open the NDI picture, also not when it was given it again"
+PIPE_HELD = "the player still holds the NDI pipe from the picture before"
+PLAYER_LEFT = "the player stopped reading the input"      # something else was played: an end, not a fault
+SOURCES_CACHE = 1.0
+PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"))
+# "still": on the screen and connected, but no new frame for a while. That is normal (a test pattern, a paused
+# output, a slide): the real library sent ONE frame of NDI Tools' Test Patterns and then none (measured 2026-10-07).
+# "waiting" is only said when the library itself reports the connection dropped.
+STATES = ("connecting", "ready", "playing", "still", "waiting", "changed", "refused", "stopped")
+ENDED = ("changed", "refused", "stopped")
+# The one command, run by root at the box, that sets NDI up (the library and the helper; mctl/ndisetup.py has the same words).
+SETUP_COMMAND = 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"'
+NOT_SET_UP = "NDI is not set up on this node; someone with a keyboard or SSH on the node runs: " + SETUP_COMMAND
+
+_ID = re.compile(r"[0-9a-f]{12}")
+_WHERE = re.compile(r"[A-Za-z0-9._:\[\]-]{1,%d}" % MAX_WHERE)
+_IPV4 = re.compile(r"[0-9]{1,3}(\.[0-9]{1,3}){3}")
+_BAD_CATEGORIES = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")     # control, format (bidi, zero width), surrogate, private, unassigned, line breaks
+
+ELF_MACHINES = {3: "32-bit x86", 40: "32-bit ARM", 62: "x86_64", 183: "aarch64"}
+SDK_FOLDERS = {62: ("x86_64-linux-gnu",), 3: ("i686-linux-gnu",),
+               183: ("aarch64-rpi4-linux-gnueabi", "aarch64-rpi3-linux-gnueabi", "aarch64-linux-gnu"),
+               40: ("arm-rpi4-linux-gnueabihf", "arm-rpi3-linux-gnueabihf", "arm-rpi2-linux-gnueabihf")}
+
+
+class NdiError(Exception):
+    pass
+
+
+# ---- what comes from the network ---------------------------------------------------------------------------------
+def clean_name(raw):
+    """A source's name as it may be shown and listed, or None for one that is dropped. Bytes must be UTF-8."""
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = bytes(raw).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(raw, str) or len(raw) > MAX_NAME * 4:
+        return None
+    # Two names that look alike must not be two rows. So: one way of writing an accented letter (NFC), every kind
+    # of space (no-break, thin, ideographic) shown and compared as a plain one and runs of them as one, and no
+    # pile of accents on one letter (more than MAX_MARKS in a row is refused: no real name has it).
+    raw = unicodedata.normalize("NFC", raw)
+    raw = re.sub(" +", " ", "".join(" " if unicodedata.category(ch) == "Zs" else ch for ch in raw))
+    if not 1 <= len(raw) <= MAX_NAME or raw != raw.strip():
+        return None
+    if any(unicodedata.category(ch) in _BAD_CATEGORIES for ch in raw):
+        return None
+    marks = 0
+    for ch in raw:
+        marks = marks + 1 if unicodedata.category(ch) in ("Mn", "Mc", "Me") else 0
+        if marks > MAX_MARKS:
+            return None
+    # The helper's whole answer must fit what its client reads (REPLY_LIMIT), with MAX_SOURCES names in it. An
+    # answer that does not fit makes the helper look dead, so a name is also bounded as it is written there.
+    if len(json.dumps(raw)) - 2 > MAX_NAME_WIRE:
+        return None
+    return raw
+
+
+def host_of(where):
+    """The machine in a source's address, without its port: "192.168.0.20:5961" gives "192.168.0.20"."""
+    m = re.fullmatch(r"\[([0-9A-Fa-f:.]+)\](?::[0-9]{1,5})?|([^:]+)(?::[0-9]{1,5})?", where)
+    return (m.group(1) or m.group(2)).lower() if m else where.lower()
+
+
+def source_id(name, host):
+    """What the panel plays by: made here from the checked name AND the machine it is announced from, so a second
+    machine announcing the same name is another source and can never stand in for the one that was chosen. The
+    same after a restart. The port is left out (it changes when the sender restarts). A sender whose address
+    changes (DHCP) becomes a new row and has to be chosen again: staying with the machine was preferred to
+    following the name."""
+    return hashlib.sha256(b"ndi:" + name.encode("utf-8") + b"\0" + host.encode("utf-8")).hexdigest()[:12]
+
+
+def clean_sources(raw, prefer_hosts=(), keep_id=None):
+    """([{"id", "name", "from", "raw": (name bytes, address bytes)}], was the list cut) from the library's (name,
+    address) pairs. Only sources whose name and address pass; at most SCAN_ROWS rows are looked at and MAX_SOURCES
+    kept. Which ones are kept does not depend on the order the library gives them in (anyone on the network can
+    announce senders): the source being shown (`keep_id`) first, then senders at an address the owner added
+    (`prefer_hosts`), then the rest, each group by name and address. So neither can be pushed out of the list."""
+    prefer = {str(h).lower() for h in prefer_hosts}
+    found, twins = {}, set()
+    for n, pair in enumerate(raw):
+        if n >= SCAN_ROWS:
+            break
+        if not isinstance(pair, tuple) or len(pair) != 2 or not all(isinstance(x, bytes) for x in pair):
+            continue
+        name = clean_name(pair[0])
+        try:
+            where = pair[1].decode("ascii")
+        except UnicodeDecodeError:
+            continue
+        if name is None or not _WHERE.fullmatch(where):
+            continue
+        host = host_of(where)
+        s = {"id": source_id(name, host), "name": name, "from": where, "raw": pair}
+        old = found.get(s["id"])
+        if old is not None and pair != old["raw"]:
+            # Two senders with one name on one machine (another port): still one row, always the same one, and the
+            # row says so. A pad does not play such a source: nothing says which of the two was meant (D62, pads).
+            twins.add(s["id"])
+        if old is None or (where, pair) < (old["from"], old["raw"]):      # one name twice on one machine: one row, always the same one
+            found[s["id"]] = s
+    for sid in twins:
+        found[sid]["twins"] = True
+    # `keep_id`: one id, or several (the source on the screen and the sources pads hold: the review of 8cfde96 found
+    # that a crowd of announced names pushed every pad's source out of the list).
+    keep = {keep_id} if isinstance(keep_id, str) else set(keep_id or ())
+    rows = sorted(found.values(), key=lambda s: (s["id"] not in keep, host_of(s["from"]) not in prefer, s["name"].lower(), s["name"], s["from"]))
+    kept = sorted(rows[:MAX_SOURCES], key=lambda s: (s["name"].lower(), s["name"], s["from"]))
+    return kept, len(rows) > MAX_SOURCES or len(raw) > SCAN_ROWS
+
+
+def clean_address(text):
+    """An address to ask for sources besides mDNS: an IPv4 literal in a private or link-local range, as text."""
+    if not isinstance(text, str) or not _IPV4.fullmatch(text):
+        raise NdiError("enter an address like 192.168.1.20")
+    try:
+        ip = ipaddress.IPv4Address(text)
+    except ValueError:
+        raise NdiError("enter an address like 192.168.1.20")
+    if not any(ip in net for net in PRIVATE_NETS):
+        raise NdiError("only addresses on a private network are taken (10.x, 172.16 to 172.31, 192.168.x, 169.254.x)")
+    return str(ip)
+
+
+MAX_ALLOWED = 32                          # sources that pads may hold (the "allowed" list, D62)
+MAX_GROUPS = 8                            # NDI groups this box looks in (the finder's p_groups; none means NDI's own default, "public")
+MAX_GROUP = 64
+# A group's name goes to the library in a list joined by commas, so it has no comma; letters, digits, a space, and
+# - _ . inside; no space at either end. Kept as typed: the SDK does not say that names fold case, so this box
+# never changes one.
+_GROUP = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9 _.-]{0,%d}[A-Za-z0-9_.-])?" % (MAX_GROUP - 2))
+
+
+MAX_DISCOVERY = 4                         # NDI Discovery Servers this box asks (ndi.networks.discovery in the library's own file)
+DISCOVERY_PORT = 5959                     # the server's default port (NDI's documentation); left out of what is stored when not typed
+CONFIG_NAME = "ndi-config.v1.json"        # the library's configuration file, looked for in $NDI_CONFIG_DIR
+CONFIG_MAX = 4096
+# How pictures travel, in the library's configuration file: reliable UDP (NDI's QUIC) off for what this box receives,
+# so the library uses TCP. Measured on the test node on 2026-10-31 (D110): with the library's default, senders of NDI
+# 5.6, 6.1 and 6.1.1 on Windows, NDI's own Test Patterns among them, closed the QUIC connection a few milliseconds
+# after opening it, again and again, and the first picture took from tens of milliseconds to over 7 seconds (the 409
+# "sent no picture in 6 seconds" on a live switch). With this key: about 40 ms, every time. The cost is TCP on a lossy
+# link such as Wi-Fi, which was not run. To put it back: make this {} (D110 says what else).
+CONFIG_TRANSPORT = {"rudp": {"recv": {"enable": False}}}
+
+
+def clean_discovery(text):
+    """A Discovery Server to ask: a private or link-local IPv4 address, with ":port" if one was typed."""
+    if not isinstance(text, str) or len(text) > 21:
+        raise NdiError("enter a discovery server like 192.168.1.5 or 192.168.1.5:5959")
+    host, sep, port = text.partition(":")
+    try:
+        host = clean_address(host)
+    except NdiError as e:
+        raise NdiError(str(e).replace("enter an address like 192.168.1.20", "enter a discovery server like 192.168.1.5 or 192.168.1.5:5959"))
+    if not sep:
+        return host
+    if not re.fullmatch(r"[1-9][0-9]{0,4}", port) or int(port) > 65535:
+        raise NdiError("a port is a number from 1 to 65535")
+    return "%s:%d" % (host, int(port))
+
+
+def saved_discovery(section):
+    """The discovery servers of a stored `ndi` section that can be used; a bad or repeated one is left out."""
+    items = section.get("discovery") if isinstance(section, dict) else None
+    good = []
+    for d in (items if isinstance(items, list) else [])[:MAX_DISCOVERY * 4]:
+        try:
+            if clean_discovery(d) == d and d not in good and len(good) < MAX_DISCOVERY:
+                good.append(d)
+        except NdiError:
+            pass
+    return good
+
+
+def config_text(discovery):
+    """The library's configuration file as this box writes it: how pictures travel (CONFIG_TRANSPORT) and the discovery
+    servers. The discovery key is NDI's own, ndi.networks.discovery, one text of addresses joined by commas (each with
+    ":port" or without)."""
+    section = dict(CONFIG_TRANSPORT)
+    if discovery:
+        section["networks"] = {"discovery": ",".join(discovery)}
+    return json.dumps({"ndi": section}, sort_keys=True) + "\n"
+
+
+def config_discovery(folder):
+    """The discovery servers in the configuration file of `folder`, as a list; [] when there is no file, no folder,
+    or anything in it that this box did not write (then nothing of it is believed)."""
+    try:
+        with open(os.path.join(folder, CONFIG_NAME), "rb") as f:
+            raw = f.read(CONFIG_MAX + 1)
+        if len(raw) > CONFIG_MAX:
+            return []
+        text = json.loads(raw.decode("utf-8"))["ndi"]["networks"]["discovery"]
+        items = text.split(",") if isinstance(text, str) and text else []
+        return items if validate_saved({"addresses": [], "discovery": items})["discovery"] == items else []
+    except (OSError, ValueError, KeyError, TypeError, NdiError):
+        return []
+
+
+def config_transport(folder):
+    """What the configuration file of `folder` says of how pictures travel (the keys of CONFIG_TRANSPORT), or None
+    when there is no file or it cannot be read. Compared with what the library was started with (Service._load)."""
+    try:
+        with open(os.path.join(folder, CONFIG_NAME), "rb") as f:
+            raw = f.read(CONFIG_MAX + 1)
+        if len(raw) > CONFIG_MAX:
+            return None
+        section = json.loads(raw.decode("utf-8"))["ndi"]
+        return {k: section[k] for k in ("rudp",) if k in section}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def clean_group(text):
+    if not isinstance(text, str) or not _GROUP.fullmatch(text):
+        raise NdiError("a group is 1 to %d letters, digits, spaces, dashes, dots or underscores, with no comma" % MAX_GROUP)
+    return text
+
+
+def saved_groups(section):
+    """The groups of a stored `ndi` section that can be used; a bad or repeated one is left out, never an error."""
+    items = section.get("groups") if isinstance(section, dict) else None
+    good = []
+    for g in (items if isinstance(items, list) else [])[:MAX_GROUPS * 4]:
+        if isinstance(g, str) and _GROUP.fullmatch(g) and g not in good and len(good) < MAX_GROUPS:
+            good.append(g)
+    return good
+
+
+def clean_allowed(row):
+    """One allowed source as it is stored, {"id", "name", "from"}, or NdiError. The id must be the one this name and
+    this machine give (source_id), so a row cannot say one thing and mean another."""
+    if not isinstance(row, dict) or set(row) != {"id", "name", "from"}:
+        raise NdiError("an allowed NDI source is an id, a name and where it is from")
+    sid, name, where = row["id"], row["name"], row["from"]
+    if not (isinstance(sid, str) and _ID.fullmatch(sid) and isinstance(name, str) and clean_name(name) == name
+            and isinstance(where, str) and _WHERE.fullmatch(where) and source_id(name, host_of(where)) == sid):
+        raise NdiError("bad allowed NDI source")
+    return {"id": sid, "name": name, "from": where}
+
+
+def saved_sources(section):
+    """The allowed sources of a stored `ndi` section that can be used. A person may have edited the file: a list
+    of the wrong kind gives none, a bad or repeated row is left out, never an error."""
+    items = section.get("sources") if isinstance(section, dict) else None
+    good, seen = [], set()
+    for row in (items if isinstance(items, list) else [])[:MAX_ALLOWED * 4]:
+        try:
+            row = clean_allowed(row)
+        except NdiError:
+            continue
+        if row["id"] not in seen and len(good) < MAX_ALLOWED:
+            seen.add(row["id"])
+            good.append(row)
+    return good
+
+
+def validate_saved(cfg):
+    """The stored part of the settings (a user-editable file, and a settings import): {"addresses": [...]}; since
+    sound, "sound": true or false; since pads hold sources, "sources": the allowed ones; since groups, "groups",
+    "mdns" and "discovery"; since one sound source for the box (D87), "sound_from" (the id of one of the allowed
+    sources in the same section) and "sound_delay_ms". Each of the later keys is left out of what is returned
+    when it was left out."""
+    if not isinstance(cfg, dict) or set(cfg) - {"addresses", "sound", "sources", "groups", "mdns", "discovery", "own_discovery",
+                                                "sound_from", "sound_delay_ms"}:
+        raise NdiError("ndi must be an object with addresses, sound, sources, groups, mdns, discovery, sound_from and sound_delay_ms")
+    if "sound" in cfg and not isinstance(cfg["sound"], bool):
+        raise NdiError("ndi.sound must be true or false")
+    items = cfg.get("addresses", [])
+    if not isinstance(items, list) or len(items) > MAX_ADDRESSES:
+        raise NdiError("at most %d NDI addresses" % MAX_ADDRESSES)
+    out = []
+    for a in items:
+        if clean_address(a) != a or a in out:
+            raise NdiError("bad or repeated NDI address")
+        out.append(a)
+    out = dict({"addresses": out}, **({"sound": cfg["sound"]} if "sound" in cfg else {}))
+    if "sources" in cfg:
+        rows = cfg["sources"]
+        if not isinstance(rows, list) or len(rows) > MAX_ALLOWED:
+            raise NdiError("at most %d allowed NDI sources" % MAX_ALLOWED)
+        rows = [clean_allowed(r) for r in rows]
+        if len({r["id"] for r in rows}) != len(rows):
+            raise NdiError("an allowed NDI source is repeated")
+        out["sources"] = rows
+    if "groups" in cfg:
+        groups = cfg["groups"]
+        if not isinstance(groups, list) or len(groups) > MAX_GROUPS:
+            raise NdiError("at most %d NDI groups" % MAX_GROUPS)
+        if len(set(clean_group(g) for g in groups)) != len(groups):
+            raise NdiError("an NDI group is repeated")
+        out["groups"] = list(groups)
+    if "discovery" in cfg:
+        servers = cfg["discovery"]
+        if not isinstance(servers, list) or len(servers) > MAX_DISCOVERY:
+            raise NdiError("at most %d NDI discovery servers" % MAX_DISCOVERY)
+        for d in servers:
+            if clean_discovery(d) != d or servers.count(d) != 1:
+                raise NdiError("bad or repeated NDI discovery server")
+        out["discovery"] = list(servers)
+    if "own_discovery" in cfg:             # this box's input also asks the discovery server this box runs (D85)
+        if not isinstance(cfg["own_discovery"], bool):
+            raise NdiError("ndi.own_discovery must be true or false")
+        out["own_discovery"] = cfg["own_discovery"]
+    if "sound_from" in cfg:
+        # The one sound source: an id that the allowed list of this same section holds, as a pad's source is.
+        # Never a name or an address, and never an id with nothing behind it.
+        sid = cfg["sound_from"]
+        if not isinstance(sid, str) or (sid and sid not in [r["id"] for r in out.get("sources", [])]):
+            raise NdiError("ndi.sound_from must be the id of one of the allowed NDI sources")
+        if sid:
+            out["sound_from"] = sid
+    if "sound_delay_ms" in cfg:
+        ms = cfg["sound_delay_ms"]
+        if isinstance(ms, bool) or not isinstance(ms, int) or not SOUND_DELAY_MS[0] <= ms <= SOUND_DELAY_MS[1]:
+            raise NdiError("ndi.sound_delay_ms must be a whole number from %d to %d" % SOUND_DELAY_MS)
+        out["sound_delay_ms"] = ms
+    if "mdns" in cfg:
+        # Kept for a later release only: NDI documents no setting that stops a finder using mDNS (NDI.md), so
+        # nothing reads this yet. A file that carries it still loads.
+        if not isinstance(cfg["mdns"], bool):
+            raise NdiError("ndi.mdns must be true or false")
+        out["mdns"] = cfg["mdns"]
+    return out
+
+
+SWITCHED_OFF = "the NDI input was switched off"      # why a source on the screen ended, for the page (Input.stop)
+SOUND_DEFAULT = False                     # off until the sound has been heard on a box (2026-10-11): the owner switches it on (D62)
+
+
+def saved_sound(section):
+    """Whether sound is wanted, from a stored `ndi` section a person may have edited: anything but a plain true
+    or false is the default."""
+    value = section.get("sound") if isinstance(section, dict) else None
+    return value if isinstance(value, bool) else SOUND_DEFAULT
+
+
+def saved_sound_from(section):
+    """The id of the box's one sound source from a stored `ndi` section a person may have edited, or "": only an
+    id that the section's own allowed list holds counts."""
+    sid = section.get("sound_from") if isinstance(section, dict) else None
+    return sid if isinstance(sid, str) and _ID.fullmatch(sid) and sid in [r["id"] for r in saved_sources(section)] else ""
+
+
+def saved_sound_delay(section):
+    """How far the sound is moved against the picture, in milliseconds, from a stored section: anything but a whole
+    number within SOUND_DELAY_MS is 0."""
+    ms = section.get("sound_delay_ms") if isinstance(section, dict) else None
+    return ms if isinstance(ms, int) and not isinstance(ms, bool) and SOUND_DELAY_MS[0] <= ms <= SOUND_DELAY_MS[1] else 0
+
+
+def saved_addresses(section):
+    """(the addresses of a stored `ndi` section that can be used, what was wrong with it in words or ""). The
+    settings are a file a person may have edited: a section of the wrong kind gives no addresses, and a bad entry
+    in a good list is left out, never an error that reaches the caller."""
+    if section is None:
+        return [], ""
+    items = section.get("addresses", []) if isinstance(section, dict) else None
+    if not isinstance(items, list):
+        return [], "the saved NDI addresses could not be read and are not used"
+    good = []
+    for a in items[:MAX_ADDRESSES * 4]:
+        try:
+            if clean_address(a) == a and a not in good and len(good) < MAX_ADDRESSES:
+                good.append(a)
+        except NdiError:
+            pass
+    return good, ("" if len(good) == len(items) else "%d saved NDI address%s could not be used and %s left out"
+                  % (len(items) - len(good), "" if len(items) - len(good) == 1 else "es", "was" if len(items) - len(good) == 1 else "were"))
+
+
+class Wanted:
+    """What the panel wants of the helper, read from the settings each time: (module on, addresses). Never raises;
+    what is wrong with the stored section is kept in `problem` for the page and logged once when it changes."""
+
+    def __init__(self, enabled, data, log=print):
+        self._enabled, self._data, self.log, self.problem = enabled, data, log, ""
+        self.sound = SOUND_DEFAULT                 # read with the rest at each call
+        self.allowed = []                          # the sources pads may hold, read with the rest
+        self.groups = []                           # the NDI groups to look in, read with the rest (none: NDI's default)
+        self.discovery = []                        # the NDI Discovery Servers to ask, read with the rest
+        self.own_discovery = False                 # also the server this box runs, at its address of the moment (D85)
+        self.sound_from, self.sound_delay_ms = "", 0       # the box's one sound source and the delay of its sound (D87)
+
+    def __call__(self):
+        try:
+            data = self._data()
+            section = data.get("ndi") if isinstance(data, dict) else None
+            addresses, problem = saved_addresses(section)
+            self.sound = saved_sound(section)
+            self.allowed = saved_sources(section)
+            self.groups = saved_groups(section)
+            self.discovery = saved_discovery(section)
+            self.own_discovery = isinstance(section, dict) and section.get("own_discovery") is True
+            self.sound_from, self.sound_delay_ms = saved_sound_from(section), saved_sound_delay(section)
+            on = bool(self._enabled())
+        except Exception as e:
+            on, addresses, problem = False, [], "the NDI settings could not be read (%s)" % type(e).__name__
+            self.sound, self.sound_from, self.sound_delay_ms = SOUND_DEFAULT, "", 0
+        if problem != self.problem:
+            self.problem = problem
+            if problem:
+                self.log("pvj-web: %s" % problem)
+        return on, addresses
+
+
+def _fourcc_text(n):
+    raw = struct.pack("<I", n & 0xFFFFFFFF)
+    return raw.decode("ascii") if all(0x20 < b < 0x7f for b in raw) else "0x%08x" % (n & 0xFFFFFFFF)
+
+
+def frame_rate(n, d):
+    """Frames a second from the sender's fraction; 30 for anything that is not a sensible rate."""
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (n, d)) or n <= 0 or d <= 0:
+        return 30.0
+    fps = n / d
+    return round(fps, 3) if 1.0 <= fps <= 120.0 else 30.0
+
+
+def check_frame(f):
+    """((width, height, frames a second), line stride) of a video frame, or NdiError in words for the page. Nothing
+    is read from the frame's memory before this has passed, and the size read comes from these numbers only."""
+    w, h, stride, fourcc, fields = f.width, f.height, f.stride, f.fourcc, f.fields
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (w, h, stride, fourcc, fields)):
+        raise NdiError("the source sent a frame that could not be read")
+    # 1 is a progressive frame. 0 is a frame of two fields woven together, 2 and 3 are single fields: all three are
+    # interlaced video, and all three are refused alike. The library is asked for its "fastest" format, in which
+    # (its documentation says) fields are always allowed, so it never de-interlaces for us; see mctl/NDI.md.
+    if fields in INTERLACED:
+        raise NdiError("the source sends interlaced video, which this input does not show; set the sender to progressive")
+    if fields != PROGRESSIVE:
+        raise NdiError("the source sent a frame that could not be read")
+    if fourcc not in (FOURCC_UYVY, FOURCC_UYVA):
+        raise NdiError("the source sends a picture format this input does not read (%s)" % _fourcc_text(fourcc))
+    if not (MIN_SIDE <= w <= MAX_WIDTH and MIN_SIDE <= h <= MAX_HEIGHT) or w % 2:
+        raise NdiError("the source's picture size is not one this input shows (%d x %d; up to %d x %d, an even width)"
+                       % (w, h, MAX_WIDTH, MAX_HEIGHT))
+    if not 2 * w <= stride <= 2 * w + MAX_STRIDE_PAD or not f.address:
+        raise NdiError("the source sent a frame that could not be read")
+    return (w, h, frame_rate(f.fps_n, f.fps_d)), stride
+
+
+def copy_frame(f, fmt, stride, out):
+    """Copy the picture (never the alpha plane, never a line's padding) into `out`, which holds exactly one frame."""
+    w, h = fmt[0], fmt[1]
+    row = 2 * w
+    src = f.view(stride * (h - 1) + row)
+    if len(src) != stride * (h - 1) + row or len(out) != row * h:
+        raise NdiError("the source sent a frame that could not be read")
+    if stride == row:
+        out[:] = src
+        return
+    dst = memoryview(out)
+    for y in range(h):
+        dst[y * row:(y + 1) * row] = src[y * stride:y * stride + row]
+
+
+def check_audio(a):
+    """(rate, the sender's channels, the channels read, samples a channel, bytes from one plane to the next) of a
+    block of sound, or NdiError in words. Nothing of the block's memory is touched before this has passed, and
+    what is read afterwards is computed from these checked numbers only."""
+    rate, channels, n, stride = a.rate, a.channels, a.samples, a.stride
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (rate, channels, n, stride, a.fourcc)):
+        raise NdiError("the source sent sound that could not be read")
+    if a.fourcc != AUDIO_FLTP:
+        raise NdiError("the source sends a sound format this input does not read (%s)" % _fourcc_text(a.fourcc))
+    if rate not in AUDIO_RATES:
+        raise NdiError("the source's sound is at %d samples a second, which this input does not play" % max(-1, min(rate, 10 ** 9)))
+    if not 1 <= channels <= MAX_AUDIO_CHANNELS:
+        raise NdiError("the source sent sound that could not be read")
+    if not 1 <= n <= min(MAX_AUDIO_SAMPLES, rate):
+        raise NdiError("the source sent sound that could not be read")
+    if n > MAX_AUDIO_BLOCK * rate:
+        raise NdiError("the source sends its sound in blocks of %.2f seconds; blocks longer than %.2f are not played"
+                       % (n / float(rate), MAX_AUDIO_BLOCK))
+    if not 4 * n <= stride <= 4 * n + MAX_STRIDE_PAD or not a.address:
+        raise NdiError("the source sent sound that could not be read")
+    return rate, channels, min(channels, AUDIO_PLANES), n, stride
+
+
+def audio_block(a, checked):
+    """(the block as the pipe carries it: 32-bit floats, little-endian, channel after channel for each sample,
+    brought down by AUDIO_GAIN and held to full scale; its loudest sample after the gain, 0.0 to 1.0; whether it
+    was replaced by silence). A block with a sample that is not a number, is infinite, or is absurdly large is
+    not played: it becomes silence of the same length, so that time goes on.
+
+    The checks run at the speed of C (sum, max, min over an array); only the gain is a Python loop, 96000
+    multiplications a second for stereo at 48 kHz."""
+    _rate, _channels, planes, n, stride = checked
+    cols, peak = [], 0.0
+    for c in range(planes):
+        col = array.array("f")
+        col.frombytes(a.view(c * stride, 4 * n))
+        if len(col) != n:
+            raise NdiError("the source sent sound that could not be read")
+        if sys.byteorder != "little":
+            col.byteswap()                        # the library's floats are the machine's own; said for completeness
+        if not math.isfinite(sum(col)):           # one NaN or infinity anywhere makes the sum one
+            return bytes(4 * n * planes), 0.0, True
+        top = max(max(col), -min(col))
+        if top > AUDIO_ABSURD:
+            return bytes(4 * n * planes), 0.0, True
+        peak = max(peak, top)
+        cols.append(col)
+    g = AUDIO_GAIN
+    if peak * g > 1.0:                            # louder than full scale after the gain: held there, here, not by whatever plays it
+        cols = [array.array("f", [1.0 if x * g > 1.0 else -1.0 if x * g < -1.0 else x * g for x in col]) for col in cols]
+    else:
+        cols = [array.array("f", [x * g for x in col]) for col in cols]
+    if planes == 1:
+        out = cols[0]
+    else:
+        out = array.array("f", bytes(4 * n * planes))
+        for c, col in enumerate(cols):
+            out[c::planes] = col
+    if sys.byteorder != "little":
+        out.byteswap()
+    return out.tobytes(), min(1.0, peak * g), False
+
+
+# ---- the container: Matroska, written here ----------------------------------------------------------------------------
+# With sound the pipe cannot carry bare frames: a player that counts raw frames and raw samples to tell the time
+# is put out of step for good by every frame this helper drops or writes twice. So the helper says when each frame
+# and each block of sound belongs, in the smallest container that mpv reads itself from a pipe without seeking:
+# Matroska with uncompressed video ("V_UNCOMPRESSED" and the FourCC UYVY) and float PCM ("A_PCM/FLOAT/IEEE").
+# mpv's own reader (demux/demux_mkv.c, read for this at v0.35.0, v0.37.0 and v0.40.0) takes both, and takes a
+# segment of unknown length "for streaming". Only what that reader needs is written: the segment has no length (it
+# ends when the pipe does), and every cluster, one for each frame or block of sound, has its exact length.
+MKV_TIME_UNIT = 1000                      # nanoseconds in one unit of time in the stream (so: microseconds)
+
+
+def _ebml_size(n):
+    """A length as EBML writes it, in the fewest bytes (never the all-ones pattern, which means "unknown")."""
+    for width in range(1, 9):
+        if n < (1 << (7 * width)) - 1:
+            return ((1 << (7 * width)) | n).to_bytes(width, "big")
+    raise NdiError("too large for the stream")
+
+
+def _ebml(ident, payload):
+    return bytes.fromhex(ident) + _ebml_size(len(payload)) + payload
+
+
+def _ebml_uint(ident, n):
+    return _ebml(ident, n.to_bytes(max(1, (n.bit_length() + 7) // 8), "big"))
+
+
+def mkv_header(width, height, fps, audio=None):
+    """The start of the stream: what it is, and its tracks. Track 1 is the picture (UYVY, as the frames come);
+    track 2, if `audio` is (rate, channels), the sound. The segment has no length: it ends when the pipe does."""
+    head = _ebml("1A45DFA3", _ebml_uint("4286", 1) + _ebml_uint("42F7", 1) + _ebml_uint("42F2", 4) + _ebml_uint("42F3", 8)
+                 + _ebml("4282", b"matroska") + _ebml_uint("4287", 2) + _ebml_uint("4285", 2))
+    info = _ebml("1549A966", _ebml_uint("2AD7B1", MKV_TIME_UNIT) + _ebml("4D80", b"nxlx.mastercontrol") + _ebml("5741", b"nxlx.mastercontrol"))
+    video = _ebml("AE", _ebml_uint("D7", 1) + _ebml_uint("73C5", 1) + _ebml_uint("83", 1) + _ebml_uint("9C", 0)
+                  + _ebml("86", b"V_UNCOMPRESSED") + _ebml_uint("23E383", int(round(1e9 / fps)))
+                  + _ebml("E0", _ebml_uint("B0", width) + _ebml_uint("BA", height) + _ebml("2EB524", b"UYVY")))
+    tracks = video
+    if audio is not None:
+        rate, channels = audio
+        tracks += _ebml("AE", _ebml_uint("D7", 2) + _ebml_uint("73C5", 2) + _ebml_uint("83", 2) + _ebml_uint("9C", 0)
+                        + _ebml("86", b"A_PCM/FLOAT/IEEE")
+                        + _ebml("E1", _ebml("B5", struct.pack(">d", float(rate))) + _ebml_uint("9F", channels) + _ebml_uint("6264", 32)))
+    return head + bytes.fromhex("18538067" + "01FFFFFFFFFFFFFF") + info + _ebml("1654AE6B", tracks)
+
+
+def mkv_block_head(track, seconds, size):
+    """What goes in front of `size` bytes of one frame, or one block of sound, that belongs at `seconds`: a cluster
+    of its own with its time and one block. The bytes themselves follow, written from where they are (a frame is
+    never copied to be joined to this)."""
+    block = bytes((0x80 | track, 0, 0, 0x80))     # the track, a time of 0 inside its cluster, "a whole picture by itself"
+    when = _ebml_uint("E7", max(0, int(round(seconds * 1e9 / MKV_TIME_UNIT))))
+    inner = when + bytes.fromhex("A3") + _ebml_size(len(block) + size) + block
+    return bytes.fromhex("1F43B675") + _ebml_size(len(inner) + size) + inner
+
+
+class Frame:
+    """One captured frame as the seam hands it up: plain numbers, and `view(n)` for n bytes of its memory.
+    `timestamp` is the sender's own clock in units of 100 ns, or None where the library gave none."""
+    __slots__ = ("kind", "width", "height", "fourcc", "stride", "fps_n", "fps_d", "fields", "address", "view", "token", "timestamp")
+
+    def __init__(self, kind, width=0, height=0, fourcc=0, stride=0, fps_n=0, fps_d=0, fields=1, address=0, view=None, token=None,
+                 timestamp=None):
+        self.kind, self.width, self.height, self.fourcc, self.stride = kind, width, height, fourcc, stride
+        self.fps_n, self.fps_d, self.fields, self.address, self.view, self.token = fps_n, fps_d, fields, address, view, token
+        self.timestamp = timestamp
+
+
+class AudioFrame:
+    """One captured block of sound as the seam hands it up: plain numbers, and `view(offset, n)` for n bytes of its
+    memory from `offset`. Every number is the sender's and is checked (check_audio) before a byte is read."""
+    __slots__ = ("rate", "channels", "samples", "fourcc", "stride", "address", "view", "token", "timestamp")
+
+    def __init__(self, rate=0, channels=0, samples=0, fourcc=0, stride=0, address=0, view=None, token=None, timestamp=None):
+        self.rate, self.channels, self.samples, self.fourcc, self.stride = rate, channels, samples, fourcc, stride
+        self.address, self.view, self.token, self.timestamp = address, view, token, timestamp
+
+
+# ---- the library, behind a seam ------------------------------------------------------------------------------------
+class _Source(ctypes.Structure):
+    _fields_ = [("name", ctypes.c_void_p), ("url", ctypes.c_void_p)]
+
+
+class _FindCreate(ctypes.Structure):
+    _fields_ = [("show_local", ctypes.c_bool), ("groups", ctypes.c_char_p), ("extra_ips", ctypes.c_char_p)]
+
+
+class _RecvCreate(ctypes.Structure):
+    _fields_ = [("source", _Source), ("color", ctypes.c_int), ("bandwidth", ctypes.c_int), ("fields", ctypes.c_bool),
+                ("name", ctypes.c_char_p)]
+
+
+class _Video(ctypes.Structure):
+    _fields_ = [("xres", ctypes.c_int), ("yres", ctypes.c_int), ("fourcc", ctypes.c_uint32), ("fps_n", ctypes.c_int),
+                ("fps_d", ctypes.c_int), ("aspect", ctypes.c_float), ("format", ctypes.c_int), ("timecode", ctypes.c_int64),
+                ("data", ctypes.c_void_p), ("stride", ctypes.c_int), ("metadata", ctypes.c_void_p), ("timestamp", ctypes.c_int64)]
+
+
+class _Audio(ctypes.Structure):
+    _fields_ = [("rate", ctypes.c_int), ("channels", ctypes.c_int), ("samples", ctypes.c_int), ("timecode", ctypes.c_int64),
+                ("fourcc", ctypes.c_uint32), ("data", ctypes.c_void_p), ("stride", ctypes.c_int), ("metadata", ctypes.c_void_p),
+                ("timestamp", ctypes.c_int64)]
+
+
+class _Perf(ctypes.Structure):
+    _fields_ = [("video", ctypes.c_int64), ("audio", ctypes.c_int64), ("metadata", ctypes.c_int64)]
+
+
+COLOR_FASTEST, BANDWIDTH_HIGHEST = 100, 100
+# A connection that is asked for a sender's sound and nothing else (NDIlib_recv_bandwidth_audio_only): what the one
+# sound source of the box is opened with (SoundFeed). The number was read from the owner's copy of the SDK (6.3.2,
+# 2026-10-12; nothing of it is in this repository) and tried against a real sender on the test Pi (NDI.md).
+BANDWIDTH_AUDIO_ONLY = 10
+ALLOW_FIELDS = True                       # what "fastest" implies whatever is asked; said outright, and pinned by a test
+FRAME_VIDEO, FRAME_AUDIO, FRAME_ERROR = 1, 2, 4
+TIMESTAMP_UNDEFINED = 2 ** 63 - 1           # what the library writes where it has no time for a frame
+_CSTR_MAX = 512
+
+
+def _cstr(address, limit=_CSTR_MAX):
+    """The bytes of a C string, reading at most `limit`; None for one that is longer (it is not trusted to end)."""
+    if not address:
+        return b""
+    p = ctypes.cast(address, ctypes.POINTER(ctypes.c_char))
+    out = bytearray()
+    for i in range(limit):
+        c = p[i]
+        if c == b"\0":
+            return bytes(out)
+        out += c
+    return None
+
+
+def _memory(address, n):
+    """n bytes at an address as a plain byte view, without copying them. The caller has checked n."""
+    view = memoryview((ctypes.c_ubyte * n).from_address(address))
+    try:
+        return view.cast("B")              # ctypes calls the format "<B"; a row copy needs plain "B"
+    except TypeError:
+        make = ctypes.pythonapi.PyMemoryView_FromMemory
+        make.restype, make.argtypes = ctypes.py_object, [ctypes.c_void_p, ctypes.c_ssize_t, ctypes.c_int]
+        return make(address, n, 0x100)     # PyBUF_READ
+
+
+def elf_machine(path):
+    """(machine number, 32 or 64) from a file's ELF header, or None for a file that is not one."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(20)
+    except OSError:
+        return None
+    if len(head) < 20 or head[:4] != b"\x7fELF" or head[4] not in (1, 2) or head[5] not in (1, 2):
+        return None
+    return struct.unpack("<H" if head[5] == 1 else ">H", head[18:20])[0], 32 * head[4]
+
+
+def box_machine(machine=None, pointer_bytes=None):
+    """The ELF machine number this Python process can load."""
+    machine = machine or os.uname().machine
+    bits = 8 * (pointer_bytes or struct.calcsize("P"))
+    if machine in ("aarch64", "arm64"):
+        return 183 if bits == 64 else 40          # a 64-bit kernel under a 32-bit system
+    if machine in ("x86_64", "amd64"):
+        return 62 if bits == 64 else 3
+    if machine.startswith("arm"):
+        return 40
+    if re.fullmatch(r"i[3-6]86", machine):
+        return 3
+    return None
+
+
+def runtime_problem(path, owner_uids=(0,), machine=None):
+    """None when the library file is there and safe to load, else the reason in words. Not a link, a plain file,
+    its owner root, not writable by anyone else, and built for this processor."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return "the NDI runtime is not on this node yet"
+    if not stat.S_ISREG(st.st_mode) or st.st_uid not in owner_uids or st.st_mode & 0o022 or st.st_size > LIB_MAX_BYTES:
+        return "the NDI runtime file is not a plain file that only root can change; install it again with pvj-ndi-runtime"
+    found, want = elf_machine(path), machine if machine is not None else box_machine()
+    if found is None:
+        return "the NDI runtime file is not a program library"
+    if found[0] != want:
+        return "the NDI runtime file is for %s, this node is %s" % (ELF_MACHINES.get(found[0], "another processor"),
+                                                                   ELF_MACHINES.get(want, "another kind"))
+    return None
+
+
+class CtypesLibrary:
+    """The only code that calls the NDI library. Every method is a few lines, checks nothing about content (that is
+    done above, where it is tested), and never lets a pointer or a length from the library out as anything but a
+    number or a bounded read."""
+
+    def __init__(self, path):
+        try:
+            lib = ctypes.CDLL(path)
+        except OSError as e:
+            raise NdiError("the NDI runtime could not be loaded: %s" % str(e)[-160:])
+        try:
+            self._declare(lib)
+        except AttributeError:
+            raise NdiError("the NDI runtime is not a version this node knows (it needs NDI 5 or 6)")
+        if not lib.NDIlib_initialize():
+            raise NdiError("the NDI runtime does not run on this processor")
+        self.lib = lib
+
+    @staticmethod
+    def _declare(lib):
+        p, u32, i = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int
+        for name, res, args in (
+                ("NDIlib_initialize", ctypes.c_bool, []),
+                ("NDIlib_version", p, []),
+                ("NDIlib_find_create_v2", p, [ctypes.POINTER(_FindCreate)]),
+                ("NDIlib_find_destroy", None, [p]),
+                ("NDIlib_find_get_current_sources", p, [p, ctypes.POINTER(u32)]),
+                ("NDIlib_recv_create_v3", p, [ctypes.POINTER(_RecvCreate)]),
+                ("NDIlib_recv_destroy", None, [p]),
+                ("NDIlib_recv_capture_v2", i, [p, ctypes.POINTER(_Video), p, p, u32]),
+                ("NDIlib_recv_free_video_v2", None, [p, ctypes.POINTER(_Video)]),
+                ("NDIlib_recv_get_performance", None, [p, ctypes.POINTER(_Perf), ctypes.POINTER(_Perf)])):
+            fn = getattr(lib, name)
+            fn.restype, fn.argtypes = res, args
+        # Sound: two more calls. A library without them still gives the picture (has_audio says which).
+        try:
+            for name, res, args in (
+                    ("NDIlib_recv_capture_v3", i, [p, ctypes.POINTER(_Video), ctypes.POINTER(_Audio), p, u32]),
+                    ("NDIlib_recv_free_audio_v3", None, [p, ctypes.POINTER(_Audio)])):
+                fn = getattr(lib, name)
+                fn.restype, fn.argtypes = res, args
+            lib._mctl_audio = True
+        except AttributeError:
+            lib._mctl_audio = False
+
+    def version(self):
+        raw = _cstr(self.lib.NDIlib_version(), 80) or b""
+        return "".join(ch for ch in raw.decode("ascii", "replace") if " " <= ch <= "~")[:80]
+
+    def find_open(self, extra_ips, groups=""):
+        """`extra_ips` is text made of checked IPv4 addresses and commas, nothing else; `groups` is checked group
+        names joined by commas (NDIlib_find_create_t.p_groups), or "" for the library's own default (NULL)."""
+        self._ips = extra_ips.encode("ascii")             # kept: the library may read it later
+        self._groups = groups.encode("ascii")
+        handle = self.lib.NDIlib_find_create_v2(ctypes.byref(_FindCreate(True, self._groups or None, self._ips or None)))
+        if not handle:
+            raise NdiError("the NDI runtime could not start looking for sources (is avahi-daemon running?)")
+        return handle
+
+    def find_sources(self, handle):
+        count = ctypes.c_uint32(0)
+        first = self.lib.NDIlib_find_get_current_sources(handle, ctypes.byref(count))
+        if not first:
+            return []
+        rows = ctypes.cast(first, ctypes.POINTER(_Source))
+        out = []
+        for n in range(min(count.value, SCAN_ROWS + 1)):      # one more than is used, so the caller knows it was cut
+            name, url = _cstr(rows[n].name), _cstr(rows[n].url)
+            if name is not None and url is not None:
+                out.append((name, url))
+        return out
+
+    def find_close(self, handle):
+        self.lib.NDIlib_find_destroy(handle)
+
+    def recv_open(self, raw, audio_only=False):
+        """`raw` is the (name, address) pair the library itself gave for a source that passed clean_sources. With
+        `audio_only` the library is asked for the source's sound and no picture (the box's one sound source)."""
+        spec, keep = self.recv_spec(raw, audio_only)
+        handle = self.lib.NDIlib_recv_create_v3(ctypes.byref(spec))
+        if not handle:
+            raise NdiError("the NDI runtime could not open the source")
+        return (handle, keep)
+
+    @staticmethod
+    def recv_spec(raw, audio_only=False):
+        """(what the library is asked for when a source is opened, the strings it points at). No library needed,
+        so a test can read it: the fastest format, full bandwidth, fields allowed; or, with `audio_only`, the same
+        with the bandwidth that asks for sound alone."""
+        keep = [ctypes.create_string_buffer(raw[0]), ctypes.create_string_buffer(raw[1]), ctypes.create_string_buffer(b"nxlx.mastercontrol")]
+        spec = _RecvCreate(_Source(ctypes.addressof(keep[0]), ctypes.addressof(keep[1])), COLOR_FASTEST,
+                           BANDWIDTH_AUDIO_ONLY if audio_only else BANDWIDTH_HIGHEST, ALLOW_FIELDS,
+                           ctypes.cast(keep[2], ctypes.c_char_p))
+        return spec, keep
+
+    def recv_capture(self, handle, timeout_ms):
+        """None when nothing came in time; a Frame of kind "video" (to be given back with recv_free), or "lost"."""
+        video = _Video()
+        kind = self.lib.NDIlib_recv_capture_v2(handle[0], ctypes.byref(video), None, None, int(timeout_ms))
+        if kind == FRAME_ERROR:
+            return Frame("lost")
+        if kind != FRAME_VIDEO:
+            return None
+        address = video.data or 0
+
+        def view(n):
+            return _memory(address, n)
+        return Frame("video", video.xres, video.yres, video.fourcc, video.stride, video.fps_n, video.fps_d, video.format,
+                     address, view, video, None if video.timestamp == TIMESTAMP_UNDEFINED else video.timestamp)
+
+    @property
+    def has_audio(self):
+        return bool(getattr(self.lib, "_mctl_audio", False))
+
+    def recv_audio(self, handle, timeout_ms):
+        """None when no sound came in time; AUDIO_LOST while the connection is down (the library then answers at
+        once, every time, so the caller must wait by itself; the picture's thread is the one that says so in the
+        log); else an AudioFrame, to be given back with recv_free_audio. The library documents that the picture and
+        the sound of one connection may be taken on two threads at once; this is the sound's call."""
+        audio = _Audio()
+        kind = self.lib.NDIlib_recv_capture_v3(handle[0], None, ctypes.byref(audio), None, int(timeout_ms))
+        if kind == FRAME_ERROR:
+            return AUDIO_LOST
+        if kind != FRAME_AUDIO:
+            return None
+        address = audio.data or 0
+
+        def view(offset, n):
+            return _memory(address + offset, n)
+        return AudioFrame(audio.rate, audio.channels, audio.samples, audio.fourcc, audio.stride, address, view, audio,
+                          None if audio.timestamp == TIMESTAMP_UNDEFINED else audio.timestamp)
+
+    def recv_free_audio(self, handle, frame):
+        if frame.token is not None:
+            self.lib.NDIlib_recv_free_audio_v3(handle[0], ctypes.byref(frame.token))
+
+    def recv_free(self, handle, frame):
+        if frame.token is not None:
+            self.lib.NDIlib_recv_free_video_v2(handle[0], ctypes.byref(frame.token))
+
+    def recv_dropped(self, handle):
+        total, dropped = _Perf(), _Perf()
+        self.lib.NDIlib_recv_get_performance(handle[0], ctypes.byref(total), ctypes.byref(dropped))
+        return max(0, int(dropped.video))
+
+    def recv_close(self, handle):
+        self.lib.NDIlib_recv_destroy(handle[0])
+
+
+def load_library(path):
+    problem = runtime_problem(path)
+    if problem:
+        raise NdiError(problem)
+    return CtypesLibrary(path)
+
+
+# ---- one connection to one source ------------------------------------------------------------------------------------
+class Receiver:
+    """Receives one source and writes whole frames into the pipe. Two threads: one takes frames from the library
+    into a buffer of its own and gives the library's frame straight back; one writes the newest whole frame to the
+    pipe. Three buffers go round between them, so neither waits for the other and a frame is never written in part.
+
+    With `sound` a third thread takes the source's sound from the library (the library documents that picture and
+    sound of one connection may be taken on two threads at once), checks and converts each block, and queues it for
+    the same writer. What the pipe then carries is decided once, after the first picture (decide): if sound came
+    within AUDIO_WAIT it is Matroska, with a time on every frame and block; if none came it is bare frames, exactly
+    as without sound. Sound that turns up later, or changes its rate or channels, ends this receiver as "changed",
+    and the panel opens the source again, as it does when a picture changes size.
+
+    Time in the stream is this helper's own clock, never the sender's. Measured against real senders (2026-10-08):
+    the library's time on a block of sound is when it was sent, jittering by tens of milliseconds around blocks of
+    exactly 100, and a still picture carried a time more than two hours older than its sound. So a frame belongs
+    where it arrived, and sound is placed by counting its samples, held within AUDIO_WINDOW of the clock: when it
+    falls behind (a gap) the count starts again at the clock, and when it runs ahead a block is dropped."""
+
+    def __init__(self, lib, source, fifo, log=print, clock=time.monotonic, pipe_wait=PIPE_OPEN_SECONDS, join_wait=3.0,
+                 sound=False, audio_wait=AUDIO_WAIT, feed=None, outside=False, on_late_sound=None):
+        self.lib, self.source, self.fifo, self.log, self._clock, self._pipe_wait = lib, source, fifo, log, clock, pipe_wait
+        self._on_late_sound = on_late_sound        # called (once) when sound starts under a picture that was opened without it
+        self._frozen = threading.Event()           # the connection is let go of, the pipe is kept: the last picture stands (freeze)
+        self._join_wait = join_wait
+        self.sound = bool(sound) and bool(getattr(lib, "has_audio", False))
+        # The sound is another sender's (the box's one sound source, a SoundFeed): this connection is then never
+        # asked for sound and no thread of this receiver takes any; the feed's thread calls take_audio. `outside`
+        # without a feed: the sound source is not on the network now. The picture plays as bare frames, and when
+        # the feed is there (use_feed) its first block ends this receiver as "changed", as late sound always did.
+        self.feed, self.outside = feed, bool(outside or feed is not None)
+        self._taken_on_trust = False               # the sound's form is what the feed had last, and no block of this stream has shown it yet
+        self._audio_wait = audio_wait
+        # "raw" or "matroska". Without sound it is bare frames from the start. With sound it is decided once, after
+        # the first picture (decide), and the writer waits for that.
+        self.container = None if self.sound else "raw"
+        self.audio = None                          # {"rate", "channels" (the sender's), "played"} once a good block came
+        # "adjusted": how often sound was cut, or silence put in, to bring the count back to the clock (AUDIO_SYNC)
+        self.audio_counts = {"received": 0, "written": 0, "dropped": 0, "refused": 0, "silenced": 0, "filled": 0, "adjusted": 0}
+        self._audio_seen = threading.Event()
+        self._audio_problem = ""                   # why the last block was refused, for the page
+        self._queue = collections.deque()          # (seconds, bytes, length in seconds, the sender's or silence) waiting for the writer
+        self._queued = 0.0
+        self._peaks = collections.deque(maxlen=AUDIO_QUEUE_BLOCKS)     # (clock, loudest sample) of the blocks of the last second
+        self._t0 = None                            # the clock when the player took the pipe: the stream's time 0
+        self._at = 0.0                             # the clock when the pending frame arrived
+        self._apts = None                          # where the next block of sound belongs, by count
+        self._block = 0.0                          # the length of the last block of sound, in seconds
+        self._leads = collections.deque()          # (clock, how far the count stood ahead of the clock) of the last second or so
+        self._said_stuck = False
+        self._users = 0                            # threads that may be inside the library with the connection
+        self.state, self.message, self.format = "connecting", "", None
+        self.counts = {"received": 0, "shown": 0, "dropped": 0}
+        self.first = threading.Event()             # a first good frame, or the end
+        self._stop = threading.Event()
+        self._go = threading.Event()               # the writer may open the pipe (hold and go; the Service's open)
+        self._go.set()
+        self._cond = threading.Condition()
+        self._pending, self._free = None, []
+        self._last = clock()
+        self._lost = False                         # the library said the connection dropped, and no frame has come since
+        self._handle = None
+        self._handle_lock = threading.Lock()       # the connection is used by the capture thread and asked about by status
+        self._threads = []
+
+    def _release(self):
+        """Give the connection back to the library, once."""
+        with self._handle_lock:
+            handle, self._handle = self._handle, None
+            if handle is not None:
+                try:
+                    self.lib.recv_close(handle)
+                except Exception as e:
+                    self.log("pvj-ndi: closing the source: %s" % e)
+
+    def _leave(self):
+        """A thread that used the connection is out of the library for good. The last one out gives the connection
+        back at once, so a source nobody watches any more is let go without waiting for anyone to ask; never an
+        earlier one, which would free it under the thread still inside (the picture's and the sound's threads end
+        at different moments)."""
+        with self._cond:
+            self._users -= 1
+            last = self._users <= 0
+        if last:
+            self._release()
+
+    def start(self):
+        self._handle = self.lib.recv_open(self.source["raw"])
+        self._threads = [threading.Thread(target=self._capture, name="ndi-capture", daemon=True),
+                         threading.Thread(target=self._writer, name="ndi-writer", daemon=True)]
+        if self.sound and not self.outside:
+            self._threads.append(threading.Thread(target=self._capture_audio, name="ndi-audio", daemon=True))
+        self._users = len(self._threads) - 1       # every thread but the writer, which never touches the library
+        for t in self._threads:
+            t.start()
+        if self.feed is not None:
+            self.use_feed(self.feed)
+
+    def use_feed(self, feed):
+        """From now on `feed` (a SoundFeed) hands this receiver the sound. Only for a receiver made with `outside`.
+
+        A feed that has had sound before says what that sound was (its rate and channels, from its last good
+        block), and a receiver whose pipe is not decided yet takes that as its own: the stream then has a sound
+        track from the start, with silence written as time passes, also when the sound source is quiet at this
+        moment (a player that sends no sound between two clips, under a picture sender that changes size at
+        every clip). Without this, each such picture would begin as bare frames and be opened a second time
+        when the sound came. If the sound then comes in another form, it is "changed", as ever."""
+        if self.sound and self.outside:
+            self.feed = feed
+            known = feed.known()
+            with self._cond:
+                if known and self.audio is None and self.container is None:
+                    self.audio, self._taken_on_trust = dict(known), True
+                    self._audio_seen.set()
+            feed.attach(self)
+
+    def heard(self, wait_ms=400):
+        """Whether this source sends sound: asked when it sent no picture in time, so that the page can say "it has
+        sound and no picture" in place of "it sent no picture". True when a block of sound was seen. Where no
+        thread of this receiver takes sound (sound is off, or it comes from the box's sound source), the
+        connection is asked once, here, for one block: only its figures are looked at (check_audio), not a byte
+        of it is read, and it is given back. The library allows this beside the picture's thread."""
+        if not self.outside and self.audio is not None:
+            return True                            # this receiver's own sound thread saw a block
+        # With the box's sound source, `audio` says what THAT sender sends (or sent last), not this one: only this
+        # connection's own answer counts, or the picture sender of a rig with a sound source would be called
+        # "sound only" whenever its first picture was late.
+        if not getattr(self.lib, "has_audio", False) or (self.sound and not self.outside):
+            return False                           # no calls for sound; or the sound's own thread would have seen it
+        with self._handle_lock:
+            if self._handle is None:
+                return False
+            try:
+                a = self.lib.recv_audio(self._handle, wait_ms)
+                if a is None or a is AUDIO_LOST:
+                    return False
+                try:
+                    check_audio(a)
+                    return True
+                except NdiError:
+                    return False
+                finally:
+                    self.lib.recv_free_audio(self._handle, a)
+            except Exception:
+                return False
+
+    def freeze(self):
+        """Let go of the source's connection and keep the pipe: the writer goes on holding it (and, with sound, goes
+        on writing the last picture again and silence), so the player keeps the last picture on the screen until the
+        stream is closed. For the switch to another source: the old picture stands while the new one connects, and
+        goes when the player is told to let go (Service.open, then Service.handover). Returns False, and does nothing,
+        for a receiver that is over or takes its sound from the box's sound source (that feed hands blocks to the
+        receiver; such a receiver is simply closed by the caller, as it always was)."""
+        with self._cond:
+            if self._stop.is_set() or self.outside or self.state != "playing":
+                return False                       # nothing of it is on the screen (or it is over): nothing to keep
+            self._frozen.set()
+            self._cond.notify_all()
+            threads = [t for t in self._threads if t.name in ("ndi-capture", "ndi-audio")]
+        # The connection is really given back before the caller goes on to connect to the next source (at most
+        # a quarter of a second for a call into the library that is waiting for a picture): one connection at a time.
+        for t in threads:
+            t.join(timeout=1.0)
+        return True
+
+    def hold(self):
+        """Before start: the writer does not open the pipe until go(). The pipe is the same pipe for every source,
+        so whoever reads it now may be the player still on the source before; the Service says when it has seen
+        the pipe without a reader (Service._clear_pipe), and only a reader that comes after that is this source's."""
+        self._go.clear()
+
+    def go(self):
+        self._go.set()
+
+    def decide(self):
+        """Called once after the first picture: wait a moment for sound, then fix what the pipe carries. Returns it."""
+        if (self.sound and self.format is not None and not self._stop.is_set()
+                and not (self.outside and (self.feed is None or self.feed.status()["restless"]))):
+            self._audio_seen.wait(self._audio_wait)
+        with self._cond:
+            if self.container is None:
+                self.container = "matroska" if self.audio is not None else "raw"
+            self._cond.notify_all()
+            return self.container
+
+    def _end(self, state, message):
+        with self._cond:
+            if self.state not in ENDED:
+                self.state, self.message = state, message
+            self._stop.set()
+            self._cond.notify_all()
+        self.first.set()
+        self._audio_seen.set()
+
+    def _wait_out(self, began):
+        """A call into the library came back with nothing. If it did so much sooner than it was asked to wait, the
+        rest of a short turn is waited here: a library that answers at once, again and again, must not be asked
+        flat out (a core beside the player's, all night)."""
+        left = MIN_TURN - (time.monotonic() - began)
+        if left > 0:
+            self._stop.wait(left)
+
+    def _capture(self):
+        spare, lost = None, False
+        try:
+            while not self._stop.is_set() and not self._frozen.is_set():
+                began = time.monotonic()
+                f = self.lib.recv_capture(self._handle, 250)
+                if f is not None and f.kind == "lost":
+                    # The library says the connection dropped, and says so again at once for as long as it is down:
+                    # wait as long as a capture would have, and write it down once, not at every turn.
+                    if not lost:
+                        lost = self._lost = True
+                        self.log("pvj-ndi: the connection to %s dropped; waiting for it" % self.source["name"])
+                    self._stop.wait(0.25)
+                    continue
+                if f is None:
+                    self._wait_out(began)
+                    continue
+                if lost:
+                    lost = self._lost = False
+                    self.log("pvj-ndi: %s is back" % self.source["name"])
+                try:
+                    fmt, stride = check_frame(f)
+                    if self.format is None:
+                        # one being filled, one waiting, one being written, one kept to be written once more
+                        self._free = [bytearray(2 * fmt[0] * fmt[1]) for _ in range(4)]
+                        spare = self._free.pop()
+                        self.format = fmt
+                    elif fmt != self.format:
+                        return self._end("changed", "the source changed to %d x %d at %s frames a second" % fmt)
+                    copy_frame(f, fmt, stride, spare)
+                except NdiError as e:
+                    return self._end("refused", str(e))
+                finally:
+                    self.lib.recv_free(self._handle, f)
+                with self._cond:
+                    counting = self.state == "playing"     # frames from before the screen took the pipe are not counted
+                    self.counts["received"] += counting
+                    self._last = self._at = self._clock()
+                    if self._pending is not None:          # the screen has not taken the last one: the newest wins
+                        self.counts["dropped"] += counting
+                        spare, self._pending = self._pending, spare
+                    else:
+                        self._pending, spare = spare, self._free.pop()
+                    if self.state == "connecting":
+                        self.state = "ready"
+                    self._cond.notify_all()
+                self.first.set()
+        except Exception as e:                             # a fault here must end as a state, never as a silent thread
+            self._end("stopped", "the NDI input stopped: %s" % str(e)[-160:])
+        finally:
+            self._leave()
+
+    def _capture_audio(self):
+        """The sound's thread. A block that cannot be read is counted and left out; it never ends the picture."""
+        try:
+            while not self._stop.is_set() and not self._frozen.is_set():
+                began = time.monotonic()
+                a = self.lib.recv_audio(self._handle, 250)
+                if a is AUDIO_LOST:
+                    self._stop.wait(0.25)          # the library says "down" again at once for as long as it is: see _capture
+                    continue
+                if a is None:
+                    self._wait_out(began)
+                    continue
+                try:
+                    on = self.take_audio(a)
+                finally:
+                    self.lib.recv_free_audio(self._handle, a)
+                if not on:
+                    return                         # the stream ended here: the sound started late, or changed
+        except Exception as e:
+            self._end("stopped", "the NDI input stopped: %s" % str(e)[-160:])
+        finally:
+            self._leave()
+
+    def would_end(self, form):
+        """Whether a block of sound in this form would end this receiver's stream as "changed": the pipe's form is
+        fixed, and it carries no sound or sound in another form. Asked by the box's sound source before it hands
+        the block over (SoundPace), with nothing of the block read."""
+        with self._cond:
+            if self._stop.is_set() or self.container is None:
+                return False
+            return self.audio is None or (form["rate"], form["channels"]) != (self.audio["rate"], self.audio["channels"])
+
+    def take_audio(self, a):
+        """One block of sound as the library handed it up, from this receiver's own connection or from the box's
+        sound source (SoundFeed, on its thread). The caller gives the block back to the library afterwards, never
+        before: it is read here. Returns False when the block ended the stream (sound that starts late or changes
+        is a new stream) or the receiver is over, and nothing more is wanted.
+
+        Whether the block is wanted is decided first, and only a wanted block is converted, with no lock held.
+        A block that cannot be read is counted and left out; it never ends the picture."""
+        if self._stop.is_set():
+            return False
+        try:
+            checked = check_audio(a)
+            where = self._meet(checked)
+            if where:
+                data, peak, silenced = audio_block(a, checked)
+        except NdiError as e:
+            with self._cond:
+                self.audio_counts["refused"] += 1
+                self._audio_problem = str(e)
+            return True
+        if where is None:
+            return False
+        if where:
+            self._place(checked, where, data, peak, silenced)
+        return True
+
+    def _meet(self, checked):
+        """A checked block of sound, before anything of it is read. None: it ended the stream (sound that starts
+        late or changes is a new stream). False: it is not kept. Else (the clock, where the block began by the
+        clock), for _place."""
+        rate, channels, planes, n = checked[0], checked[1], checked[2], checked[3]
+        with self._cond:
+            if self.audio is None:
+                if self.container is not None:     # the pipe already carries bare frames: start again, with sound
+                    self._end("changed", "the sound source started to send sound" if self.outside else "the source started to send sound")
+                    if self._on_late_sound is not None and not self.outside:
+                        try:
+                            self._on_late_sound()      # the source has sound: it is not to be waited for as one without
+                        except Exception:
+                            pass
+                    return None
+                self.audio = {"rate": rate, "channels": channels, "played": planes}
+                self._audio_seen.set()
+            elif (rate, channels) != (self.audio["rate"], self.audio["channels"]):
+                if self._taken_on_trust and self.container is None:
+                    # The form was only what the sound source had last, and nothing is decided or written yet:
+                    # this block says what it is now. (Once the pipe's form is fixed, a change is a new stream.)
+                    self.audio = {"rate": rate, "channels": channels, "played": planes}
+                else:
+                    self._end("changed", "the source's sound changed to %d channels at %d samples a second" % (channels, rate))
+                    return None
+            self._audio_problem = ""
+            if self.state != "playing" or self._t0 is None or self.container != "matroska":
+                return False                       # sound from before the screen took the pipe is not kept
+            now, length = self._clock(), n / float(rate)
+            self.audio_counts["received"] += 1
+            self._block = length
+            # A block is sent when its last sample exists, so it belongs one block's length before it came.
+            here = max(0.0, now - self._t0 - length)
+            if self._apts is not None and self._apts - here - length >= AUDIO_SYNC:
+                self.audio_counts["dropped"] += 1  # all of it is from before what was already written: left out, unread
+                return False
+            return now, here
+
+    def _place(self, checked, where, data, peak, silenced):
+        """Give a converted block its place in time and queue it. The place is by count (one block after the other,
+        so the times in the pipe never step back and never leave a hole by themselves), and the count is held to
+        the clock: see AUDIO_SYNC."""
+        rate, planes, n = checked[0], checked[2], checked[3]
+        now, here = where
+        with self._cond:
+            self.audio_counts["silenced"] += silenced
+            self._peaks.append((now, peak))
+            while self._peaks and now - self._peaks[0][0] > 1.0:
+                self._peaks.popleft()
+            if self._apts is None:
+                # The stream's first block of sound began before the stream did (a block comes when its last
+                # sample exists). Its time cannot be below 0, so the part of it from before the stream is cut off:
+                # written whole at 0 it was up to a block's length early against the picture (a quarter of a
+                # second with the longest blocks), until the count was put right a block later.
+                early = self._t0 + n / float(rate) - now
+                if here == 0.0 and early > 0:
+                    k = min(n, int(round(early * rate)))
+                    if k >= n:                     # all of it is from before the stream: the next begins at 0
+                        self.audio_counts["dropped"] += 1
+                        self._apts = 0.0
+                        return
+                    data, n = data[4 * planes * k:], n - k
+                self._apts = here
+                if here > 0:
+                    # And a first block that begins AFTER the stream did is led up to by silence from the stream's
+                    # beginning (a second of it at most, as after any gap): the sound track then begins where the
+                    # picture's does. A player given a picture at 0 and its first sound at 0.2 begins both at once
+                    # and is 0.2 s out of step, which mpv takes two seconds to put right (measured, NDI.md).
+                    self._silence(min(here, AUDIO_QUEUE_SECONDS), here)
+            lead = self._apts - here
+            if lead < -AUDIO_WINDOW:
+                # A gap: the sound stopped and is back. Up to a second of silence leads up to it (more is a jump in
+                # the times, which is what it was).
+                self._silence(min(-lead, AUDIO_QUEUE_SECONDS), here)
+                self.audio_counts["filled"] += 1
+            elif lead > AUDIO_SYNC:
+                # The count is ahead of the clock (after a hiccup: sound that came late on top of the silence written
+                # for it; or a sender whose clock runs fast). Exactly that much is cut from the front of the block.
+                k = min(n, int(round(lead * rate)))
+                self.audio_counts["adjusted"] += 1
+                self._leads.clear()
+                if k >= n:
+                    self.audio_counts["dropped"] += 1
+                    return
+                data, n = data[4 * planes * k:], n - k
+            else:
+                self._leads.append((now, lead))
+                while now - self._leads[0][0] > AUDIO_SYNC_SECONDS + 0.5:
+                    self._leads.popleft()
+                behind = -max(x for _, x in self._leads)
+                if now - self._leads[0][0] >= AUDIO_SYNC_SECONDS and behind > AUDIO_SYNC:
+                    self._silence(behind, self._apts + behind)
+                    self.audio_counts["adjusted"] += 1
+            length = n / float(rate)
+            self._queue.append((self._apts, data, length, True))
+            self._apts += length
+            self._queued += length
+            # the player is not taking it: the oldest goes
+            while self._queue and (self._queued > AUDIO_QUEUE_SECONDS or len(self._queue) > AUDIO_QUEUE_BLOCKS):
+                gone = self._queue.popleft()
+                self._queued -= gone[2]
+                self.audio_counts["dropped"] += gone[3]
+            self._cond.notify_all()
+
+    def _silence(self, seconds, until):
+        """Queue silence that ends at `until`, and count on from there. Called with the lock held."""
+        rate, planes = self.audio["rate"], self.audio["played"]
+        n = int(round(seconds * rate))
+        self._leads.clear()
+        if n > 0:
+            self._queue.append((until - n / float(rate), bytes(4 * n * planes), n / float(rate), False))
+            self._queued += n / float(rate)
+        self._apts = until
+
+    def _fill_due(self, upto):
+        """Whether _fill would write silence now. Called with the lock held."""
+        return self.audio is not None and upto - (self._apts or 0.0) > max(AUDIO_WINDOW, 2 * self._block + 0.1)
+
+    def _fill(self, upto):
+        """The writer's question, asked with the lock held and after the queue was taken: has the sound left a
+        stretch open before the picture at `upto`? Then (start, samples) of silence for it, and the count moved past
+        it HERE, before a byte of it is written, so that whatever is queued from now on comes after it. A player
+        that waits for sound it will not get would hold the picture back with it.
+
+        How long "open" is depends on the sender: sound in the pipe trails the picture by a block's length as a
+        matter of course, so silence is written only after two blocks' lengths (and never sooner than AUDIO_WINDOW),
+        and only up to a block's length before the picture, where the next real block will begin."""
+        if self.audio is None:
+            return None
+        rate = self.audio["rate"]
+        trail = self._block + 0.1
+        base = self._apts or 0.0
+        if upto - base <= max(AUDIO_WINDOW, trail + self._block):
+            return None
+        start = max(base, upto - AUDIO_QUEUE_SECONDS)
+        n = int((upto - trail - start) * rate)
+        if n <= 0:
+            return None
+        self._apts = start + n / float(rate)
+        self._leads.clear()
+        self.audio_counts["filled"] += 1
+        return start, n
+
+    def _open_pipe(self):
+        """The pipe, opened for writing once the player reads it; None when stopped or nobody came."""
+        deadline = None
+        while not self._stop.is_set():
+            if self.format is None:
+                self.first.wait(0.25)
+                continue
+            if self.container is None or not self._go.is_set():
+                self._stop.wait(0.02)              # not first.wait, which is over by now and would not wait at all
+                continue
+            deadline = deadline or self._clock() + self._pipe_wait
+            try:
+                fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+            except OSError as e:
+                if e.errno != errno.ENXIO or self._clock() > deadline:
+                    self._end("stopped", "the player did not open the input")
+                    return None
+                self._stop.wait(0.05)
+                continue
+            if not pipe_to_write(os.fstat(fd)):
+                os.close(fd)
+                self._end("stopped", "the input pipe was replaced; not writing to it")
+                return None
+            try:
+                # Fewer wake-ups for a 4 MB frame. An account without privileges gets at most
+                # /proc/sys/fs/pipe-max-size (1 MiB unless the box raises it); asked for from large to small.
+                for size in (8, 4, 1):
+                    try:
+                        fcntl.fcntl(fd, getattr(fcntl, "F_SETPIPE_SZ", 1031), size * 1024 * 1024)
+                        break
+                    except OSError:
+                        continue
+            except Exception:
+                pass
+            return fd
+        return None
+
+    def _write(self, fd, buf):
+        """All of one frame, or False when stopped or the reader has gone. The pipe stays non-blocking so a stop is
+        seen within a quarter of a second even while the player is not reading."""
+        view, done = memoryview(buf), 0
+        while done < len(view):
+            if self._stop.is_set():
+                return False
+            try:
+                _, ready, _ = select.select([], [fd], [], 0.25)
+                if ready:
+                    done += os.write(fd, view[done:])
+            except BlockingIOError:
+                continue
+            except OSError:
+                self._end("stopped", PLAYER_LEFT)
+                return False
+        return True
+
+    def _read_out(self, fd):
+        """Wait until the player has taken everything that was written (the pipe holds nothing unread), or False
+        when stopped. "Written" is not "read": a pipe holds up to a megabyte on a box, more than a whole picture
+        of a small source, so the first picture of such a source was "through" while the player had not read a
+        byte of it, and the stream's clock began seconds before the player did (CI's runners, 2026-10-12: a first
+        sound at 3.5 s; a 1080p picture is four pipes long and never showed it). Where the system does not say
+        how much is unread (macOS answers 0 for the writing end) this does not wait, as before."""
+        unread = array.array("i", [0])
+        while not self._stop.is_set():
+            try:
+                fcntl.ioctl(fd, termios.FIONREAD, unread)
+            except OSError:
+                return True
+            if unread[0] <= 0:
+                return True
+            self._stop.wait(0.005)
+        return False
+
+    def _write_frame(self, fd, buf, seconds):
+        """One whole picture. In the container its few bytes of heading go first and the frame follows from the
+        buffer it is in: a frame is never copied to be joined to its heading."""
+        if self.container == "matroska":
+            return self._write(fd, mkv_block_head(1, seconds, len(buf))) and self._write(fd, buf)
+        return self._write(fd, buf)
+
+    def _write_sound(self, fd, blocks, fill):
+        """The queued blocks of sound, then the silence that _fill reserved (its place in time is after every one
+        of them, and before anything queued since). Returns False when the pipe has gone."""
+        for seconds, data, _length, real in blocks:
+            if not self._write(fd, mkv_block_head(2, seconds, len(data)) + data):
+                return False
+            with self._cond:
+                self.audio_counts["written"] += real       # silence put in by _place is not a block of the sender's
+        if fill is not None:
+            size = 4 * fill[1] * self.audio["played"]
+            if not self._write(fd, mkv_block_head(2, fill[0], size) + bytes(size)):
+                return False
+        return True
+
+    def _writer(self):
+        fd = None
+        try:
+            fd = self._open_pipe()
+            if fd is None:
+                return
+            mkv = self.container == "matroska"
+            if mkv and not self._write(fd, mkv_header(self.format[0], self.format[1], self.format[2],
+                                                      (self.audio["rate"], self.audio["played"]))):
+                return
+            shown_at = -1.0
+            kept, kept_at = None, 0.0              # with sound: the picture written last, until another follows it
+            if mkv:
+                # The stream's time 0 is the moment its first picture has gone THROUGH the pipe, not the moment the
+                # pipe was opened. A player may open the pipe and read nothing for seconds (it is still setting up
+                # its screen or its sound device; the pipe holds a quarter of one 1080p picture). Counting from the
+                # opening, the first picture had the time 0 and everything after it the seconds the player took:
+                # a stream that begins with a hole between its first picture and its first sound, which a player
+                # that lines sound up with the picture waits out, late by that much for as long as the source is
+                # shown. Sound from before this moment is not kept (as sound from before the pipe never was).
+                with self._cond:
+                    while self._pending is None and not self._stop.is_set():
+                        self._cond.wait(0.25)
+                    buf, self._pending = self._pending, None
+                if buf is None:
+                    return
+                ok = self._write_frame(fd, buf, 0.0) and self._read_out(fd)
+                with self._cond:
+                    if ok:
+                        self.counts["shown"] += 1
+                        # again at once (see below, where every other picture is kept)
+                        kept, kept_at, shown_at = buf, self._clock() - STILL_AGAIN_SECONDS, 0.0
+                    else:
+                        self._free.append(buf)
+                if not ok:
+                    return
+            with self._cond:
+                self._t0 = self._clock()
+                if self.state == "ready":
+                    self.state = "playing"
+            while not self._stop.is_set():
+                blocks, buf, at, fill, again, quiet = (), None, 0.0, None, False, False
+                with self._cond:
+                    while self._pending is None and not self._queue and not self._stop.is_set():
+                        if kept is not None and self._clock() - kept_at >= STILL_AGAIN_SECONDS:
+                            again = True
+                            break
+                        if mkv and self._fill_due(self._clock() - self._t0):
+                            # Neither a picture nor sound came, and the sound track has fallen behind the clock:
+                            # silence is written for it NOW, not when something next comes. The sound's times in
+                            # the stream then never jump. A stream whose sound went on 6 s after it had stopped
+                            # was given one second of silence and a jump of five: mpv takes a jump of 5 s or more
+                            # in the sound's times for a new beginning and starts both tracks again, and under a
+                            # picture that stands it waits for a picture that never comes ("Reset playback due to
+                            # audio timestamp reset"; core-idle, no sound: CI's mpv 0.40, 2026-10-12).
+                            quiet = True
+                            break
+                        self._cond.wait(0.05 if kept is not None else 0.25)
+                    if self._queue:
+                        blocks, self._queued = tuple(self._queue), 0.0
+                        self._queue.clear()
+                    if self._pending is not None:
+                        buf, self._pending, at = self._pending, None, self._at
+                    if mkv and (buf is not None or blocks or quiet):
+                        fill = self._fill(self._clock() - self._t0)
+                if buf is None and not blocks and not again and not quiet:
+                    break
+                if mkv and not self._write_sound(fd, blocks, fill):
+                    if buf is not None:
+                        with self._cond:
+                            self._free.append(buf)
+                    break
+                if buf is None:
+                    if again or (kept is not None and self._clock() - kept_at >= STILL_AGAIN_SECONDS):
+                        # The picture that stands, once more, at the time it is now (STILL_AGAIN_SECONDS says why).
+                        # Not counted as shown: it is the same picture.
+                        shown_at = max(shown_at + 0.001, self._clock() - self._t0)
+                        ok = self._write_frame(fd, kept, shown_at)
+                        with self._cond:
+                            self._free.append(kept)
+                        kept = None
+                        if not ok:
+                            break
+                    continue
+                # Where it arrived; never before the one before it, and never before the stream's own beginning (the
+                # first picture always arrived before the pipe was taken: its time is 0, and the next differs).
+                first = shown_at < 0
+                shown_at = max(shown_at + 0.001, at - self._t0, 0.0)
+                ok = self._write_frame(fd, buf, shown_at)
+                with self._cond:
+                    if kept is not None:
+                        self._free.append(kept)
+                    kept = None
+                    if ok and mkv:
+                        # The stream's first picture is written again at once, not after half a second: until
+                        # its track has a second block mpv 0.40 is still opening the stream, and what it is given
+                        # meanwhile it plays that much late for as long as the source is shown.
+                        kept, kept_at = buf, self._clock() - (STILL_AGAIN_SECONDS if first else 0.0)
+                    else:
+                        self._free.append(buf)
+                    if ok:
+                        self.counts["shown"] += 1
+        except Exception as e:
+            self._end("stopped", "the NDI input stopped: %s" % str(e)[-160:])
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    def status(self):
+        with self._cond:
+            state = self.state
+            if state == "playing" and self._lost:
+                state = "waiting"
+            elif state == "playing" and self._clock() - self._last > QUIET_SECONDS:
+                state = "still"
+            out = {"id": self.source["id"], "name": self.source["name"], "state": state, "message": self.message,
+                   "counts": dict(self.counts), "container": self.container or "raw"}
+            if self.format:
+                out.update(width=self.format[0], height=self.format[1], fps=self.format[2])
+            if self.sound:
+                now = self._clock()
+                peaks = [pk for when, pk in self._peaks if now - when <= 1.0]
+                top = max(peaks) if peaks else 0.0
+                level = round(20 * math.log10(top), 1) if top > 0 else None
+                out["audio"] = {"rate": self.audio["rate"] if self.audio else 0, "channels": self.audio["channels"] if self.audio else 0,
+                                "played": self.audio["played"] if self.audio else 0,
+                                "arriving": bool(peaks), "level_db": level,
+                                "silent": level is None or level < AUDIO_SILENT_DB,
+                                "problem": self._audio_problem, "counts": dict(self.audio_counts)}
+        with self._handle_lock:
+            if self._handle is not None and state in ("playing", "still", "waiting"):
+                try:
+                    out["counts"]["dropped_by_runtime"] = self.lib.recv_dropped(self._handle)
+                except Exception:
+                    pass
+        return out
+
+    def close(self):
+        """Stop the threads and give the connection back. Never called from those threads, and never with a lock
+        they need (LESSONS: do not join a thread while holding its lock). The pipe is nobody's to remove
+        (root's on a box, M3): this object closes its end of it, and the Service wakes a reader left waiting.
+
+        The connection is never given back while a thread may still be inside the library with it (the picture's or
+        the sound's). The last of them out gives it back itself; if one will not come out, the connection is left
+        open (and said in the log) rather than freed under the library's feet. The helper is restarted by systemd
+        if that ever matters."""
+        self._end("stopped", "")
+        if self.feed is not None:
+            self.feed.detach(self)                 # the box's sound source goes on, for the picture that comes next
+        for t in self._threads:
+            t.join(timeout=self._join_wait)
+        # A thread that did not come out stays on the list, and the connection is given back by the count of threads
+        # that may be inside the library, never by who was joined this time: a second close (the Service closes an
+        # ended receiver at every status, and again at the next open) must not free what the first one left open.
+        self._threads = [t for t in self._threads if t.is_alive()]
+        with self._cond:
+            inside = self._users > 0
+        if not inside:
+            self._release()
+        elif not self._said_stuck:
+            self._said_stuck = True
+            self.log("pvj-ndi: the NDI runtime did not come back from %s; its connection is left open, not freed under it" % self.source["name"])
+
+
+# ---- the box's one sound source ----------------------------------------------------------------------------------
+class SoundPace:
+    """How often the box's sound source may end a picture's stream (see FEED_QUIET_SECONDS). One for a source, kept
+    by the Service across every connection to it. Asked by the feed's thread before it hands a block that would
+    end the stream of the picture on the screen; `clock` values are the feed's.
+
+    One rule for every ending: after one, the next is let through no sooner than a pause later, and the pause
+    doubles with every ending, 3 s, 6, 12, 24, 48, then 60 for good. So a sender that takes every ending it can
+    gets them at 0, 3, 9, 21, 45 and 93 seconds and then one a minute; resting between them buys it nothing,
+    since the pause goes back to 3 seconds only after FEED_RESET_SECONDS without any ending at all. (The first
+    form of this let a sender have three endings, rest half a minute and begin again: three in 39 seconds, for
+    ever.) A sender whose sound honestly changes now and then waits the pause, at most a minute, and has its sound
+    back."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.quiet_until, self.last_end, self.gap, self.wait = 0.0, None, 0.0, FEED_QUIET_SECONDS
+
+    def quiet(self, now):
+        with self.lock:
+            return now < self.quiet_until
+
+    def may_end(self, now):
+        """This block would end the picture's stream: may it? (True, 0): yes, and it is counted. (False, seconds):
+        no, the source's sound is held back from now for that long (said once, when the hold begins). (False, 0):
+        no, it is being held back."""
+        with self.lock:
+            if now < self.quiet_until:
+                return False, 0
+            if self.last_end is not None and now - self.last_end < FEED_RESET_SECONDS and now < self.last_end + self.gap:
+                self.quiet_until = self.last_end + self.gap
+                return False, self.quiet_until - now
+            if self.last_end is None or now - self.last_end >= FEED_RESET_SECONDS:
+                self.wait = FEED_QUIET_SECONDS             # no ending for a long time: the pauses begin at the shortest again
+            self.last_end, self.gap = now, self.wait
+            self.wait = min(self.wait * 2, FEED_QUIET_MAX)
+            return True, 0
+
+
+class SoundFeed:
+    """One connection to one sender, asked for its sound alone, and one thread that takes that sound from the
+    library and hands each block to whichever Receiver is attached now (Receiver.take_audio). It belongs to the
+    Service and not to a Receiver: a picture that changes size is closed and opened again, and the sound's
+    connection stays as it is meanwhile.
+
+    The sender is one more peer that may be hostile: every block goes through check_audio in take_audio before a
+    byte of it is read, exactly as a picture's own sound does, and with no receiver attached a block is given
+    back unread. What the player is given is the same stream the same writer makes.
+
+    A feed that no picture has used for FEED_IDLE_SECONDS ends by itself and gives its connection back: nothing
+    stays connected to the network under a screen that shows no NDI picture."""
+
+    def __init__(self, lib, source, log=print, clock=time.monotonic, join_wait=3.0, idle=FEED_IDLE_SECONDS, pace=None):
+        self.lib, self.source, self.log, self._clock, self._join_wait, self._idle = lib, source, log, clock, join_wait, idle
+        self.pace = pace if pace is not None else SoundPace()      # the Service's, for this source; one of its own without
+        self._lock = threading.Lock()              # who is attached, and the connection's handle
+        self._receiver = None
+        self._handle, self._thread = None, None
+        self._stop = threading.Event()
+        self.lost = False                          # the library says the connection is down
+        self._last = None                          # the clock at the last block of sound
+        self.format = None                         # {"rate", "channels", "played"} of the last block that passed check_audio
+        self._said_stuck = False
+
+    def start(self):
+        self._handle = self.lib.recv_open(self.source["raw"], audio_only=True)
+        thread = threading.Thread(target=self._run, name="ndi-sound-feed", daemon=True)
+        try:
+            thread.start()
+        except RuntimeError as e:
+            # The system gave no thread (the unit's bound on tasks): nothing is inside the library with the
+            # connection, so it is given back here, and close() has no thread to wait for.
+            self._stop.set()
+            self._release()
+            raise NdiError("the sound source's thread could not be started (%s)" % str(e)[-120:])
+        self._thread = thread
+
+    def known(self):
+        """The form of this source's sound as a new picture may take it on trust, or None: not while its sound is
+        held back for changing form again and again (what it is then is not known)."""
+        return None if self.pace.quiet(self._clock()) else self.format
+
+    def attach(self, receiver):
+        with self._lock:
+            self._receiver = receiver
+
+    def detach(self, receiver):
+        with self._lock:
+            if self._receiver is receiver:
+                self._receiver = None
+
+    def alive(self):
+        t = self._thread
+        return t is not None and t.is_alive() and not self._stop.is_set()
+
+    def status(self):
+        with self._lock:
+            last = self._last
+        now = self._clock()
+        return {"id": self.source["id"], "lost": self.lost, "arriving": last is not None and now - last <= 1.0, "restless": self.pace.quiet(now)}
+
+    def _release(self):
+        with self._lock:
+            handle, self._handle = self._handle, None
+        if handle is not None:
+            try:
+                self.lib.recv_close(handle)
+            except Exception as e:
+                self.log("pvj-ndi: closing the sound source: %s" % e)
+
+    def _run(self):
+        name, alone = self.source["name"], None
+        try:
+            while not self._stop.is_set():
+                began = time.monotonic()
+                with self._lock:
+                    r = self._receiver
+                if r is None or r._stop.is_set():
+                    now = self._clock()
+                    alone = now if alone is None else alone
+                    if now - alone > self._idle:
+                        self.log("pvj-ndi: no picture has used the sound of %s for %d seconds; its connection is given back" % (name, self._idle))
+                        return
+                else:
+                    alone = None
+                a = self.lib.recv_audio(self._handle, 250)
+                if a is AUDIO_LOST:
+                    if not self.lost:
+                        self.lost = True
+                        self.log("pvj-ndi: the connection to the sound source %s dropped; waiting for it" % name)
+                    self._stop.wait(0.25)          # the library says "down" again at once for as long as it is
+                    continue
+                if a is None:
+                    left = MIN_TURN - (time.monotonic() - began)
+                    if left > 0:
+                        self._stop.wait(left)
+                    continue
+                if self.lost:
+                    self.lost = False
+                    self.log("pvj-ndi: the sound source %s is back" % name)
+                try:
+                    # The receiver is taken under the lock and called without it: a picture that is being closed
+                    # never waits for a block of sound, and a block handed to a receiver that has just ended is
+                    # left out by the receiver itself.
+                    now = self._clock()
+                    with self._lock:
+                        r, self._last = self._receiver, now
+                    try:                           # numbers only; nothing of the block is read for it
+                        said = check_audio(a)
+                        form = {"rate": said[0], "channels": said[1], "played": said[2]}
+                        self.format = form
+                        # Would this block END the stream of the picture on the screen (another form than the stream
+                        # has, or sound under a picture opened without it)? Then the source's pace is asked first.
+                        if r is not None and r.would_end(form):
+                            go, held_for = self.pace.may_end(now)
+                            if not go:
+                                r = None
+                                if held_for:
+                                    self.log("pvj-ndi: the sound source %s keeps changing its sound; pictures play without it for %d seconds"
+                                             % (self.source["name"], int(math.ceil(held_for))))
+                    except NdiError:
+                        pass
+                    if self.pace.quiet(now):
+                        r = None                   # held back: the block is given back unread, and the picture plays on without it
+                    if r is not None:
+                        try:
+                            on = r.take_audio(a)
+                        except Exception as e:     # a fault there ends that picture's stream, never this connection
+                            on = False
+                            r._end("stopped", "the NDI input stopped: %s" % str(e)[-160:])
+                        if not on:
+                            self.detach(r)         # it ended (as "changed", or closed): the next receiver attaches itself
+                finally:
+                    self.lib.recv_free_audio(self._handle, a)
+        except Exception as e:
+            self.log("pvj-ndi: the sound source %s stopped: %s" % (name, str(e)[-160:]))
+        finally:
+            self._stop.set()
+            self._release()
+
+    def close(self):
+        """Stop the thread and give the connection back. As with a Receiver, the connection is never given back
+        while the thread may still be inside the library with it: the thread gives it back itself on its way out,
+        and if it will not come out the connection is left open and that is said in the log."""
+        self._stop.set()
+        t = self._thread
+        if t is not None and t is not threading.current_thread():
+            t.join(timeout=self._join_wait)
+            if t.is_alive():
+                if not self._said_stuck:
+                    self._said_stuck = True
+                    self.log("pvj-ndi: the NDI runtime did not come back from the sound source %s; its connection is left open, not freed under it"
+                             % self.source["name"])
+                return
+        self._release()
+
+
+# ---- the daemon ------------------------------------------------------------------------------------------------------
+class Service:
+    """What pvj-ndi answers, one JSON line each: status, configure, open, close. It does nothing on the network until
+    the panel has said the module is on (configure), and it knows no settings but what the panel sends."""
+
+    def __init__(self, rundir, lib_path, loader=load_library, problem=runtime_problem, log=print, clock=time.monotonic,
+                 first_frame=FIRST_FRAME_SECONDS, receiver=Receiver, fifo=None, pipe_clear=PIPE_CLEAR_SECONDS, feed=SoundFeed):
+        self.rundir, self.lib_path, self._loader, self._problem, self.log, self._clock = rundir, lib_path, loader, problem, log, clock
+        self._first_frame, self._receiver, self._pipe_clear, self._feed_class = first_frame, receiver, pipe_clear, feed
+        self.on_unload = None                      # called when the module is switched off with the library loaded (main: exit)
+        # On a box the pipe is root's, made once in root's folder (paths.NDI_PIPE_DIR, mctl/ndisetup.py): this helper
+        # opens and writes it and can neither unlink nor replace it. Where nobody made one (tests, a desk) it makes
+        # one in its own folder; and it never unlinks a pipe, its own or not (_remove_pipe).
+        self.fifo = fifo or os.path.join(rundir, paths.NDI_FIFO)
+        self.lock = threading.RLock()              # configure, open and close, one at a time
+        self._recv_lock = threading.Lock()         # self.receiver: set and read under it, never held while anything waits
+        self._find_lock = threading.Lock()         # the finder: asked by status, replaced by configure
+        self.lib, self.lib_error, self.version = None, "", ""
+        self.configured, self.on, self.addresses = False, False, []
+        self.groups = []                           # the NDI groups the finder looks in (none: the library's default)
+        self.allowed = []                          # ids of the sources pads hold: never cut from the list while present
+        # The discovery servers the library was started with: read from its configuration file (which the panel's
+        # side writes; this helper can only read it) at the moment the library is loaded, the only moment the
+        # library reads it. None until then.
+        self.config_dir = os.environ.get("NDI_CONFIG_DIR") or ""
+        self.discovery = None
+        self.transport = None                      # how pictures travel in that same file, read at that same moment (config_transport)
+        self.sound = True                          # play a source's sound with its picture (the panel says; D62)
+        # The box's one sound source (D87): the id of an allowed source whose sound is played under every NDI
+        # picture, or "" for each picture's own sound. Its connection (a SoundFeed) is this Service's, not a
+        # Receiver's, so it stays while a picture is closed and opened again. Set and closed under self.lock.
+        self.sound_from, self.sound_delay_ms = "", 0       # the delay is the panel's (the player's audio-delay): kept and said back, used by nothing here
+        self.feed, self._feed_at = None, 0.0
+        self.sound_row = None                      # {"id", "name", "from"} of the sound source as the owner allowed it (M1)
+        self._pace = ("", None)                    # (the sound source's id, its SoundPace): kept across connections to it
+        # Sources that were asked for a picture, sent none in time and had sound: {id: the clock then}. The page
+        # labels them "sound only" and offers them as the sound source. The label is ADVICE, never a lock (the
+        # review of #132, H1): nothing refuses a press for it, since a picture sender that was only slow once
+        # (starting up, a weak link, a sleeping display) looks the same. It goes when the source sends a picture,
+        # when the sender leaves the list, and by itself after SOUND_ONLY_SECONDS.
+        self.sound_only = {}
+        # Sources that sent no sound within the whole AUDIO_WAIT on their last open: {id: the clock then}. Their next
+        # open waits only AUDIO_WAIT_SILENT for sound (see there). Advice, as sound_only is; it is never a lock.
+        self.no_sound = {}
+        # The switch from one source to another is two calls (open, then handover), so that the picture before stays
+        # on the screen while the new source connects: `held` is the old receiver with its connection given back and
+        # its pipe kept (Receiver.freeze), with the clock it was frozen; `waiting` is the new receiver that has its
+        # first picture and is held until the panel has had the player let go (handover), with the clock it began to wait.
+        self.held, self.waiting = None, None
+        self._finder, self._sources, self._sources_at, self._cut = None, [], None, False
+        self.receiver = None
+
+    def _load(self):
+        if self.lib is None:
+            try:
+                loaded_with = config_discovery(self.config_dir) if self.config_dir else []
+                travels = config_transport(self.config_dir) if self.config_dir else None
+                self.lib = self._loader(self.lib_path)
+                self.discovery, self.transport = loaded_with, travels
+                self.version, self.lib_error = self.lib.version(), ""
+                self.log("pvj-ndi: loaded the NDI runtime (%s)" % self.version)
+            except NdiError as e:
+                self.lib_error = str(e)
+        return self.lib
+
+    def _close_finder(self):
+        with self._find_lock:
+            finder, self._finder, self._sources, self._sources_at, self._cut = self._finder, None, [], None, False
+            if finder is not None:
+                self.lib.find_close(finder)
+
+    def configure(self, message):
+        # Sound is asked for by the panel in so many words, every time; a message without the word means no.
+        on, addresses, sound = message.get("on"), message.get("addresses"), message.get("sound", False)
+        if not isinstance(on, bool) or not isinstance(sound, bool):
+            return {"ok": False, "error": "on and sound must be true or false"}
+        sound_from, delay = message.get("sound_from", ""), message.get("sound_delay_ms", 0)
+        if not isinstance(sound_from, str) or (sound_from and not _ID.fullmatch(sound_from)):
+            return {"ok": False, "error": "the sound source is an id, or nothing"}
+        if isinstance(delay, bool) or not isinstance(delay, int) or not SOUND_DELAY_MS[0] <= delay <= SOUND_DELAY_MS[1]:
+            return {"ok": False, "error": "the sound delay is a whole number of milliseconds from %d to %d" % SOUND_DELAY_MS}
+        try:
+            checked = validate_saved({"addresses": addresses, "groups": message.get("groups", []), "discovery": message.get("discovery", [])})
+            addresses, groups, discovery = checked["addresses"], checked["groups"], checked["discovery"]
+            # The ids of the sources pads hold, so that they are kept in the list while they are there. Ids only
+            # (the one exception is the sound source's own row, below):
+            # the helper learns no name and no address it did not find by itself.
+            allowed = message.get("allowed", [])
+            if (not isinstance(allowed, list) or len(allowed) > MAX_ALLOWED or len(set(map(str, allowed))) != len(allowed)
+                    or not all(isinstance(a, str) and _ID.fullmatch(a) for a in allowed)):
+                raise NdiError("bad list of allowed NDI sources")
+            if sound_from and sound_from not in allowed:       # as a pad's source: an id the owner's list holds, never any other
+                raise NdiError("the sound source is not one of the allowed NDI sources")
+            # And, for this one source, the name and the machine the owner allowed (the review of #132, M1). An id
+            # is 48 bits of a hash: the sender that answers to it is played only if it has that name at that
+            # machine, as a pad's source is (Api._ndi_pad_check). This is the one name the helper is ever told;
+            # it still opens nothing but a row its own finder gave it.
+            sound_row = None
+            if sound_from:
+                sound_row = clean_allowed(message.get("sound_row"))
+                if sound_row["id"] != sound_from:
+                    raise NdiError("the sound source's name and address are not that id's")
+        except NdiError as e:
+            return {"ok": False, "error": str(e)}
+        with self.lock:
+            if not on:
+                self.waiting = None
+                self._close_receiver()
+                self._drop_held()
+                self._close_feed()
+                self._close_finder()
+                # "Off" means no NDI code running. A library cannot be unloaded from a process, so the process ends
+                # (after this answer has gone) and systemd starts a new one, which loads nothing until told "on".
+                if self.lib is not None and self.on_unload is not None:
+                    self.log("pvj-ndi: the NDI input was switched off; starting again without the NDI runtime")
+                    self.on_unload()
+            elif (self.lib is not None and self.on_unload is not None and self.config_dir
+                    and ((discovery != self.discovery and config_discovery(self.config_dir) == discovery)
+                         or config_transport(self.config_dir) not in (None, self.transport))):
+                # The discovery servers changed and the file says what the panel asks, or the file says another way
+                # for pictures to travel than the library was started with. The library reads its file once, when
+                # it starts: so this process ends (after this answer) and a new one loads the library with the new
+                # file. A source on the screen ends with it (black), and the panel's watch shows it again once the
+                # new process has found the sender (Input.tick; a test holds that it does).
+                # The second is the road of an update: the updater starts this helper again BEFORE the panel (update.py,
+                # _systemd_restart), and the old panel, still up for a moment, can load the library with the old
+                # file. The new panel then writes the new file, and only this look makes the library read it (D110).
+                # Where the file does not say what is asked (a box whose NDI set-up was not refreshed), nothing is
+                # restarted and the status says which servers are really in force.
+                self._close_receiver()
+                self._close_feed()
+                self._close_finder()
+                self.log("pvj-ndi: the library's configuration file changed; starting again to read it")
+                self.on_unload()
+                return dict(self.status(), restarting=True)
+            elif self._load() is not None and (self._finder is None or addresses != self.addresses or groups != self.groups):
+                # A change of the addresses or the groups starts the looking again, and nothing else: a source that
+                # is being shown is connected to by its address and plays on, whatever group it is in now.
+                self._close_finder()
+                try:
+                    with self._find_lock:
+                        self._finder = self.lib.find_open(",".join(addresses), ",".join(groups))
+                except NdiError as e:
+                    self.lib_error = str(e)
+            if on and (sound != self.sound or sound_from != self.sound_from):
+                # a source that is open goes on in its old form until it is opened again
+                with self._recv_lock:
+                    r = self.receiver
+                if r is not None and r.state not in ENDED:
+                    r._end("changed", "sound was switched %s" % ("on" if sound else "off") if sound != self.sound
+                           else "where the sound comes from was changed")
+            if allowed != self.allowed:
+                with self._find_lock:
+                    self.allowed, self._sources_at = list(allowed), None      # the list is read again with them in front
+            self.configured, self.on, self.addresses, self.sound, self.groups = True, on, addresses, sound, groups
+            self.sound_from, self.sound_delay_ms, self.sound_row = sound_from, delay, sound_row
+            if self.feed is not None and not (on and sound and self.feed.source["id"] == sound_from):
+                self._close_feed()                 # no longer the sound that is wanted
+        return self.status()
+
+    def _sound_only_now(self, sources):
+        """The ids that are labelled "sound only" now: the label of a sender that left the list, and one older than
+        SOUND_ONLY_SECONDS, is dropped here."""
+        now, here = self._clock(), set(s["id"] for s in sources)
+        with self._find_lock:
+            for sid in [k for k, since in self.sound_only.items() if k not in here or now - since > SOUND_ONLY_SECONDS]:
+                del self.sound_only[sid]
+            return set(self.sound_only)
+
+    def _outside(self, sid):
+        """Whether the picture `sid` is to be played with another sender's sound: sound is on, one sound source is
+        chosen for the box, and it is not this picture itself (which then plays its own sound on its own
+        connection: never two connections to one sender)."""
+        return bool(self.sound and self.sound_from and self.sound_from != sid and getattr(self.lib, "has_audio", False))
+
+    def _close_feed(self):
+        feed, self.feed = self.feed, None
+        if feed is not None:
+            feed.close()
+
+    def _want_feed(self):
+        """The connection to the box's sound source, opened if it is not open and the source is on the network now;
+        None when it is away, or when two senders answer to its id (the box does not pick one). Called with
+        self.lock held."""
+        feed = self.feed
+        row, state = self._sound_row_now(self.sources())
+        if feed is not None and (not feed.alive() or feed.source["id"] != self.sound_from or state in ("twins", "other")):
+            self._close_feed()
+            feed = None
+        if feed is not None:
+            return feed
+        if row is None:
+            return None
+        if self._pace[0] != self.sound_from:       # the pace is the SOURCE's: it outlives every connection to it
+            self._pace = (self.sound_from, SoundPace())
+        feed = self._feed_class(self.lib, row, log=self.log, clock=self._clock, pace=self._pace[1])
+        try:
+            feed.start()
+        except Exception as e:
+            self.log("pvj-ndi: the sound source %s could not be opened: %s" % (row["name"], str(e)[-160:]))
+            feed.close()
+            return None
+        self.log("pvj-ndi: sound comes from %s" % row["name"])
+        self.feed = feed
+        return feed
+
+    def _sound_row_now(self, sources):
+        """(the live row that IS the box's sound source, or None; "ok", "away", "twins" or "other"). It is that
+        source only when one sender answers to the id and it has the name, at the machine, that the owner allowed:
+        "twins" when two do (the box does not pick one), "other" when the id is answered by another name or from
+        another machine (never played: as a pad refuses it), "away" when nothing answers."""
+        rows = [s for s in sources if s["id"] == self.sound_from]
+        if not rows:
+            return None, "away"
+        if len(rows) > 1 or rows[0].get("twins"):
+            return None, "twins"
+        want = self.sound_row
+        if want is None or rows[0]["name"] != want["name"] or host_of(rows[0]["from"]) != host_of(want["from"]):
+            return None, "other"
+        return rows[0], "ok"
+
+    def _sound_source(self, sources, r):       # (the page's side re-checks every word of it: Input._sound_source)
+        """What the page is told of the box's sound source: {"id", "state", "arriving"}, or None when none is
+        chosen or sound is off. "playing": connected, under a picture (or it is the picture, with its own sound);
+        "ready": on the network, connected to when a picture plays; "away": not on the network now, or its
+        connection is down; "twins": two senders answer to the id, and neither is played."""
+        if not (self.sound and self.sound_from):
+            return None
+        row, fits = self._sound_row_now(sources)
+        feed, out = self.feed, {"id": self.sound_from, "state": "away", "arriving": False}
+        if fits == "twins":
+            out["state"] = "twins"
+        elif fits == "other":
+            pass                                   # another sender answers to the id: as good as away, and never played
+        elif feed is not None and feed.alive() and feed.source["id"] == self.sound_from:
+            said = feed.status()
+            out.update(state="away" if said["lost"] else "restless" if said.get("restless") else "playing", arriving=said["arriving"])
+        elif r is not None and r.state not in ENDED and r.source["id"] == self.sound_from:
+            out["state"] = "playing"
+        elif row:
+            out["state"] = "ready"
+        return out
+
+    def sources(self):
+        with self._find_lock:
+            if self._finder is None:
+                return []
+            now = self._clock()
+            if self._sources_at is None or now - self._sources_at >= SOURCES_CACHE:
+                with self._recv_lock:
+                    r = self.receiver
+                try:
+                    self._sources, self._cut = clean_sources(self.lib.find_sources(self._finder), self.addresses,
+                                                             set(self.allowed) | ({r.source["id"]} if r is not None else set()))
+                except Exception as e:
+                    self.log("pvj-ndi: reading the sources: %s" % e)
+                    self._sources, self._cut = [], False
+                self._sources_at = now
+            return list(self._sources)
+
+    def runtime(self):
+        if self.lib is not None:
+            return {"present": True, "loaded": True, "version": self.version, "problem": self.lib_error}
+        problem = self._problem(self.lib_path)
+        return {"present": problem is None, "loaded": False, "version": "", "problem": problem or self.lib_error}
+
+    def _remove_pipe(self):
+        """The pipe is let go of, never unlinked: on a box it is root's (the review of 2026-10-11, M3), and a pipe
+        holds nothing once every writer has closed. A reader still waiting on it (an old player blocked in opening
+        it, a player waiting for a first byte) is woken: a writer that opens and closes gives it the end."""
+        try:
+            self._pipe_free()
+        except OSError:
+            pass                                   # no pipe to wake anybody on
+
+    def _pipe_free(self):
+        """Whether nobody reads the pipe at this moment: opening it for writing without waiting is refused (ENXIO)
+        exactly then. Where somebody does read it, the open and close are the wake of _remove_pipe: that reader is
+        given the end. Nothing is ever written here. Only ENXIO means "no reader": anything else that goes wrong
+        (the pipe is not there, or may not be opened) is raised, and Service.open refuses with it."""
+        try:
+            fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        except OSError as e:
+            if e.errno != errno.ENXIO:
+                raise                              # no pipe, not ours to open: not "no reader"; the caller says it
+            return True
+        os.close(fd)
+        return False
+
+    def _clear_pipe(self, r):
+        """Before a new source's writer may open the pipe: wait until the pipe has been seen without a reader.
+
+        The pipe is one pipe for every source (root's, made once, never unlinked: M3). The player that read the
+        source before may still hold it for a moment after that source's writer closed: it has frames left to
+        show, or has not yet acted on the end. A writer that opened then would put this source's first frames into
+        the old stream (which has the old size), lose that reader a moment later ("the player stopped reading")
+        and leave the player's new load waiting for a writer that has gone. When every source had a pipe of its
+        own this could not happen; now the order has to be made: no reader, then the answer to the panel, then the
+        panel's load, then the writer. The panel loads the pipe only after this open has answered and plays one
+        source at a time, so a reader that comes after the pipe was seen empty is the one for this source. And a
+        pipe nobody holds holds no bytes: nothing of the source before is left in it for the new reader.
+
+        Each look is also a wake (the old reader is given the end again). Bounded: if the pipe is not seen
+        without a reader in time, the open is refused with the reason (PIPE_HELD) and nothing is written.
+        Returns whether the pipe was seen without a reader."""
+        end = time.monotonic() + self._pipe_clear
+        while not self._pipe_free():
+            if time.monotonic() >= end or r._stop.wait(0.02):
+                return False
+        return True
+
+    def _give_up_stale_handover(self):
+        """A new source that the panel never handed over (it fell, or lost the press), and the old picture kept
+        for it, are not kept for ever: past HANDOVER_SECONDS both are closed, and the player is given the end of
+        its stream. Never waits: an open or a hand-over in progress holds the lock and is left alone."""
+        waiting, held = self.waiting, self.held
+        now = self._clock()
+        stale = ((waiting is not None and now - waiting[1] > HANDOVER_SECONDS)
+                 or (waiting is None and held is not None and now - held[1] > self.open_budget() + HANDOVER_SECONDS))
+        if stale and self.lock.acquire(blocking=False):
+            try:
+                if self.waiting is waiting and self.held is held:   # a hand-over that came meanwhile is not undone
+                    self.log("pvj-ndi: the panel did not hand the new source over in time; it is closed, and what was kept of the picture before")
+                    self.waiting = None
+                    self._close_receiver()
+                    self._drop_held()
+            finally:
+                self.lock.release()
+
+    def status(self):
+        self._give_up_stale_handover()
+        with self._recv_lock:
+            r = self.receiver
+        if r is not None and r.state in ENDED and self.lock.acquire(blocking=False):
+            try:                                   # an ended receiver lets go of its source; what it said stays
+                with self._recv_lock:
+                    mine = self.receiver is r
+                if mine:
+                    r.close()
+                    self._remove_pipe()
+            finally:
+                self.lock.release()
+        sources = self.sources()
+        feed = self.feed
+        if feed is not None and self._sound_row_now(sources)[1] in ("twins", "other") and self.lock.acquire(blocking=False):
+            # Looked at again at every status, not only when the feed is opened (the review of #132, M2): a second
+            # sender that starts to answer to the sound source's id while it plays, or another name behind the id,
+            # ends the sound's connection. Silence is written and the picture goes on; the page's "it plays
+            # neither" is then true. When one sender is left, the look below opens it again.
+            try:
+                if self.feed is feed:
+                    self.log("pvj-ndi: the sound source is not one sender of the name the owner allowed any more; its connection is given back")
+                    self._close_feed()
+            finally:
+                self.lock.release()
+            feed = self.feed
+        if (r is not None and r.state not in ENDED and getattr(r, "outside", False) and self._outside(r.source["id"])
+                and (feed is None or not feed.alive()) and self._clock() >= self._feed_at and self.lock.acquire(blocking=False)):
+            # The sound source was away when this picture was opened (it plays as bare frames), or its connection
+            # ended. Looked for again here, not more often than FEED_RETRY_SECONDS and never waiting for anybody;
+            # its first block of sound then ends the picture as "changed" and the panel opens it again, with sound.
+            try:
+                self._feed_at = self._clock() + FEED_RETRY_SECONDS
+                with self._recv_lock:
+                    mine = self.receiver is r
+                feed = self._want_feed() if mine else None
+                if feed is not None:
+                    r.use_feed(feed)
+            finally:
+                self.lock.release()
+        labelled = self._sound_only_now(sources)
+        return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "sound": self.sound,
+                "sound_from": self.sound_from, "sound_delay_ms": self.sound_delay_ms, "sound_source": self._sound_source(sources, r),
+                "groups": list(self.groups), "discovery": list(self.discovery or []), "allowed": list(self.allowed),
+                "runtime": self.runtime(),
+                "sources": [dict({"id": s["id"], "name": s["name"], "from": s["from"]}, **dict({"twins": True} if s.get("twins") else {},
+                                                                                              **({"sound_only": True} if s["id"] in labelled else {})))
+                            for s in sources], "cut": self._cut,
+                "playing": r.status() if r is not None else None}
+
+    def _close_receiver(self):
+        with self._recv_lock:
+            r, self.receiver = self.receiver, None
+        if r is not None:
+            r.close()
+        self._remove_pipe()
+
+    def _drop_held(self):
+        """End the stream that was kept for the picture on the screen (open): its writer closes the pipe."""
+        held, self.held = self.held, None
+        if held is not None:
+            held[0].close()
+
+    def open(self, message):
+        """Connect to a source and wait for its first picture, with the pipe still the one the picture before is
+        on: that picture stays on the screen meanwhile. The answer says the source is ready; the panel then has the
+        player let go of the pipe and asks for `handover`, which lets the writer through. When the open fails, what
+        was kept of the picture before is closed here (the pipe ends: the player gets the end of its stream), and
+        the panel has the player let go, as it always did after a failed press."""
+        with self.lock:
+            reply = self._open(message)
+            if reply.get("ok") is True and message.get("split") is not True:
+                # A caller that does not split the switch (a desk, a script) gets it all in one: the hand-over follows
+                # at once, as the open always did. The panel splits (Input.open).
+                handed = self.handover({"id": message.get("id")})
+                reply = reply if handed.get("ok") is True else handed
+            if reply.get("ok") is not True:
+                self.waiting = None
+                self._drop_held()
+                self._remove_pipe()
+            return reply
+
+    def _open(self, message):
+        sid = message.get("id")
+        if not isinstance(sid, str) or not _ID.fullmatch(sid):
+            return {"ok": False, "error": "no such source"}
+        with self.lock:
+            if not self.on or self.lib is None or self._finder is None:
+                return {"ok": False, "error": self.lib_error or "the NDI input is switched off"}
+            with self._find_lock:
+                self._sources_at = None            # ask the library again: the list on the page may be a second old
+            match = [s for s in self.sources() if s["id"] == sid]
+            if not match:
+                return {"ok": False, "error": "that source is not on the network now"}
+            self._drop_held()
+            self.waiting = None
+            with self._recv_lock:
+                old = self.receiver
+            if old is not None and old.freeze():
+                # What is on the screen stays there while the new source connects: the old connection is given back
+                # and its writer keeps the pipe. The panel has the player let go after this open (handover closes it).
+                with self._recv_lock:
+                    self.receiver = None
+                self.held = (old, self._clock())
+            else:
+                self._close_receiver()
+            try:
+                st = os.lstat(self.fifo)
+            except FileNotFoundError:
+                st = None
+            except OSError as e:
+                return {"ok": False, "error": "the NDI helper could not look at its pipe (%s)" % (e.strerror or "error")}
+            if st is not None and not stat.S_ISFIFO(st.st_mode):
+                # Not a pipe, and not this helper's to remove (root's folder on a box): said, not "fixed"
+                self.log("pvj-ndi: %s is not a pipe; not touching it" % self.fifo)
+                return {"ok": False, "error": "what is in the NDI pipe's place is not a pipe; look at %s" % self.fifo}
+            if st is None:
+                try:
+                    os.mkfifo(self.fifo, 0o640)    # a desk or the tests: the helper writes; the player reads through the helper's group
+                except OSError as e:
+                    self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
+                    return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
+            # A sender may change size while it is being opened (a screen capture whose window moves to the next
+            # clip: on the Pi, 2026-10-12, a first press was answered "the source changed to 1540 x 866 at 30.0
+            # frames a second"). That is not a failure of the press: the source is opened again, here, with the
+            # new size, at most twice more and only inside the open's own budget (open_budget), which ends
+            # before the panel stops waiting for this answer. A source that keeps changing gets the plain reason.
+            began, reply = time.monotonic(), None
+            after = AUDIO_WAIT + self._pipe_clear          # what a try still does once its first picture is there
+            for attempt in range(OPEN_TRIES):
+                left = self.open_budget() - (time.monotonic() - began) - after
+                reply = self._open_once(sid, match[0], self._first_frame if attempt == 0 else min(self._first_frame, left))
+                again = reply.pop("again", False)
+                if not again or attempt == OPEN_TRIES - 1 or self.open_budget() - (time.monotonic() - began) - after < TRY_LEAST:
+                    break
+                self.log("pvj-ndi: %s changed while it was being opened (%s); opening it again" % (match[0]["name"], reply.get("error")))
+                with self._find_lock:
+                    self._sources_at = None
+                match = [s for s in self.sources() if s["id"] == sid] or match
+            return reply
+
+    def open_budget(self):
+        """The longest an open may take, every try in it: the first try alone fits whatever happens (a first
+        picture, the wait for sound, the look at the pipe), and later tries only inside this."""
+        return self._first_frame + OPEN_BUDGET_EXTRA
+
+    def _open_once(self, sid, row, wait):
+        """One try of open, with self.lock held: connect, wait `wait` seconds for a first picture, fix the pipe's
+        form, see the pipe without a reader, let the writer go. The answer has "again": True when the source
+        ended as "changed" before it was handed over (the caller opens it again)."""
+        # With one sound source for the box, its connection is seen to first (so it has the time the picture
+        # takes to connect) and is kept from the picture before; without, or when this picture IS that
+        # source, there is none.
+        more = {}
+        if self._outside(sid):
+            more = {"feed": self._want_feed(), "outside": True}
+        else:
+            self._close_feed()
+            if self.sound:
+                more = {"on_late_sound": lambda: self.no_sound.pop(sid, None)}
+                said = self.no_sound.get(sid)
+                if said is not None and self._clock() - said < NO_SOUND_SECONDS:
+                    more["audio_wait"] = AUDIO_WAIT_SILENT       # it had no sound last time: a short look, not the whole wait
+        with self._recv_lock:
+            left, self.receiver = self.receiver, None
+        if left is not None:
+            left.close()                       # a try that was dropped without being closed must not go on taking frames
+        r = self._receiver(self.lib, row, self.fifo, log=self.log, sound=self.sound, **more)
+        r.hold()                            # the writer waits until the pipe was seen without a reader (below)
+        try:
+            r.start()
+        except NdiError as e:
+            r.close()
+            self._remove_pipe()
+            return {"ok": False, "error": str(e)}
+        with self._recv_lock:
+            self.receiver = r
+        r.first.wait(wait)
+        if r.format:
+            r.decide()                         # a moment for sound to show itself; then the pipe's form is fixed
+            if r.sound and not r.outside and r.state not in ENDED:
+                # What the wait found, for the next open of this source: no sound in the time (the source is then
+                # opened as bare frames), or sound (it is waited for in full again, which costs nothing: the wait
+                # ends at the first block).
+                with self._find_lock:
+                    if r.audio is None:
+                        if len(self.no_sound) < MAX_SOURCES or sid in self.no_sound:
+                            self.no_sound[sid] = self._clock()
+                    else:
+                        self.no_sound.pop(sid, None)
+        st = r.status()
+        if st["state"] in ENDED or not r.format:
+            only = not r.format and st["state"] not in ENDED and r.heard()
+            self._close_receiver()
+            if only:
+                with self._find_lock:
+                    if len(self.sound_only) < MAX_SOURCES:
+                        self.sound_only[sid] = self._clock()
+                return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page" % row["name"]}
+            # Neither a picture nor sound in time. Said so that a sound sender that is quiet does not look
+            # broken: such a sender sends nothing at all while nothing plays into it (seen on the owner's).
+            if st["state"] == "changed":
+                return {"ok": False, "error": st["message"], "again": True}
+            return {"ok": False, "error": st["message"] or ("%s sent no picture in %d seconds, and no sound either (a sender of sound alone sends nothing while nothing plays into it)"
+                                                            % (row["name"], self._first_frame))}
+        with self._find_lock:
+            self.sound_only.pop(sid, None)         # it has a picture after all
+        self.log("pvj-ndi: %s is %d x %d at %s" % ((row["name"],) + r.format))
+        self.waiting = (r, self._clock())          # the panel has the player let go, then asks for the hand-over
+        return {"ok": True, "playing": st}
+
+    def let_go(self):
+        """The player did not let go of the pipe when it was told to: close only what was kept of the picture before
+        (its writer closes the pipe, and the end of the stream is what ends a player stuck on it). The new source,
+        opened and waiting for the hand-over, is left as it is."""
+        with self.lock:
+            self._drop_held()
+            self._remove_pipe()
+        return {"ok": True}
+
+    def handover(self, message):
+        """The second half of an open: the panel has had the player let go of the pipe. The stream kept for the
+        picture before is closed, the pipe is seen without a reader, and the new source's writer is let through."""
+        sid = message.get("id")
+        with self.lock:
+            with self._recv_lock:
+                r = self.receiver
+            waiting, self.waiting = self.waiting, None
+            if r is None or waiting is None or waiting[0] is not r or not isinstance(sid, str) or r.source["id"] != sid:
+                self._drop_held()
+                return {"ok": False, "error": "that source was let go of before it could be shown"}
+            row, st = r.source, r.status()
+            self._drop_held()
+            return self._hand_over(r, row, st)
+
+    def _hand_over(self, r, row, st):
+        try:
+            clear = self._clear_pipe(r)
+        except OSError as e:
+            self._close_receiver()
+            return {"ok": False, "error": "the NDI pipe cannot be written to: %s" % (e.strerror or "an error")}
+        if not clear:
+            # Never a new writer while a reader of the source before may be there. The panel, which owns the
+            # player, has it let go before it asks (Player.release_pipe) and asks again (Input.tick).
+            over = r.status()
+            self._close_receiver()
+            if over["state"] in ENDED and over["message"]:      # it ended by itself while the pipe was looked at
+                return dict({"ok": False, "error": over["message"]}, **({"again": True} if over["state"] == "changed" else {}))
+            self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; %s is not written" % (self._pipe_clear, row["name"]))
+            return {"ok": False, "error": PIPE_HELD}
+        r.go()
+        return {"ok": True, "playing": st}
+
+    def close(self):
+        with self.lock:
+            self.waiting = None
+            self._close_receiver()
+            self._drop_held()
+            self._close_feed()
+        return {"ok": True}
+
+    def handle(self, message):
+        if not isinstance(message, dict):
+            return {"ok": False, "error": "bad request"}
+        cmd = message.get("cmd")
+        if cmd == "status":
+            return self.status()
+        if cmd == "configure":
+            return self.configure(message)
+        if cmd == "open":
+            return self.open(message)
+        if cmd == "handover":
+            return self.handover(message)
+        if cmd == "letgo":
+            return self.let_go()
+        if cmd == "close":
+            return self.close()
+        return {"ok": False, "error": "unknown command"}
+
+
+def main(argv=None):
+    import pwd
+    from .netd import NetServer
+    rundir = paths.ndi_dir()
+    os.makedirs(rundir, mode=0o750, exist_ok=True)
+    allowed = set()
+    try:
+        allowed.add(pwd.getpwnam("pvj-web").pw_uid)
+    except KeyError:
+        allowed.add(os.getuid())                   # on a desk: whoever runs it
+    service = Service(rundir, os.environ.get("PVJ_NDI_LIB") or os.path.join(LIB_DIR, LIB_NAME), log=lambda m: print(m, flush=True),
+                      fifo=paths.ndi_fifo())      # root's pipe in root's folder (mctl/ndisetup.py); never unlinked by this helper
+    service.on_unload = lambda: threading.Timer(0.5, os._exit, [0]).start()      # Restart=always brings up a clean one
+    server = NetServer(os.path.join(rundir, paths.NDI_SOCKET), service, lambda uid: uid in allowed)
+    print("pvj-ndi: ready (%s)" % (service.runtime()["problem"] or "the NDI runtime is in place"), flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        service.close()
+    return 0
+
+
+# ---- the panel's side --------------------------------------------------------------------------------------------------
+def json_depth(raw):
+    """How deep the brackets of a JSON text nest, not counting brackets inside its strings (a source may be named
+    "Cam [2]", and sixty-four of those are not a deep answer)."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for byte in raw:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5c:             # a backslash: the next byte is not the end of the string
+                escaped = True
+            elif byte == 0x22:
+                in_string = False
+        elif byte == 0x22:
+            in_string = True
+        elif byte in b"[{":
+            depth += 1
+            deepest = max(deepest, depth)
+        elif byte in b"]}":
+            depth = max(0, depth - 1)      # closing brackets that open nothing do not buy depth for later
+    return deepest
+
+
+def pipe_owner():
+    """Who owns the pipe on a box: root, which makes it once (the tmpfiles lines pvj-ndi-runtime writes). The helper
+    writes it by its group and is not its owner (Input.check_pipe)."""
+    return 0
+
+
+def pipe_to_write(st):
+    """Whether what the helper opened is the pipe it may write: a pipe, and root's (a box: root makes it once and the
+    helper writes it by its group) or the helper's own (a desk and the tests, where it makes one itself). Until
+    2026-10-12 only the helper's own passed, so on a box every source ended with "the input pipe was replaced" from
+    the day the pipe became root's (the review of 2026-10-11, M3). Nobody but root can make a pipe that is root's."""
+    return stat.S_ISFIFO(st.st_mode) and st.st_uid in (pipe_owner(), os.getuid())
+
+
+def helper_uid():
+    """The uid of the helper's account; our own where there is none (a desk). Since M3 (2026-10-11) the pipe is
+    root's and not this account's, and the panel expects root (pipe_owner); nothing in the program asks this now."""
+    import pwd
+    try:
+        return pwd.getpwnam("pvj-ndi").pw_uid
+    except KeyError:
+        return os.getuid()
+
+
+class Client:
+    """One request, one reply. A status question never holds the panel up: a short wait, and a reply kept a second."""
+
+    def __init__(self, path, timeout=2.0, clock=time.monotonic):
+        self.path, self.timeout, self._clock = path, timeout, clock
+        self._status = None
+
+    MAX_NESTING = 64                       # a real answer nests five deep
+
+    def _exchange(self, message, timeout):
+        from .netd import exchange
+        return exchange(self.path, message, timeout)
+
+    def request(self, message, timeout=None):
+        """The helper's answer as a dict, or NdiError: nothing else ever comes out of here, whatever the helper
+        sends (it is the part that could be taken over). A reply of brackets nested thousands deep makes the JSON
+        reader of Python 3.9 to 3.12 raise RecursionError, which is not a ValueError; such a reply is refused
+        before it is read, and the error is caught as well."""
+        import json
+        try:
+            raw = self._exchange(message, timeout or self.timeout)
+        except (OSError, ValueError):
+            raise NdiError("the NDI helper (pvj-ndi) is not running")
+        try:
+            if json_depth(raw) > self.MAX_NESTING:
+                raise ValueError("nested too deep")
+            reply = json.loads(raw)
+        except (ValueError, RecursionError, MemoryError):
+            raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
+        if not isinstance(reply, dict):
+            raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
+        self._status = None
+        return reply
+
+    def status(self):
+        now = self._clock()
+        if self._status and now - self._status[0] < 1.0:
+            return self._status[1]
+        try:
+            reply = self.request({"cmd": "status"})
+        except NdiError:
+            reply = {"ok": False}
+        self._status = (now, reply)
+        return reply
+
+
+def _text(v, limit=200):
+    """Words from the helper for the page: nothing that could change how the line reads (control characters, the
+    marks that turn text round, line breaks), and then cut to a length. Scrubbed first, cut after."""
+    if not isinstance(v, str):
+        return ""
+    return "".join(ch for ch in v[:limit * 8] if unicodedata.category(ch) not in _BAD_CATEGORIES)[:limit]
+
+
+def _playing(p):
+    """The helper's account of what plays, re-checked: the helper is the part that could be taken over."""
+    if not isinstance(p, dict) or not isinstance(p.get("id"), str) or not _ID.fullmatch(p["id"]) or p.get("state") not in STATES:
+        return None
+    out = {"id": p["id"], "name": clean_name(p.get("name")) or "NDI source", "state": p["state"], "message": _text(p.get("message"))}
+    for key, low, high in (("width", MIN_SIDE, MAX_WIDTH), ("height", MIN_SIDE, MAX_HEIGHT)):
+        v = p.get(key)
+        if isinstance(v, int) and not isinstance(v, bool) and low <= v <= high:
+            out[key] = v
+    fps = p.get("fps")
+    if isinstance(fps, (int, float)) and not isinstance(fps, bool) and 1 <= fps <= 120:
+        out["fps"] = round(float(fps), 3)
+    counts = p.get("counts") if isinstance(p.get("counts"), dict) else {}
+    out["counts"] = {k: counts[k] for k in ("received", "shown", "dropped", "dropped_by_runtime")
+                     if isinstance(counts.get(k), int) and not isinstance(counts.get(k), bool) and 0 <= counts[k] < 2 ** 53}
+    out["container"] = p["container"] if p.get("container") in CONTAINERS else "raw"
+    out["audio"] = _audio(p.get("audio"))
+    if out["container"] == "matroska" and (out["audio"] is None or not out["audio"]["rate"]):
+        out["container"] = "raw"           # a stream with sound must say what its sound is; otherwise it is read as bare frames
+    return out
+
+
+def _audio(a):
+    """The helper's account of a source's sound, re-checked field by field; None when it gave none (sound is off)."""
+    if not isinstance(a, dict):
+        return None
+
+    def whole(v, low, high):
+        return v if isinstance(v, int) and not isinstance(v, bool) and low <= v <= high else 0
+    rate = a.get("rate") if a.get("rate") in AUDIO_RATES else 0
+    level = a.get("level_db")
+    level = round(float(level), 1) if isinstance(level, (int, float)) and not isinstance(level, bool) and math.isfinite(level) and -200 <= level <= 0 else None
+    counts = a.get("counts") if isinstance(a.get("counts"), dict) else {}
+    return {"rate": rate, "channels": whole(a.get("channels"), 1, MAX_AUDIO_CHANNELS) if rate else 0,
+            "played": whole(a.get("played"), 1, AUDIO_PLANES) if rate else 0,
+            "arriving": a.get("arriving") is True, "level_db": level, "silent": a.get("silent") is not False,
+            "problem": _text(a.get("problem")),
+            "counts": {k: counts[k] for k in ("received", "written", "dropped", "refused", "silenced", "filled", "adjusted")
+                       if isinstance(counts.get(k), int) and not isinstance(counts.get(k), bool) and 0 <= counts[k] < 2 ** 53}}
+
+
+class Input:
+    """The panel's handle on the NDI helper: keeps it told of the switch and the saved addresses, opens a source for
+    the player, and notices when the helper says the picture changed size."""
+
+    PLAYED_SECONDS = 30.0                  # on the screen this long without a break: a source that plays; the pause is 3 s again
+    RETRY_SECONDS, RETRY_MAX = 3.0, 60.0   # between tries to show a source again: 3 s, then twice as long each time, to a minute
+
+    def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic, pipe_owner=os.getuid, setup=True, config_dir=None):
+        self.client, self.fifo, self._wanted, self.log, self._clock = client, fifo, wanted, log, clock
+        # The folder the library's configuration file is written to (root made it for the panel's account; the
+        # helper reads it and cannot write it), or None where there is none: a desk, the tests, a box whose NDI
+        # set-up is older than the discovery setting.
+        self.config_dir, self.config_problem = config_dir, ""
+        self.own_server = None             # a function giving this box's own discovery server as "address:port", or None
+        # False on a box where nobody ran the opt-in command (server.py): there is no helper and never was, so its
+        # socket is not even tried, and the page says how to set NDI up in place of "the helper is not running".
+        self.setup = setup
+        self._pipe_owner = pipe_owner      # the uid the helper's pipe must belong to (server.py: the pvj-ndi account)
+        self.current = None                # {"id", "name"} while the player reads the pipe
+        self.lock = locks.make("ndi", reentrant=True)      # open, load in the player and note, as one step (like the capture input); its place: mctl/locks.py
+        self._retry_at, self._retry_wait, self._retry_said = 0.0, self.RETRY_SECONDS, ""
+        self._on_screen_since = None       # the clock at the first look, since the last try, that found the source on the screen
+        self._stuck_once = False           # the source was shown again once because the player had not opened it
+        self.ended = None                  # {"name", "message"}: why the last source ended by itself, for the page
+        self._ticket = 0
+        # The ticket's own lock, a leaf: never held over a call. Whoever decides what the screen shows next does so
+        # under the player's lock (Api._as_newest, D71): the NDI play looks at its ticket and loads the pipe as one
+        # step under it, and everything else that loads or clears the player cancels under it too (Api._player_call).
+        # So the two can only happen one after the other, and the later one is the one that stays on the screen.
+        self.screen = locks.make("ndi.ticket")
+
+    def ticket(self):
+        """Taken before a source is opened (which can take seconds). `still(ticket)` afterwards says whether
+        nothing else was played or stopped meanwhile: cancel() makes every ticket taken before it worthless."""
+        with self.screen:
+            self._ticket += 1
+            return self._ticket
+
+    def still(self, ticket):
+        with self.screen:
+            return self._ticket == ticket
+
+    def cancel(self):
+        """Something else is about to be loaded or the screen cleared: a source still connecting is not wanted."""
+        self.ticket()
+
+    def sound_wanted(self):
+        """Whether the owner wants a source's sound played (read by the last call of what is wanted; else the default)."""
+        v = getattr(self._wanted, "sound", SOUND_DEFAULT)
+        return v if isinstance(v, bool) else SOUND_DEFAULT
+
+    def sound_from(self):
+        """The id of the box's one sound source as it is saved (an allowed source), or "" for each picture's own."""
+        v = getattr(self._wanted, "sound_from", "")
+        return v if isinstance(v, str) and _ID.fullmatch(v) else ""
+
+    def sound_delay(self):
+        """The saved delay of the sound against the picture in milliseconds (the player's audio-delay for the NDI load)."""
+        v = getattr(self._wanted, "sound_delay_ms", 0)
+        return v if isinstance(v, int) and not isinstance(v, bool) and SOUND_DELAY_MS[0] <= v <= SOUND_DELAY_MS[1] else 0
+
+    def sync(self):
+        """Tell the helper whether the module is on, which addresses to ask, and whether sound is wanted. Returns its
+        status, or {"ok": False}."""
+        if not self.setup:
+            return {"ok": False}
+        try:
+            on, addresses = self._wanted()
+            sound_row = [r for r in self._allowed() if r.get("id") == self.sound_from()] if self.sound_from() else []
+            reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses, "sound": self.sound_wanted(),
+                                         "sound_from": self.sound_from() if sound_row else "", "sound_delay_ms": self.sound_delay(),
+                                         "sound_row": sound_row[0] if sound_row else None,
+                                         "groups": self._groups(), "discovery": self.write_config(),
+                                         "allowed": [r["id"] for r in self._allowed()]}, timeout=10)
+        except Exception as e:             # never out of here: this runs while the panel starts
+            if not isinstance(e, NdiError):
+                self.log("pvj-web: the NDI helper was not told the settings: %s" % type(e).__name__)
+            return {"ok": False}
+        if reply.get("ok") is not True:    # it answered, and refused: that is not "not running", and the page says which
+            return {"ok": False, "answered": True, "error": _text(reply.get("error")) or "the NDI helper refused the settings"}
+        return reply
+
+    @staticmethod
+    def _rows(st):
+        """The sources in a helper's status, every field checked again: [{"id", "name", "from"}], with "twins": True
+        on a row the helper marked as two senders under one id, or whose id the helper listed twice."""
+        sources, at = [], {}
+        for s in (st.get("sources") if isinstance(st.get("sources"), list) else [])[:MAX_SOURCES]:
+            if isinstance(s, dict) and isinstance(s.get("id"), str) and _ID.fullmatch(s["id"]):
+                name, where = clean_name(s.get("name")), s.get("from")
+                if name and isinstance(where, str) and _WHERE.fullmatch(where) and source_id(name, host_of(where)) == s["id"]:
+                    if s["id"] in at:
+                        at[s["id"]]["twins"] = True
+                        continue
+                    row = {"id": s["id"], "name": name, "from": where}
+                    if s.get("twins") is True:
+                        row["twins"] = True
+                    if s.get("sound_only") is True:    # it was asked for a picture and had only sound: the page's label
+                        row["sound_only"] = True
+                    at[s["id"]] = row
+                    sources.append(row)
+        return sources
+
+    def _groups(self):
+        """The NDI groups the owner wants looked in, as saved (none: the library's default group)."""
+        g = getattr(self._wanted, "groups", None)
+        return list(g) if isinstance(g, list) else []
+
+    def _discovery(self):
+        """The discovery servers to ask: the saved ones and, when the owner said so and the box runs one now, the
+        box's own (`own_server` is given by the panel: mctl/ndiscovery.py, D85). Each is checked again here."""
+        d = getattr(self._wanted, "discovery", None)
+        out = list(d) if isinstance(d, list) else []
+        if getattr(self._wanted, "own_discovery", False) is True and self.own_server is not None:
+            try:
+                own = self.own_server()
+                if own and clean_discovery(own) == own and own not in out and len(out) < MAX_DISCOVERY:
+                    out.append(own)
+            except Exception:
+                pass
+        return out
+
+    def write_config(self):
+        """Write the library's configuration file if it does not say what the owner wants; returns the discovery
+        servers wanted. Never raises: what went wrong is kept for the page (`config_problem`)."""
+        wanted = self._discovery()
+        if not self.config_dir:
+            self.config_problem = ("a discovery server needs this node's NDI set-up refreshed: update the node, or run "
+                                   "'sudo pvj-ndi-runtime refresh' at the node, then restart it") if wanted else ""
+            return wanted
+        path, text = os.path.join(self.config_dir, CONFIG_NAME), config_text(wanted)
+        try:
+            try:
+                with open(path) as f:
+                    if f.read(CONFIG_MAX + 1) == text:
+                        self.config_problem = ""
+                        return wanted
+            except (OSError, ValueError):
+                pass
+            fd, tmp = tempfile.mkstemp(dir=self.config_dir, prefix=".ndi-config.")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(text)
+                os.chmod(tmp, 0o644)               # the helper reads it as "other" inside a folder only it and the panel enter
+                os.replace(tmp, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            self.config_problem = ""
+        except OSError as e:
+            self.config_problem = ("the NDI discovery setting could not be written (%s); if the node was updated and not restarted since, restart it"
+                                   % (e.strerror or type(e).__name__))
+            self.log("pvj-web: %s" % self.config_problem)
+        return wanted
+
+    def _allowed(self):
+        """The allowed sources as they are saved, for the page: read through `allowed` of what is wanted, if it has one."""
+        try:
+            return list(getattr(self._wanted, "allowed", None) or [])
+        except Exception:
+            return []
+
+    def find(self):
+        """(the sources on the network now, why there are none to ask for in words or ""). One short question to the
+        helper and nothing else: no settings are sent (status() may, and that can take ten seconds), so a pad's
+        press is answered at once when its source is not there."""
+        if not self.setup:
+            return [], NOT_SET_UP
+        st = self.client.status()
+        if st.get("ok") is not True:
+            return [], "the NDI helper (pvj-ndi) is not running"
+        rt = st.get("runtime") if isinstance(st.get("runtime"), dict) else {}
+        if rt.get("loaded") is not True:
+            return [], _text(rt.get("problem")) or "the NDI runtime has not been loaded yet"
+        return self._rows(st), ""
+
+    def status(self):
+        """What the page shows. Every string and number from the helper is checked again here."""
+        on, addresses = self._wanted()
+        st = self.client.status() if self.setup else {"ok": False}
+        sound = self.sound_wanted()
+        if st.get("ok") and (st.get("configured") is not True or st.get("on") is not on or st.get("addresses") != list(addresses)
+                             or ("sound" in st and st.get("sound") is not sound) or st.get("groups", []) != self._groups()
+                             # a helper from before D87 says neither, and is not told again and again for it
+                             or ("sound_from" in st and st.get("sound_from") != self.sound_from())
+                             or ("sound_delay_ms" in st and st.get("sound_delay_ms") != self.sound_delay())
+                             or st.get("allowed", []) != [r["id"] for r in self._allowed()]):
+            st = self.sync()
+        helper = st.get("ok") is True or st.get("answered") is True
+        notice = [x for x in (getattr(self._wanted, "problem", ""), _text(st.get("error")) if st.get("answered") is True else "",
+                              self.config_problem) if x]
+        now = []
+        for d in (st.get("discovery") if isinstance(st.get("discovery"), list) else [])[:MAX_DISCOVERY]:
+            try:
+                if clean_discovery(d) == d and d not in now:
+                    now.append(d)
+            except NdiError:
+                pass
+        rt = st.get("runtime") if isinstance(st.get("runtime"), dict) else {}
+        sources = self._rows(st)
+        cur = self.current
+        playing = _playing(st.get("playing")) if cur else None
+        ended = dict(self.ended) if self.ended and not cur else None
+        if cur and (playing is None or (playing["id"] == cur["id"] and (playing["state"] in ("refused", "stopped")
+                                                                        or (playing["state"] == "changed" and self._retry_said)))):
+            # Wanted and not on the screen (the helper is away or started again, the sender is not found, the
+            # player lost the pipe): the watch is bringing it back, and the page says why it is not there. Never
+            # nothing playing and no reason.
+            why = self._retry_said or (playing or {}).get("message") or ("the NDI helper (pvj-ndi) is not running" if not helper
+                                                                         else "the NDI helper has no source open")
+            playing, ended = None, {"name": cur["name"], "message": "%s; trying again" % why}
+        return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice), "sound": sound, "headroom_db": AUDIO_HEADROOM_DB,
+                "sound_from": self.sound_from(), "sound_source": self._sound_source(st, sound),
+                "sound_delay_ms": self.sound_delay(), "sound_delay_range": list(SOUND_DELAY_MS),
+                "runtime": {"present": rt.get("present") is True, "loaded": rt.get("loaded") is True,
+                            "version": _text(rt.get("version"), 80), "problem": _text(rt.get("problem"))},
+                "install": {"command": SETUP_COMMAND, "folder": LIB_DIR,
+                            "get": "https://ndi.video/"},
+                "sources": sources, "cut": st.get("cut") is True, "max_sources": MAX_SOURCES,
+                "addresses": list(addresses), "max_addresses": MAX_ADDRESSES,
+                "allowed": self._allowed(), "max_allowed": MAX_ALLOWED,
+                "discovery": self._discovery(), "max_discovery": MAX_DISCOVERY, "discovery_now": now, "discovery_port": DISCOVERY_PORT,
+                "discovery_saved": list(getattr(self._wanted, "discovery", None) or []),      # without the box's own, which is not removed by hand
+                "own_discovery": getattr(self._wanted, "own_discovery", False) is True,
+                "groups": self._groups(), "max_groups": MAX_GROUPS,
+                # what the helper says it looks in now (checked again): the page shows it beside what was asked for
+                "groups_now": [g for g in (st.get("groups") if isinstance(st.get("groups"), list) else [])[:MAX_GROUPS]
+                               if isinstance(g, str) and _GROUP.fullmatch(g)],
+                "playing": playing, "ended": ended}
+
+    def _sound_source(self, st, sound):
+        """The box's one sound source for the page, or None when none is chosen: its name and address from the
+        owner's own allowed list (never from the helper), and of the helper's word only a state from the known
+        list and whether sound arrives, and only when it speaks of this id. "chosen" without "sound": the choice
+        is kept while sound is switched off."""
+        sid = self.sound_from()
+        row = [r for r in self._allowed() if r.get("id") == sid] if sid else []
+        if not row:
+            return None
+        said = st.get("sound_source") if isinstance(st.get("sound_source"), dict) else {}
+        mine = sound and said.get("id") == sid and said.get("state") in SOUND_STATES
+        # The name shown is the owner's own, so what answers to the id on the network must BE that name at that
+        # machine before anything is said to play (the review of #132, M1; as a pad's source is compared). Another
+        # sender behind the id is "not on the network now", whatever the helper says of it.
+        live = [r for r in self._rows(st) if r["id"] == sid]
+        if mine and said["state"] in ("playing", "ready", "restless") and not (
+                len(live) == 1 and not live[0].get("twins") and live[0]["name"] == row[0]["name"] and host_of(live[0]["from"]) == host_of(row[0]["from"])):
+            mine, said = True, {"state": "twins" if live and (len(live) > 1 or live[0].get("twins")) else "away"}
+        return {"id": sid, "name": row[0]["name"], "from": row[0]["from"], "state": said["state"] if mine else ("away" if sound else "off"),
+                "arriving": bool(mine and said.get("arriving") is True)}
+
+    def open(self, sid, split=False):
+        """Ask the helper for a source's first frame. Returns {"id", "name", "width", "height", "fps", "container",
+        "audio"} or NdiError. "container" says what the pipe will carry: "raw" frames, or "matroska" with sound."""
+        if not isinstance(sid, str) or not _ID.fullmatch(sid):
+            raise NdiError("no such source")
+        if not self.setup:
+            raise NdiError(NOT_SET_UP)
+        reply = self.client.request({"cmd": "open", "id": sid, "split": bool(split)}, timeout=FIRST_FRAME_SECONDS + OPEN_WAIT_EXTRA)
+        if reply.get("ok") is not True:
+            raise NdiError(_text(reply.get("error")) or "the source could not be opened")
+        p = _playing(reply.get("playing"))
+        if p is None or p["id"] != sid or not all(k in p for k in ("width", "height", "fps")):
+            raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
+        self._wanted()                     # what the owner wants, as it is saved now
+        if p["container"] == "matroska" and not self.sound_wanted():
+            # The helper says what the pipe carries, but it does not decide how the player reads it: with sound
+            # switched off the pipe is read as bare frames whatever the helper answers.
+            p["container"] = "raw"
+        self.ended = None
+        return p
+
+    def let_go(self):
+        """Have the helper close what it kept of the picture before, and nothing else (the player did not let go)."""
+        try:
+            self.client.request({"cmd": "letgo"}, timeout=PIPE_CLEAR_SECONDS + OPEN_WAIT_EXTRA)
+        except NdiError:
+            pass
+
+    def handover(self, p):
+        """The second half of `open`, after the player was told to let go of the pipe: the helper closes what it kept
+        of the picture before and lets the new source's writer through. Raises NdiError in words if it cannot (the
+        helper has then closed the source)."""
+        reply = self.client.request({"cmd": "handover", "id": p["id"]}, timeout=PIPE_CLEAR_SECONDS + OPEN_WAIT_EXTRA)
+        if reply.get("ok") is not True:
+            raise NdiError(_text(reply.get("error")) or "the source could not be shown")
+
+    def check_pipe(self):
+        """Before the player is told to read it: the path is a pipe, not a link or a file, the pipe owner's (root on
+        a box), in a folder of the owner's that nobody else may change. The helper cannot swap it (it cannot unlink,
+        rename or make a name in root's folder); on a desk, where the pipe is in the helper's own folder, this is a
+        tripwire only. What holds besides: the helper cannot write anywhere else; with sound off the player reads whatever is there as raw video only (the demuxer is forced);
+        with sound on, and only then, the player reads it with its Matroska reader and decodes nothing but
+        uncompressed video and float PCM (player.py, MKV_ONLY). The Matroska reader itself is then in reach of a
+        helper that was taken over, which bare frames never were: the cost of sound, written down in NDI.md."""
+        try:
+            st = os.lstat(self.fifo)
+        except OSError:
+            raise NdiError("the NDI helper's pipe is not there; not loading it")
+        if not stat.S_ISFIFO(st.st_mode) or st.st_uid != self._pipe_owner():
+            raise NdiError("the NDI helper's pipe is not what it should be; not loading it")
+        # The look and the opening are two moments. What holds between them is the folder: the pipe owner's (root on
+        # a box), and nobody else may add, rename or remove a name in it, so the name the player opens is this pipe.
+        try:
+            folder = os.lstat(os.path.dirname(self.fifo))
+        except OSError:
+            raise NdiError("the NDI helper's pipe is not there; not loading it")
+        if not stat.S_ISDIR(folder.st_mode) or folder.st_uid != self._pipe_owner():
+            raise NdiError("the NDI helper's pipe is not what it should be; not loading it")
+        if folder.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise NdiError("the NDI helper's pipe is in a folder that is not root's alone; not loading it")
+
+    def client_close(self):
+        """Longer than the helper may hold its lock while it waits for a first frame: a close must not be lost."""
+        try:
+            self.client.request({"cmd": "close"}, timeout=FIRST_FRAME_SECONDS + 4)
+        except NdiError:
+            pass
+
+    def stop(self, reason=None):
+        """Nothing of NDI is on the screen any more: have the helper let go of the source. `current` is cleared
+        first and without the lock, so a source being shown again (tick) sees at once that it is no longer wanted.
+        With `reason` (the module switched off under a source on the screen) the page is told why it ended."""
+        self.cancel()                      # a source still connecting for an earlier play is no longer wanted either
+        had, self.current = self.current, None
+        if had:
+            if reason:
+                self.ended = {"name": had["name"], "message": reason}
+            self.client_close()
+        return bool(had)
+
+    def tick(self, replay, loaded=None, stuck=None, restarted=None):
+        """Called about once a second. When the helper says the source changed size or rate, or the helper came
+        back after a fall, show the source again (`replay(id)`), at most once every RETRY_SECONDS.
+
+        `loaded` (the panel's own record: whether the NDI pipe is what it loaded into the player last) settles
+        what "the player stopped reading" means. If the panel loaded something else since, the player went on and
+        the source is over, quietly. If the pipe is still what the panel loaded, nothing took the screen: the
+        player lost the pipe by itself (it gave up on the stream, or a reader came and went that no load of the
+        panel's accounts for), and the screen is black with the player waiting on a pipe nobody writes. Then the source is shown again, as after
+        a change of size. The helper's word alone never decides this; without `loaded` it is as it always was.
+
+        `restarted` (the panel's record again: the pipe was on the screen when the player became another process,
+        and nothing was loaded since) is the same loss by another road: the new player is idle and black, and the
+        source is shown again. It is true only until that load.
+
+        `stuck` (the player's own word: True when it has the pipe loaded and has not opened it some seconds after
+        the load, False when it has opened it, None when it cannot say) settles the opposite case: the helper
+        writes and says "playing", and nothing is on the screen. Then the source is shown again, ONCE; if the
+        player has not opened it after that either, the source is ended with the reason (PLAYER_STUCK) and the
+        helper lets go of it, which also gives the player the end of the stream it is stuck on."""
+        cur = self.current
+        if not cur or self._clock() < self._retry_at:
+            return False
+        st = self.client.status()
+        if st.get("ok") is not True:
+            return False
+        if st.get("configured") is not True:       # the helper started again and knows nothing yet
+            self.sync()
+        p = _playing(st.get("playing"))
+        lost = bool(p is not None and p["id"] == cur["id"] and p["state"] == "stopped" and p["message"] == PLAYER_LEFT
+                    and ((loaded is not None and loaded()) or (restarted is not None and restarted())))
+        if lost:
+            self._retry_said = self._retry_said or PLAYER_LEFT       # for the page, until it is on the screen again
+        elif p is not None and p["id"] == cur["id"] and p["state"] in ("refused", "stopped"):
+            # It ended for a reason no retry cures (a format this input does not show), or the player went on to
+            # something else without a word to us. Either way it is no longer what plays; the reason stays for the page.
+            if self.current is cur:
+                self.current = None
+                # The reason is always kept for the page, also when the player went on to something else that
+                # the panel did not load itself: a source that is gone from the screen is never gone without a word.
+                self.ended = {"name": cur["name"], "message": p["message"] or "the source stopped"}
+            self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
+            return False
+        elif p is not None and (p["id"] != cur["id"] or p["state"] != "changed"):
+            opened = stuck() if (stuck is not None and p["id"] == cur["id"]) else False
+            if opened is True and self._stuck_once:
+                if self.current is cur:
+                    self.current, self.ended = None, {"name": cur["name"], "message": PLAYER_STUCK}
+                    self.client_close()
+                self._stuck_once, self._retry_wait, self._retry_said = False, self.RETRY_SECONDS, ""
+                self.log("pvj-web: NDI source %s: the player did not open it, twice; ended" % cur["name"])
+                return False
+            if opened is not True:
+                if opened is False:
+                    self._stuck_once = False       # the player has it open: the next time is a first time again
+                # On the screen: playing, a still picture, or waiting for the sender. The pause between tries is
+                # three seconds again only once it has been there for PLAYED_SECONDS without a break. One look
+                # that finds it there is not that: a player that reads the pipe for a second and gives up, again
+                # and again (or a helper that says "playing" and "the player left" in turn), was otherwise stopped,
+                # opened and loaded every three seconds for ever.
+                now = self._clock()
+                if self._on_screen_since is None:
+                    self._on_screen_since = now
+                if now - self._on_screen_since >= self.PLAYED_SECONDS:
+                    self._retry_wait = self.RETRY_SECONDS
+                self._retry_said = ""
+                return False
+            self._stuck_once, self._retry_said = True, PLAYER_STUCK
+            self.log("pvj-web: NDI source %s: the player has not opened it; shown again once" % cur["name"])
+        # Try again later and later (a sender switched off for the night must not be asked every 3 seconds for
+        # ever), and write the reason down when it changes, not at every try: the journal is kept on the card.
+        waited = self._retry_wait
+        self._on_screen_since = None
+        self._retry_at = self._clock() + self._retry_wait
+        self._retry_wait = min(self._retry_wait * 2, self.RETRY_MAX)
+        try:
+            replay(cur["id"])
+            if lost:
+                # A player that loses the pipe again and again (it cannot play what is in it) is not loaded every
+                # three seconds for ever: the pause grows as for a source that is gone, and is three seconds again
+                # once the source has been on the screen for PLAYED_SECONDS (above).
+                self._retry_at, self._retry_said = self._clock() + waited, ""
+                self.log("pvj-web: NDI source %s lost the player while its pipe was what plays; shown again" % cur["name"])
+            else:
+                self._retry_at, self._retry_wait, self._retry_said = self._clock() + self.RETRY_SECONDS, self.RETRY_SECONDS, ""
+        except Exception as e:                     # the source may be gone for now; a later tick tries again
+            said = str(e)[:200]
+            if said != self._retry_said:
+                self._retry_said = said
+                self.log("pvj-web: NDI source %s not shown again yet: %s" % (cur["name"], said))
+        return True
+
+
+# ---- root's command: put the library in place ----------------------------------------------------------------------
+def find_in_sdk(folder, machine):
+    """The library for this processor inside an unpacked SDK folder, or None."""
+    for arch in SDK_FOLDERS.get(machine, ()):
+        base = os.path.join(folder, "lib", arch)
+        try:
+            names = sorted(n for n in os.listdir(base) if re.fullmatch(r"libndi\.so\.[0-9]+(\.[0-9]+){0,3}", n))
+        except OSError:
+            continue
+        for n in sorted(names, key=len, reverse=True):       # the real file has the longest name; the others are links
+            path = os.path.realpath(os.path.join(base, n))
+            if os.path.dirname(path) == os.path.realpath(base) and os.path.isfile(path):
+                return path
+    return None
+
+
+LINK_HOPS = 2                             # libndi.so -> libndi.so.6 -> libndi.so.6.3.2 is the longest the SDK has
+
+
+def same_folder_target(path):
+    """The file a library name stands for. The SDK ships `libndi.so.6` as a link to `libndi.so.6.3.2` beside it
+    (found on the first run on a Pi: the name NDI's own pages give was refused as "a link"). A link is followed
+    only to a plain name in the SAME folder as the link, at most LINK_HOPS times; a link that leaves its folder,
+    points nowhere or goes on and on is refused. What is returned is opened without following a link, so a name
+    swapped for a link after this look is refused there. Not a link: returned as it is."""
+    if not os.path.islink(path):
+        return path
+    folder = os.path.dirname(os.path.abspath(path))
+    current = os.path.join(folder, os.path.basename(path))
+    for _ in range(LINK_HOPS):
+        try:
+            target = os.readlink(current)
+        except OSError:
+            break
+        # only a bare name: no folder in it at all, so not "../x", not "/abs/x", not "sub/x", not "./x"
+        if not target or "/" in target or target in (".", ".."):
+            raise NdiError("%s is a link, and not to a plain name beside it (it points to %s); give the file itself"
+                           % (path, _text(target, 120) or "nothing"))
+        current = os.path.join(folder, target)
+        if not os.path.islink(current):
+            if not os.path.lexists(current):
+                raise NdiError("%s is a link to a file that is not there (%s)" % (path, _text(target, 120)))
+            return current
+    raise NdiError("%s is a link to a link to a link; give the file itself" % path)
+
+
+def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
+    """Copy the library from `source` (the file, or an unpacked SDK folder) to dest_dir/LIB_NAME. Returns the path.
+    Raises NdiError in words. The copy is checked, not the source: what was checked is what is put in place."""
+    machine = machine if machine is not None else box_machine()
+    path = find_in_sdk(source, machine) if os.path.isdir(source) else same_folder_target(source)
+    if path is None:
+        raise NdiError("no libndi.so for this node (%s) under %s/lib" % (ELF_MACHINES.get(machine, "unknown processor"), source))
+    # Root reads a name somebody else may control (a USB stick, a download folder). So: never through a link in
+    # the last part of the name, never waiting on a pipe, and what is judged is the open file itself, not the name.
+    try:
+        src = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    except OSError as e:
+        raise NdiError("%s cannot be read as a file (%s)" % (path, "it is a link" if e.errno in (errno.ELOOP, errno.EMLINK) else e.strerror or "error"))
+    tmp, made, placed = None, False, False
+    try:
+        st = os.fstat(src)
+        if not stat.S_ISREG(st.st_mode):
+            raise NdiError("%s is not a file" % path)
+        if st.st_size > LIB_MAX_BYTES:
+            raise NdiError("%s is too large to be the NDI runtime" % path)
+        made = not os.path.lexists(dest_dir)                             # a refused file leaves no folder behind either
+        os.makedirs(dest_dir, mode=0o755, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".libndi-")       # 0600: nobody loads it before every check has passed
+        with os.fdopen(fd, "wb") as out:
+            copied = 0
+            while True:
+                chunk = os.read(src, min(1024 * 1024, LIB_MAX_BYTES + 1 - copied))
+                if not chunk:
+                    break
+                copied += len(chunk)
+                if copied > LIB_MAX_BYTES:                               # it grew while it was read
+                    raise NdiError("%s is too large to be the NDI runtime" % path)
+                out.write(chunk)
+            out.flush()
+            os.fsync(out.fileno())
+        if chown:
+            os.chown(tmp, 0, 0)
+            os.chown(dest_dir, 0, 0)
+            os.chmod(dest_dir, 0o755)
+        problem = runtime_problem(tmp, owner_uids=(0,) if chown else (os.getuid(),), machine=machine)
+        if problem:
+            raise NdiError(problem.replace("install it again with pvj-ndi-runtime", "not installed"))
+        os.chmod(tmp, 0o644)                                             # readable by the helper only now
+        dest = os.path.join(dest_dir, LIB_NAME)
+        os.replace(tmp, dest)
+        placed = True
+        return dest
+    finally:
+        os.close(src)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        if made and not placed:            # the folder this call made, and only if nothing is in it
+            try:
+                os.rmdir(dest_dir)
+            except OSError:
+                pass
+
+
+def runtime_main(argv=None, out=sys.stdout, setup=None):
+    """`pvj-ndi-runtime`: root's one command that opts a box in to NDI (the library, then the helper: mctl/ndisetup.py),
+    and the one that opts it out again."""
+    if setup is None:
+        from . import ndisetup as setup
+    argv = sys.argv[1:] if argv is None else argv
+    dest = os.path.join(LIB_DIR, LIB_NAME)
+    usage = ("usage: pvj-ndi-runtime install <the unpacked NDI SDK folder, or libndi.so.6> | status | remove\n"
+             "       pvj-ndi-runtime server install <NDI's folder, or ndi-discovery-server> | status | remove\n"
+             "install: sets NDI up on this node. It copies NDI's library into place, then installs and starts the NDI\n"
+             "  helper (the service pvj-ndi with an account of its own; avahi-daemon if it is missing) and restarts the\n"
+             "  panel and the player. Until it has been run, a node has nothing of NDI on it and nothing of it runs.\n"
+             "remove: takes the helper and the library off again.\n"
+             "The NDI runtime is proprietary. Get the NDI SDK for Linux from https://ndi.video/ and read its licence\n"
+             "BEFORE installing: NDI's free licence may not cover a node like this one (it names embedded devices\n"
+             "running Linux among what it does not cover). The owner of the node decides. This is not legal advice.\n"
+             "NDI(R) is a registered trademark of Vizrt NDI AB.")
+    if argv and argv[0] == "refresh":      # the installer's call for a box that opted in; never sets a box up
+        return setup.refresh_main(argv[1:], out)
+    if argv and argv[0] == "server":       # NDI's discovery server on this box (mctl/ndiscovery.py, D85)
+        from . import ndiscovery
+        return ndiscovery.server_main(argv[1:], out)
+    if len(argv) == 1 and argv[0] == "status":
+        print(runtime_problem(dest) or "the NDI runtime is in place: %s" % dest, file=out)
+        print("NDI is set up on this node (the helper pvj-ndi is installed)" if setup.opted_in()
+              else "NDI is not set up on this node; to set it up: %s" % setup.COMMAND, file=out)
+        return 0
+    if os.geteuid() != 0 and argv and argv[0] in ("install", "remove"):
+        print("pvj-ndi-runtime: run it with sudo", file=out)
+        return 1
+    say = lambda m: print("pvj-ndi-runtime: %s" % m, file=out)      # noqa: E731
+    if len(argv) == 2 and argv[0] == "install":
+        try:
+            setup.check()                  # whatever can refuse the setup, before anything on the box is changed
+            # then the library: a file that is refused leaves the box as it was
+            placed = install_runtime(argv[1])
+            print("installed %s" % placed, file=out)
+            # The owner can compare what the box holds with the SDK's own copy (sha256sum on any computer).
+            try:
+                with open(placed, "rb") as f:
+                    digest = hashlib.sha256(f.read()).hexdigest()
+                print("sha256 %s  (compare with: sha256sum <the SDK's libndi.so.6>)" % digest, file=out)
+            except OSError as e:
+                print("pvj-ndi-runtime: could not read the placed library back to hash it: %s" % e, file=out)
+            return 1 if setup.enable(say=say) is False else 0      # False: set up, and the helper did not stay up
+        except (NdiError, setup.SetupError, OSError) as e:
+            print("pvj-ndi-runtime: %s" % e, file=out)
+            return 1
+    if len(argv) == 1 and argv[0] == "remove":
+        code = 0
+        try:
+            setup.disable(say=say)
+        except (setup.SetupError, OSError) as e:      # said, and the library still goes
+            print("pvj-ndi-runtime: %s" % e, file=out)
+            code = 1
+        try:
+            try:
+                os.unlink(dest)
+            except FileNotFoundError:
+                pass
+            try:
+                os.rmdir(LIB_DIR)          # only when nothing else is in it
+            except OSError:
+                pass
+            print("removed NDI's library (%s)" % dest, file=out)
+        except OSError as e:
+            print("pvj-ndi-runtime: %s could not be removed (%s)" % (dest, e.strerror or "error"), file=out)
+            code = 1
+        return code
+    print(usage, file=out)
+    return 2

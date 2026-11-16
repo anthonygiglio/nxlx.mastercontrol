@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 # Runs on the build host. files/pvj-src is filled in by the workflow with the
-# pvj/, bin/ and install/ folders of this repository.
+# mctl/, bin/ and install/ folders of this repository.
 [ -f files/pvj-src/install/install.sh ] || { echo "files/pvj-src is missing; run through image.yml" >&2; exit 1; }
 
 install -d "${ROOTFS_DIR}/tmp/pvj-src"

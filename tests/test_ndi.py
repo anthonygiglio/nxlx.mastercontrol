@@ -17,7 +17,7 @@ import time
 import unittest
 from unittest import mock
 
-from pvj import ndi, paths
+from mctl import ndi, paths
 from tests.test_server import ServerBase
 
 
@@ -1061,7 +1061,7 @@ class NdiApiTest(ServerBase):
         st, body, _ = self.call("POST", "/api/ndi", {"action": "add_address", "address": "192.168.1.20"}, token=self.full)
         self.assertEqual((st, body["addresses"]), (200, ["192.168.1.20"]))
         self.assertEqual(self.lib.finders[-1], "192.168.1.20")
-        from pvj.settings import Settings
+        from mctl.settings import Settings
         self.assertEqual(Settings(self.settings.path).load()["ndi"], {"addresses": ["192.168.1.20"]})
         for bad in ("8.8.8.8", "192.168.1.20\n", "192.168.1.21,8.8.8.8", "cam.local", "", None, 7, "127.0.0.1"):
             self.assertEqual(self.call("POST", "/api/ndi", {"action": "add_address", "address": bad}, token=self.full)[0], 400, bad)
@@ -1082,7 +1082,7 @@ class NdiApiTest(ServerBase):
         st, out, _ = self.call("POST", "/api/system/settings/export", {}, token=self.full)
         self.assertEqual(st, 200, out)
         self.assertEqual(out["file"]["settings"]["ndi"], {"addresses": ["192.168.1.20"]})
-        from pvj import boxcare
+        from mctl import boxcare
         self.assertEqual(boxcare.check_ndi({"addresses": ["10.0.0.1"]}, None), {"addresses": ["10.0.0.1"]})
         for bad in ({"addresses": ["8.8.8.8"]}, {"addresses": ["10.0.0.1\n"]}, {"lib": "/tmp/evil.so"}, "x"):
             with self.assertRaises(boxcare.CHECK_ERRORS, msg=bad):
@@ -1091,7 +1091,7 @@ class NdiApiTest(ServerBase):
 
 class PlayerPipeFormatTest(unittest.TestCase):
     def test_the_pipe_is_loaded_in_the_format_asked_for_and_an_unknown_one_is_refused(self):
-        from pvj.player import Player, PlayerError
+        from mctl.player import Player, PlayerError
         sent = []
 
         class Ipc:
@@ -1140,7 +1140,7 @@ class HelperCannotHoldThePanelTest(unittest.TestCase):
 
     def test_a_reply_that_trickles_in_cannot_outlast_the_callers_timeout(self):
         import socket
-        from pvj.netd import exchange
+        from mctl.netd import exchange
 
         def trickle(conn):
             conn.recv(65536)
@@ -1158,7 +1158,7 @@ class HelperCannotHoldThePanelTest(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.2)
 
     def test_the_other_helpers_clients_still_get_a_whole_answer_and_a_refusal(self):
-        from pvj.netd import exchange
+        from mctl.netd import exchange
 
         def answer(conn):
             conn.recv(65536)
@@ -1194,7 +1194,7 @@ class HelperCannotHoldThePanelTest(unittest.TestCase):
 
     def test_no_answer_and_no_fault_stops_the_panel_starting(self):
         import inspect
-        from pvj import server
+        from mctl import server
 
         class Bad:
             def request(self, message, timeout=None):
@@ -1513,7 +1513,7 @@ class ReplySizeTest(unittest.TestCase):
             sizes.append(len(json.dumps(s.handle({"cmd": "status"})).encode()) + 1)
         self.assertLess(max(sizes), ndi.REPLY_LIMIT, sizes)
         self.assertGreater(max(sizes), 40000)                            # and the test did build a large one
-        from pvj import netd
+        from mctl import netd
         import inspect
         self.assertIn("len(data) < %d" % ndi.REPLY_LIMIT, inspect.getsource(netd.exchange))      # the limit this is measured against
 
@@ -1612,7 +1612,7 @@ class LaterChoiceWinsTest(NdiApiTest):
         t = self.api.ndi.ticket()
         self.api._player_call(clear, None)                               # something else that happens to be called "clear"
         self.assertTrue(self.api.ndi.still(t))
-        from pvj.player import Player
+        from mctl.player import Player
         for name in self.api.PLAYER_LOADS:                               # the names are the real player's
             self.assertEqual(getattr(Player, name).__name__, name)
         t = self.api.ndi.ticket()
@@ -1644,7 +1644,7 @@ class LaterChoiceWinsTest(NdiApiTest):
     def test_the_capture_helper_is_stopped_when_an_ndi_source_plays_and_the_other_way_round(self):
         """Player.pipe_is (2026-10-11): each live input has a pipe of its own. "A pipe plays" alone (pipe_playing) left
         the capture helper writing into its pipe while the NDI pipe was what played, and the other way round."""
-        from pvj import locks as locks_mod
+        from mctl import locks as locks_mod
         self.enable()
 
         class Capture:
@@ -1836,7 +1836,7 @@ class OffMeansNoNdiCodeTest(unittest.TestCase):
             pass                                                         # a file in the pipe's place (root's folder: the helper cannot remove it)
         import pwd
         web = mock.Mock(pw_uid=4242)
-        with mock.patch.dict(os.environ, {"PVJ_NDI_DIR": d, "PVJ_NDI_PIPE_DIR": d}), mock.patch("pvj.netd.NetServer", Server), \
+        with mock.patch.dict(os.environ, {"PVJ_NDI_DIR": d, "PVJ_NDI_PIPE_DIR": d}), mock.patch("mctl.netd.NetServer", Server), \
                 mock.patch.object(pwd, "getpwnam", lambda name: web if name == "pvj-web" else (_ for _ in ()).throw(KeyError(name))), \
                 mock.patch("builtins.print"):
             self.assertEqual(ndi.main([]), 0)
@@ -1916,7 +1916,7 @@ class PipeCheckTest(NdiApiTest):
         import inspect
         from unittest import mock
         import pwd
-        from pvj import server
+        from mctl import server
         # root makes the pipe (the tmpfiles lines pvj-ndi-runtime writes), so root is its owner; the helper only writes it
         self.assertIn("pipe_owner=ndi_mod.pipe_owner", inspect.getsource(server.build))
         self.assertEqual(ndi.pipe_owner(), 0)
@@ -2104,9 +2104,9 @@ class SourceIsPlainTextTest(unittest.TestCase):
     def test_the_ndi_sources_hold_no_character_a_reviewer_cannot_see(self):
         # Escapes for a bidirectional override and a zero-width space once landed in this file as the characters.
         here = os.path.dirname(os.path.abspath(__file__))
-        for path in (os.path.join(here, "test_ndi.py"), os.path.join(here, "..", "pvj", "ndi.py"),
-                     os.path.join(here, "..", "pvj", "systemd", "pvj-ndi.service"), os.path.join(here, "..", "bin", "pvj-ndi-runtime"),
-                     os.path.join(here, "..", "pvj", "ndisetup.py"), os.path.join(here, "test_ndi_setup.py")):
+        for path in (os.path.join(here, "test_ndi.py"), os.path.join(here, "..", "mctl", "ndi.py"),
+                     os.path.join(here, "..", "mctl", "systemd", "pvj-ndi.service"), os.path.join(here, "..", "bin", "pvj-ndi-runtime"),
+                     os.path.join(here, "..", "mctl", "ndisetup.py"), os.path.join(here, "test_ndi_setup.py")):
             with open(path, encoding="utf-8") as f:
                 odd = sorted({"U+%04X" % ord(ch) for ch in f.read() if ord(ch) > 126 or (ord(ch) < 32 and ch not in "\n\t")})
             self.assertEqual(odd, [], path)
@@ -2332,7 +2332,7 @@ class PipeReuseTest(unittest.TestCase):
                 raise PermissionError(errno.EACCES, "Permission denied")
             return real(path, flags, *a, **kw)
         self.lib.frames.put(frame(64, 16))
-        with mock.patch("pvj.ndi.os.open", refused):
+        with mock.patch("mctl.ndi.os.open", refused):
             self.assertRaises(PermissionError, self.s._pipe_free)
             reply = self.s.handle({"cmd": "open", "id": self.ida})
         self.assertEqual((reply["ok"], reply["error"]), (False, "the NDI pipe cannot be written to: Permission denied"))
@@ -2505,7 +2505,7 @@ class LostPlayerTest(NdiApiTest):
         self.assertEqual(len([c for c in self.player.calls if c[0] == "play_pipe"]), loads + 1)
 
     def test_the_player_says_which_pipe_was_lost_to_a_new_process_until_anything_is_loaded(self):
-        from pvj.player import Player
+        from mctl.player import Player
         pid = [41]
 
         class Ipc:
@@ -2837,7 +2837,7 @@ class PlayerLetsGoTest(NdiApiTest):
         self.assertEqual(set(new.got), {2})
 
     def test_the_player_is_told_to_let_go_only_of_the_pipe_it_was_given_last_and_asked_until_it_is_idle(self):
-        from pvj.player import Ipc as Ipc_real, Player, PlayerError
+        from mctl.player import Ipc as Ipc_real, Player, PlayerError
         sent, idle = [], [False, False, True]
 
         class Ipc:
@@ -3016,7 +3016,7 @@ class PlayerDidNotOpenTest(NdiApiTest):
         self.assertEqual((self.loads(), self.api.ndi.current["id"]), (loads + 2, self.rid))
 
     def test_the_player_says_stuck_only_for_its_own_pipe_after_some_seconds_and_by_mpvs_tracks(self):
-        from pvj.player import Player, PlayerError
+        from mctl.player import Player, PlayerError
         tracks, sent = [0], []
 
         class Ipc:

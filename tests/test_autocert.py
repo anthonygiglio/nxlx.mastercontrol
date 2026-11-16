@@ -17,8 +17,8 @@ import time
 import unittest
 from unittest import mock
 
-from pvj import autocert, httpsbox
-from pvj.settings import Settings
+from mctl import autocert, httpsbox
+from mctl.settings import Settings
 from tests.test_boxcert import boxcert, make_request, openssls
 
 HERE = os.path.dirname(os.path.abspath(__file__))

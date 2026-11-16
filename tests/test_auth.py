@@ -4,9 +4,9 @@ import os
 import tempfile
 import unittest
 
-from pvj import auth
-from pvj.auth import Auth, AuthError
-from pvj.settings import Settings
+from mctl import auth
+from mctl.auth import Auth, AuthError
+from mctl.settings import Settings
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 

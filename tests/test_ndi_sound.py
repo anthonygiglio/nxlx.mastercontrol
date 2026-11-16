@@ -22,8 +22,8 @@ import types
 import unittest
 import zlib
 
-from pvj import ndi
-from pvj.player import Player, PlayerError
+from mctl import ndi
+from mctl.player import Player, PlayerError
 from tests.test_ndi import FakeClient, FakeLib, frame, wait
 from tests.test_server import ServerBase
 
@@ -1224,7 +1224,7 @@ class SettingsSoundTest(unittest.TestCase):
         self.assertIs(w.sound, False)
 
     def test_no_new_schema_was_needed(self):
-        from pvj import settings
+        from mctl import settings
         self.assertEqual(settings.SCHEMA, 14)                                # and since 2026-10-11 the NDI key itself needs none either
         self.assertEqual(settings.default_settings()["ndi"], {"addresses": []})
 
@@ -1374,7 +1374,7 @@ class ApiSoundTest(ServerBase):
         self.assertEqual(self.call("POST", "/api/ndi", {"action": "sound", "on": False}, token=live)[0], 403)
 
     def test_a_settings_file_carries_the_switch_and_a_bad_one_is_refused(self):
-        from pvj import boxcare
+        from mctl import boxcare
         self.assertEqual(boxcare.check_ndi({"addresses": [], "sound": False}, None), {"addresses": [], "sound": False})
         with self.assertRaises(ndi.NdiError):
             boxcare.check_ndi({"addresses": [], "sound": "off"}, None)
@@ -2407,7 +2407,7 @@ class SoundFromSettingsTest(unittest.TestCase):
         its save keeps the two keys it does not know. One edge is pinned here because NDI.md says it: that
         release does not import a settings export that carries the keys. (The other, read from its code and not
         run: its own writers of the section drop them, so the sound source is chosen again after going back.)"""
-        from pvj.settings import Settings
+        from mctl.settings import Settings
         try:
             subprocess.run(["git", "-C", REPO, "rev-parse", "--verify", "-q", BEFORE_SOUND_FROM + "^{commit}"], check=True, capture_output=True)
         except (OSError, subprocess.CalledProcessError):
@@ -2752,7 +2752,7 @@ class ApiSoundFromTest(ServerBase):
         self.assertEqual(moved, [])
 
     def test_a_settings_file_carries_both_keys_and_one_whose_sound_source_is_not_allowed_is_refused(self):
-        from pvj import boxcare
+        from mctl import boxcare
         good = {"addresses": [], "sound": True, "sources": [VOICE_ROW], "sound_from": VID, "sound_delay_ms": 120}
         self.assertEqual(boxcare.check_ndi(good, None), good)
         for bad in (dict(good, sound_from=PID), dict(good, sources=[]), dict(good, sound_delay_ms=9000), dict(good, sound_from="VLC (Audio)")):

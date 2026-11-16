@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 
-from pvj import hardware
+from mctl import hardware
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 
@@ -157,7 +157,7 @@ class VaDecodingTest(unittest.TestCase):
         self.assertIn("Not checked", out["text"])
 
     def test_the_selftest_reports_it_and_never_fails_on_it(self):
-        from pvj import selftest
+        from mctl import selftest
         out = selftest.decoding(self.tree(self.pci("0x030000", "0x8086")), "x86_64")
         self.assertIs(out["available"], False)
         broken = hardware.va_decoding
@@ -174,7 +174,7 @@ class ClockSyncTest(unittest.TestCase):
     """pvj-selftest says whether the clock is synchronised (J-154), as information that never fails the report."""
 
     def test_timedatectl_answers_first(self):
-        from pvj import selftest
+        from mctl import selftest
         root = make_tree({"run/systemd/timesync/synchronized": ""})
         self.addCleanup(__import__("shutil").rmtree, root, True)
         out = selftest.clock_sync(root, ask=lambda: "yes")
@@ -184,7 +184,7 @@ class ClockSyncTest(unittest.TestCase):
         self.assertIn("not synchronised", out["text"])
 
     def test_without_timedatectl_the_flag_file_says_yes_and_its_absence_cannot_tell(self):
-        from pvj import selftest
+        from mctl import selftest
         root = make_tree({"run/systemd/timesync/synchronized": ""})
         self.addCleanup(__import__("shutil").rmtree, root, True)
         out = selftest.clock_sync(root, ask=lambda: None)
@@ -196,7 +196,7 @@ class ClockSyncTest(unittest.TestCase):
         self.assertIn("Could not tell", out["text"])
 
     def test_a_failure_is_reported_not_raised(self):
-        from pvj import selftest
+        from mctl import selftest
         out = selftest.clock_sync("/", ask=lambda: 1 / 0)
         self.assertIsNone(out["synchronized"])
         self.assertIn("ZeroDivisionError", out["text"])

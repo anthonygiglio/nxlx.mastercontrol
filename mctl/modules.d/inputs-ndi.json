@@ -1,0 +1,18 @@
+{
+  "id": "inputs-ndi",
+  "name": "NDI input",
+  "version": "0.3.0",
+  "type": "optional",
+  "channel": "beta",
+  "requires": [
+    "core"
+  ],
+  "boards": [
+    "pi4",
+    "pi5",
+    "x86"
+  ],
+  "status": "ready",
+  "default_enabled": false,
+  "description": "Show the picture of an NDI\u00ae sender (Resolume, MadMapper, OBS and others) like a clip, with its sound. The NDI runtime is proprietary and is not part of this box: its owner puts it in place (see mctl/NDI.md). NDI\u00ae is a registered trademark of Vizrt NDI AB."
+}

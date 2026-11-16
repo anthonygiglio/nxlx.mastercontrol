@@ -17,9 +17,9 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from pvj import paths, themes, update
-from pvj.settings import Settings, TEMP_NAME, TEMP_STALE
-from pvj.update import UpdateError, Updater
+from mctl import paths, themes, update
+from mctl.settings import Settings, TEMP_NAME, TEMP_STALE
+from mctl.update import UpdateError, Updater
 from tests.test_server import ServerBase
 from tests.test_update import root_for_main
 
@@ -49,7 +49,7 @@ class Folder(unittest.TestCase):
 
 
 class RemoveLeftovers(Folder):
-    """pvj.paths.remove_leftovers, which the three services use."""
+    """mctl.paths.remove_leftovers, which the three services use."""
 
     def test_only_a_plain_file_with_exactly_that_name_and_that_age(self):
         outside = tempfile.mkdtemp()
@@ -152,7 +152,7 @@ class LibraryLeftovers(ServerBase):
     """The shaders', the effects' and the themes' folders, when the panel starts."""
 
     def test_a_cut_off_upload_is_removed_when_the_library_is_built_and_never_counted(self):
-        from pvj import effects as effects_mod, shaderlive
+        from mctl import effects as effects_mod, shaderlive
         state = os.path.dirname(self.settings.path)
         for sub, build in (("shaders", lambda: shaderlive.LiveEngine(self.api)),
                            ("effects", lambda: effects_mod.Effects(self.api, thread=False))):
@@ -220,12 +220,12 @@ class ScratchSweep(UpdaterBase):
 
     def plant(self, name=".update-abcd1234"):
         self.put("opt/pvj", name, "bundle.tar.gz", text="x" * 1000)
-        self.put("opt/pvj", name, "tree", "pvj", "__init__.py")
+        self.put("opt/pvj", name, "tree", "mctl", "__init__.py")
         return name
 
     def test_a_planted_work_folder_is_removed_and_nothing_else_in_the_install(self):
         self.plant()
-        self.put("opt/pvj", "releases", "1.0.0", "pvj", "__init__.py")
+        self.put("opt/pvj", "releases", "1.0.0", "mctl", "__init__.py")
         self.put("opt/pvj", "previous")
         self.put("opt/pvj", ".update-abcd1234x", "keep")         # nine characters: not a name check() makes
         self.put("opt/pvj", ".updates", "keep")
@@ -234,7 +234,7 @@ class ScratchSweep(UpdaterBase):
         self.assertEqual(self.u.sweep_scratch(owner=self.me), [".update-abcd1234"])
         self.assertEqual(self.names(self.prefix), [".update-abcd1234x", ".update-file0000", ".updates", "current", "previous",
                                                    "releases"])
-        self.assertTrue(os.path.exists(os.path.join(self.prefix, "releases/1.0.0/pvj/__init__.py")))
+        self.assertTrue(os.path.exists(os.path.join(self.prefix, "releases/1.0.0/mctl/__init__.py")))
 
     def test_the_name_is_the_one_check_really_uses(self):
         made = []
@@ -277,7 +277,7 @@ class ScratchSweep(UpdaterBase):
         inside = self.plant()
         tree = os.path.join(self.prefix, inside, "tree")
         os.symlink(os.path.join(outside, "folder"), os.path.join(tree, "to-a-folder"))
-        os.symlink(os.path.join(outside, "file"), os.path.join(tree, "pvj", "to-a-file"))
+        os.symlink(os.path.join(outside, "file"), os.path.join(tree, "mctl", "to-a-file"))
         os.symlink(os.path.join(outside, "nothing"), os.path.join(tree, "to-nothing"))
         os.mkfifo(os.path.join(tree, "a-pipe"))
         os.chmod(self.put("opt/pvj", inside, "tree", "read-only"), 0o400)
@@ -787,12 +787,12 @@ class EndToEnd(UpdaterBase):
         super().setUp()
         import functools
         self.addCleanup(os.umask, os.umask(0o022))
-        self.put("opt/pvj", "releases", "1.0.0", "pvj", "__init__.py")
-        self.put("opt/pvj", "releases", "2.0.0", "pvj", "__init__.py")
+        self.put("opt/pvj", "releases", "1.0.0", "mctl", "__init__.py")
+        self.put("opt/pvj", "releases", "2.0.0", "mctl", "__init__.py")
         self.put("opt/pvj", "previous", text="/opt/pvj/releases/1.0.0\n")
         os.symlink("/opt/pvj/releases/2.0.0", os.path.join(self.prefix, "current"))
         self.left = os.path.join(self.prefix, ".update-abcd1234")
-        self.put("opt/pvj", ".update-abcd1234", "tree", "pvj", "__init__.py")
+        self.put("opt/pvj", ".update-abcd1234", "tree", "mctl", "__init__.py")
         self.result = os.path.join(self.dir, "result.json")
         real = functools.partial(Updater, root=self.root, install=lambda *a: None, restart=lambda: None,
                                  health=lambda: True)
@@ -816,7 +816,7 @@ class EndToEnd(UpdaterBase):
     @unittest.skipIf(ROOT, "as root every folder here is root's")
     def test_the_command_leaves_a_work_folder_that_is_not_roots(self):
         self.assertNotIn("removed", self.rollback())
-        self.assertTrue(os.path.isfile(os.path.join(self.left, "tree", "pvj", "__init__.py")))
+        self.assertTrue(os.path.isfile(os.path.join(self.left, "tree", "mctl", "__init__.py")))
 
     def test_the_command_removes_roots_work_folder_and_then_does_what_it_was_asked(self):
         def as_root(real):
@@ -831,7 +831,7 @@ class EndToEnd(UpdaterBase):
             out = self.rollback()
         self.assertIn("removed .update-abcd1234, left by an update that was cut off", out)
         self.assertEqual(self.names(self.prefix), ["current", "previous", "releases"])
-        self.assertTrue(os.path.isfile(os.path.join(self.prefix, "releases", "2.0.0", "pvj", "__init__.py")))
+        self.assertTrue(os.path.isfile(os.path.join(self.prefix, "releases", "2.0.0", "mctl", "__init__.py")))
 
 
 if __name__ == "__main__":
