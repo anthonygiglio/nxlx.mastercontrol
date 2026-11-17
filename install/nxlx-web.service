@@ -64,7 +64,8 @@ DeviceAllow=/dev/random r
 DeviceAllow=/dev/urandom r
 DeviceAllow=char-alsa rw
 DeviceAllow=char-video4linux rw
-ReadWritePaths=/var/lib/nxlx /run/nxlx/web
+# -/media/nxlx: the node's own clip stick is mounted writable there (D143); every other stick is mounted read-only.
+ReadWritePaths=/var/lib/nxlx /run/nxlx/web -/media/nxlx
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

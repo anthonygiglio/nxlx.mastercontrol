@@ -25,7 +25,7 @@ import unicodedata
 
 from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presence as presence_mod, presets, profile as tiers_mod, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
-from . import locks, paths
+from . import clipstick, locks, paths
 from . import policy
 from . import tz as tz_mod
 from . import screenmode
@@ -227,6 +227,7 @@ class Api:
         self.theme_store = themes_mod.Store(addons_dir)     # the owner's own themes (System > Look, "Add a theme")
         if addons_dir:
             self.theme_store.load(self.themes)              # so the store knows the file of each; what is there already stays
+        self.clip_chooser = None   # the node's clip stick (D143): set by server.build; None means the folder given here
         self.media_dir = media_dir
         self.usb_root = usb_root or os.environ.get("NXLX_USB_BASE", "/media/nxlx")     # one folder per mounted drive
         self.usb_link = usb_link or os.environ.get("NXLX_USB_DIR", "/media/usb")      # the newest drive, for the old presets
@@ -508,6 +509,22 @@ class Api:
             return True
         except PlayerError:
             return False
+
+    @property
+    def media_dir(self):
+        """The media folder now: the clips folder on the node's own clip stick while it is mounted, else the folder the
+        node was started with (the SD card's), D143. Read again on every use, so pulling the stick changes it."""
+        chooser = self.__dict__.get("clip_chooser")
+        return chooser.media_dir() if chooser is not None else self.__dict__.get("_sd_media_dir")
+
+    @media_dir.setter
+    def media_dir(self, value):
+        self._sd_media_dir = value
+
+    def clip_stick_state(self):
+        """{"state": none|in|read-only|missing, "label", "text"}: what the panel says about the clip stick (D143)."""
+        chooser = self.__dict__.get("clip_chooser")
+        return chooser.state() if chooser is not None else {"state": "none", "label": None, "text": ""}
 
     def resolve_media(self, name):
         """A media file by name, guaranteed to live inside the media folder."""
@@ -996,7 +1013,7 @@ class Api:
             except OSError:
                 pass
         return {"files": [d["name"] for d in details], "details": details, "free": self._free_space(),
-                "max_upload": MAX_UPLOAD_BYTES, "usb": self.usb_drives(),
+                "max_upload": MAX_UPLOAD_BYTES, "usb": self.usb_drives(), "clip_stick": self.clip_stick_state(),
                 "autostart_usb": self.settings.data.get("autostart", {}).get("mode") == "usb"}
 
     def _safe_new_name(self, name):
@@ -1050,7 +1067,11 @@ class Api:
                 os.fsync(out.fileno())
             if got != length:
                 raise ApiError(400, "upload was cut short (%d of %d bytes)" % (got, length))
-            os.chmod(tmp, 0o664)
+            try:
+                os.chmod(tmp, 0o664)
+            except OSError as e:
+                if not clipstick.is_unsupported(e):   # exFAT (the clip stick) refuses modes: the mount's own mask applies
+                    raise
             with self._media_lock:
                 if replace:
                     os.replace(tmp, final)
@@ -1059,7 +1080,16 @@ class Api:
                         os.link(tmp, final)  # fails if the name appeared meanwhile: never overwrites silently
                     except FileExistsError:
                         raise ApiError(409, "a file with that name appeared during the upload")
-                    os.unlink(tmp)
+                    except OSError as e:
+                        if not clipstick.is_unsupported(e):
+                            raise
+                        # exFAT has no hard links. Every write to the media folder holds this lock, so a name that is
+                        # free now stays free until the rename.
+                        if os.path.lexists(final):
+                            raise ApiError(409, "a file with that name appeared during the upload")
+                        os.rename(tmp, final)
+                    else:
+                        os.unlink(tmp)
                 tmp = None
             self._fsync_dir(root)
             return {"name": name, "size": length}
@@ -1299,8 +1329,17 @@ class Api:
             except FileExistsError:
                 raise ApiError(409, "a file with that name already exists")
             except OSError as e:
-                raise ApiError(500, "could not rename: %s" % (e.strerror or e))
-            os.unlink(src)
+                if not clipstick.is_unsupported(e):
+                    raise ApiError(500, "could not rename: %s" % (e.strerror or e))
+                if os.path.lexists(dst):          # exFAT, no hard links: the lock keeps the name free until the rename
+                    raise ApiError(409, "a file with that name already exists")
+                try:
+                    os.rename(src, dst)
+                except OSError as e2:
+                    raise ApiError(500, "could not rename: %s" % (e2.strerror or e2))
+            else:
+                os.unlink(src)
+            self._fsync_dir(os.path.dirname(dst))
         with self.settings.lock:  # pads that used the old name follow the file
             for b, i in self._pads_using(name):
                 self.settings.data["pads"]["banks"][b]["pads"][i]["file"] = new

@@ -11,4 +11,6 @@ Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=-/etc/nxlx/nxlx.env
 ExecStart=@NXLX_DIR@/bin/nxlx-usb mount /dev/%I
+# The node's clip stick is checked with fsck.exfat before it is mounted (D143); a large stick can take minutes.
+TimeoutStartSec=15min
 ExecStop=@NXLX_DIR@/bin/nxlx-usb unmount /dev/%I

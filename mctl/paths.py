@@ -18,6 +18,7 @@ On a box each service has a folder of its own that only it can write, under a pa
                                                    neither unlink nor replace it, so the name the player opens is
                                                    always that pipe (the review of 2026-10-11, M3)
     /run/nxlx-update         root:root       0755   the update units: result.json, update.lock
+    /run/nxlx-usb            root:root       0755   nxlx-usb@ units: clip-stick.json (0644, read by the panel), peek/ (0700) (D143)
     /run/nxlx-raster.sock    root:nxlx-raster 0660   nxlx-raster.socket (D129): the picture helper, started per job; only the
                                                    panel is in group nxlx-raster
 
@@ -55,6 +56,7 @@ SUPPORTD_DIR = "/run/nxlx-supportd"
 NDI_DIR = "/run/nxlx-ndi"
 NDI_PIPE_DIR = "/run/nxlx-ndi-pipe"
 UPDATE_DIR = "/run/nxlx-update"
+USB_DIR = "/run/nxlx-usb"                        # nxlx-usb (root): the clip stick's status and the private folder to read its marker (D143)
 UPDATE_RESULT = UPDATE_DIR + "/result.json"
 
 PLAYER_SOCKET = "player.sock"

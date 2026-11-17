@@ -2441,6 +2441,7 @@
     }
     return h('div', { class: 'screen', id: 'libraryscreen' },
       h('div', { class: 'row libhead' }, h('button', { class: 'btn small', text: 'Refresh', onclick: refreshMedia })),
+      info.clip_stick && info.clip_stick.text ? h('div', { class: 'card', id: 'clipstick' }, h('div', { class: 'k', text: info.clip_stick.text })) : null,
       quick,
       liveInputCard(),
       slideshow,
