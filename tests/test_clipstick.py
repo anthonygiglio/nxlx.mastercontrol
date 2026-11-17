@@ -50,6 +50,7 @@ class Stick:
         self.fsck_rc, self.fsck_missing, self.fsck_timeout = fsck_rc, fsck_missing, fsck_timeout
         self.refuse_errors_opt, self.peek_umount_fails, self.peek_mount_times_out = refuse_errors_opt, peek_umount_fails, peek_mount_times_out
         self.on_fsck, self.swap_on_mount = on_fsck, swap_on_mount
+        self.on_systemctl = None
         self.calls, self.mounted, self.binds, self.mounts_done = [], {}, [], 0
 
     def __call__(self, cmd, **kw):
@@ -58,6 +59,10 @@ class Stick:
         if name == "blkid":
             out = self.blkid.get(cmd[-1])
             return subprocess.CompletedProcess(cmd, 0 if out else 2, out or "", "")
+        if name == "systemctl":
+            if self.on_systemctl:
+                self.on_systemctl()
+            return subprocess.CompletedProcess(cmd, 0, "", "")
         if name == "fsck.exfat":
             if self.on_fsck:
                 self.on_fsck()
@@ -258,6 +263,21 @@ class MountBase(unittest.TestCase):
         self.assertFalse(os.path.exists(self.base) and os.listdir(self.base), "never under the drive folder")
         self.assertIsNone(self.status_file())
 
+    def not_accepted(self, stick):
+        """The claim's label and volume, but the marker is not the claim's: not mounted anywhere, and the panel says
+        it was not accepted (not "not plugged in")."""
+        self.assertIsNone(self.mount(stick))
+        self.assertEqual(stick.mounted, {}, "nothing of it is left mounted")
+        self.assertFalse(os.path.exists(self.base) and os.listdir(self.base), "never under the drive folder")
+        st = self.status_file()
+        self.assertEqual(st["state"], "not-accepted")
+        c = clipstick.Chooser(os.path.join(self.tmp, "sd"), self.clips, self.state, self.status, ttl=0, exists=lambda p: True)
+        self.assertEqual(c.state()["state"], "not-accepted")
+        self.assertIn("was not accepted", c.state()["text"])
+        self.assertIn("sudo nxlx-usb claim /dev/sdb2", c.state()["text"])
+        self.assertNotIn(SECRET, json.dumps(st))
+        clipstick.clear_status(self.status)
+
     def assert_plain_read_only(self, stick):
         last = self.mounts_of(stick)[-1]
         self.assertTrue(last[-1].startswith(self.base + os.sep), last)
@@ -320,7 +340,7 @@ class MountTest(MountBase):
                       {clipstick.MARKER: marker_bytes(node_id=OTHER)}, {}):
             with self.subTest(files=sorted(files)):
                 stick = Stick(EXFAT_N01, files, dirs={"clips"})
-                self.refused(stick)
+                self.not_accepted(stick)
                 self.assertNotIn("fsck.exfat", stick.kinds())
 
     def test_a_forged_marker_on_another_volume_is_any_other_stick(self):
@@ -380,7 +400,7 @@ class MountTest(MountBase):
 
     def test_a_stick_swapped_between_the_look_and_the_mount_is_taken_down(self):
         stick = self.own(swap_on_mount=(2, {clipstick.MARKER: marker_bytes(token=WRONG)}))
-        self.refused(stick)
+        self.not_accepted(stick)
         priv = self.mounts_of(stick)[1][-1]
         self.assertIn(["umount", priv], stick.calls)
         self.assertEqual(stick.binds, [])
@@ -416,6 +436,35 @@ class MountTest(MountBase):
         # the wait, the longest check and three minutes for the look and the mounts, a minute inside the limit
         self.assertLessEqual(usb.MOUNT_LOCK_SECONDS + clipstick.FSCK_SECONDS + 3 * 60, 15 * 60 - 60)
         self.assertIn("ExecStopPost=-@NXLX_DIR@/bin/nxlx-usb unmount /dev/%I", unit)
+
+    def test_a_binding_left_by_a_pulled_stick_is_taken_down_before_the_next_one(self):
+        gone_priv = os.path.join(self.run, "mnt", "sdz9")
+        self.set_mounts("/dev/nvme0n1p2 / ext4 rw 0 0\n/dev/sdz9 %s exfat rw 0 0\n/dev/sdz9 %s exfat rw 0 0\n" % (gone_priv, self.clips))
+        stick = self.own()
+        bound = lambda p: p == self.clips and ["umount", "-l", self.clips] not in stick.calls
+        with mock.patch.object(usb, "_ismount", bound), mock.patch.object(usb, "_exists", lambda p: p != "/dev/sdz9"):
+            self.assertEqual(self.mount(stick), self.clips)
+        first_mount = stick.kinds().index("mount")
+        self.assertLess(stick.calls.index(["umount", "-l", self.clips]), first_mount)
+        self.assertLess(stick.calls.index(["umount", "-l", gone_priv]), first_mount)
+        self.assertEqual(self.status_file()["state"], "in")
+
+    def test_a_binding_whose_stick_is_still_there_is_not_touched(self):
+        self.set_mounts("/dev/nvme0n1p2 / ext4 rw 0 0\n/dev/sdz9 %s exfat rw 0 0\n" % self.clips)
+        stick = self.own()
+        with mock.patch.object(usb, "_ismount", lambda p: p == self.clips), mock.patch.object(usb, "_exists", lambda p: True):
+            with self.assertRaises(usb.UsbError):
+                self.mount(stick)
+        self.assertNotIn(["umount", "-l", self.clips], stick.calls)
+
+    def test_unmount_also_takes_down_a_look_left_over(self):
+        peek = os.path.join(self.run, "peek", "sdb2.left")
+        os.makedirs(peek)
+        self.set_mounts("/dev/nvme0n1p2 / ext4 rw 0 0\n/dev/sdb2 %s exfat ro 0 0\n" % peek)
+        stick = Stick({})
+        usb.unmount("/dev/sdb2", env=self.env, runner=stick, proc_mounts=self.mounts, log=self.logs.append)
+        self.assertEqual(stick.calls, [["umount", "-l", peek]])
+        self.assertFalse(os.path.exists(peek))
 
     def test_unmount_after_a_killed_check_clears_the_status_and_twice_is_harmless(self):
         clipstick.write_status(self.status, {"device": "/dev/sdb2", "label": "N01-CLIPS", "state": "checking", "why": ""})
@@ -505,12 +554,18 @@ class ClaimTest(MountBase):
         clipstick.forget_claim(self.state)
 
     def claim(self, stick, force=False):
+        stick.on_systemctl = lambda: usb.mount("/dev/sdb2", env=self.env, runner=stick, proc_mounts=self.mounts,
+                                               log=self.logs.append, system_disks=set())
         return usb.claim("/dev/sdb2", force=force, env=self.env, runner=stick, proc_mounts=self.mounts, log=self.logs.append,
                          system_disks=set(), node_name="nxlx-node-01")
 
     def test_claim_puts_one_new_secret_on_the_stick_and_in_the_record(self):
         stick = Stick(EXFAT_N01)
-        self.assertEqual(self.claim(stick), self.clips)
+        self.assertEqual(self.claim(stick), "in")
+        restart = stick.calls.index(["systemctl", "restart", "nxlx-usb@sdb2.service"])
+        before = [c for c in stick.calls[:restart] if c[0] == "mount"]
+        self.assertTrue(all("/peek/" in c[-1] for c in before), "claim mounts nothing of its own but its work folder")
+        self.assertEqual([c for c in stick.calls[:restart] if c[0] == "mount" and c[1] == "--bind"], [])
         rec = clipstick.read_record(self.state)
         self.assertEqual((rec["label"], rec["uuid"]), ("N01-CLIPS", UUID))
         on_stick = json.loads(stick.files.get(clipstick.MARKER) or open(os.path.join(self.mounts_of(stick)[-1][-1], clipstick.MARKER), "rb").read())
@@ -733,6 +788,19 @@ class ApiClipStickTest(ServerBase):
         self.api.delete_media({"name": "twice.mp4"}, None, None)
         self.assertNotIn("twice.mp4", os.listdir(sd))
         self.assertIn("twice.mp4", os.listdir(stick))
+
+    def test_a_stick_that_was_not_accepted_takes_no_upload(self):
+        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+        clipstick.write_status(self.status, {"device": "/dev/sdb2", "label": "N01-CLIPS", "state": "not-accepted", "why": ""})
+        self.use_chooser()
+        body = self.call("GET", "/api/media", token=self.token)[1]
+        self.assertEqual(body["clip_stick"]["state"], "not-accepted")
+        self.assertIn("sudo nxlx-usb claim /dev/sdb2", body["clip_stick"]["text"])
+        from mctl.api import ApiError
+        with self.assertRaises(ApiError) as e:
+            self.api.upload("new.mp4", 3, io.BytesIO(b"new").read)
+        self.assertEqual(e.exception.status, 409)
+        self.assertIn("not accepted", e.exception.message)
 
     def test_without_a_chooser_nothing_changes(self):
         body = self.call("GET", "/api/media", token=self.token)[1]

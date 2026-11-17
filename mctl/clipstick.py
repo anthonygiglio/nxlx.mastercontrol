@@ -232,7 +232,8 @@ def fsck(devnode, runner, log=print):
 
 # --- the mounter's status and the node's claim -------------------------------------------------------------------------
 def write_status(path, status):
-    """The status for the panel: {"device", "label", "state": checking|in|read-only|no-clips, "why"}. Never the secret."""
+    """The status for the panel: {"device", "label", "state": checking|in|read-only|no-clips|not-accepted, "why",
+    "since"}. Never the secret."""
     folder = os.path.dirname(path)
     os.makedirs(folder, mode=0o755, exist_ok=True)
     clean = {k: status.get(k) for k in ("device", "label", "state", "why")}
@@ -306,6 +307,8 @@ CHECKING_TEXT = ("Checking the clip stick %s. The library shows the test clips o
                  "is done.")
 READ_ONLY_TEXT = ("The clip stick %s is in but read only (%s). Its clips play; to add clips, check the stick on a "
                   "computer and plug it in again.")
+NOT_ACCEPTED_TEXT = ("The clip stick %s is plugged in but was not accepted (its marker does not match this node). "
+                     "Claim it again with: sudo nxlx-usb claim %s")
 NO_CLIPS_TEXT = ("The clip stick %s is in but has no clips folder and is read only (%s). The library shows the test "
                  "clips on the node's SD card.")
 
@@ -341,6 +344,8 @@ class Chooser:
             label, state, why = st["label"], st.get("state"), str(st.get("why") or "")[:200]
             if state == "checking":
                 return self.sd_dir, {"state": "checking", "label": label, "text": CHECKING_TEXT % label}
+            if state == "not-accepted":
+                return self.sd_dir, {"state": "not-accepted", "label": label, "text": NOT_ACCEPTED_TEXT % (label, st["device"])}
             if state == "no-clips":
                 return self.sd_dir, {"state": "no-clips", "label": label, "text": NO_CLIPS_TEXT % (label, why or "not checked clean")}
             if state in ("in", "read-only"):
@@ -380,6 +385,7 @@ REFUSE_TEXT = {
     "checking": "The clip stick is still being checked, so nothing was stored. Try again in a minute.",
     "read-only": "The clip stick is read only, so nothing was stored. Check it on a computer and plug it in again.",
     "no-clips": "The clip stick has no clips folder and is read only, so nothing was stored.",
+    "not-accepted": "The clip stick was not accepted by this node, so nothing was stored. Claim it again, then try again.",
 }
 
 

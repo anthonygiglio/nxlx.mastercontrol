@@ -31,3 +31,10 @@
 - (5) A `blkid` time-out is a UsbError.
 - (6) A stick with the claim's label and volume serial is the clip stick or not mounted at all, never under /media/nxlx, so its token is never readable to the player or the panel. D143 says the token is a bearer secret: a clone needs the stick in hand, accepted.
 - New test that a delete reads the media folder once (it failed when `_real_media_file` read it a second time). Each fix was taken out once and its test failed (9 checks).
+
+## 2026-11-17, final review of clip-stick 8737663
+
+- (1) `nxlx-usb claim` no longer mounts the stick itself: after the marker, the record and its own unmount it lets go of the lock and runs `systemctl restart nxlx-usb@<kernel name>.service`, so the unit owns the mounts and a pull runs its ExecStop and ExecStopPost. A binding at /media/nxlx-clips whose device node is gone is taken down (with that device's private mount and status) before a new clip stick is refused as "already there".
+- (2) New state `not-accepted`: a stick with the claim's label and volume whose marker does not match (or was swapped) is not mounted, the unit's start succeeds so the status stays until the pull, the panel says it was not accepted and how to claim it again, and uploads stay refused.
+- (3) unmount also takes down a look of that device left in /run/nxlx-usb/peek/.
+- Tests: test_clipstick 54; each fix was taken out once and its test failed (5 checks). The systemctl restart from claim is tested with a stand-in that runs the unit's mount; real systemd is not run.

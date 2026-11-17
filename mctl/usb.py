@@ -41,6 +41,7 @@ LOCK_SECONDS = 900          # a claim from a terminal waits this long for the lo
 # and the mounts stay well inside the unit's TimeoutStartSec (15 min); a test holds that sum.
 MOUNT_LOCK_SECONDS = 60
 _ismount = os.path.ismount
+_exists = os.path.exists
 
 
 class UsbError(Exception):
@@ -276,8 +277,16 @@ def mount(devnode, env=None, runner=subprocess.run, proc_mounts="/proc/mounts", 
     if _claimed_here(info, env):
         # The label and volume of this node's claim: its marker holds the claim's secret, so this stick is never
         # mounted where others can read it. It is the clip stick, or it is not mounted at all.
+        outcome = {}
         with _Lock(env, float(env.get("NXLX_CLIP_LOCK_SECONDS", MOUNT_LOCK_SECONDS))):
-            point = _mount_clip_stick(devnode, info, env, runner, log)
+            point = _mount_clip_stick(devnode, info, env, runner, log, proc_mounts, outcome)
+        if point is None and outcome.get("not_accepted"):
+            # Plugged in, but its marker is not this node's claim: the panel says so until it is pulled (ExecStop
+            # clears it). The start succeeds, so ExecStopPost does not clear it at once.
+            clipstick.write_status(_status_path(env), {"device": devnode, "label": info.get("LABEL"), "state": "not-accepted",
+                                                       "why": "its marker does not match this node"})
+            log("%s was not accepted as this node's clip stick (its marker does not match); it is not mounted" % info.get("LABEL"))
+            return None
         if point is None:
             raise UsbError("%s has the label and volume of this node's clip stick but did not pass as it; it is not "
                            "mounted (look at the lines above; plug it in again, or claim it again)" % info.get("LABEL"))
@@ -313,9 +322,11 @@ def _mount_plain(devnode, info, env, runner, proc_mounts, log, force_ro=False):
     return point
 
 
-def _is_own(devnode, info, env, runner, log):
+def _is_own(devnode, info, env, runner, log, outcome=None):
     """(record, marker_ok): the node's claim record for this partition and whether the stick's marker carries its
-    secret. No record, a record for another label or volume, or a marker without the secret: not the node's."""
+    secret. No record, a record for another label or volume, or a marker without the secret: not the node's. A marker
+    that was read and does not match sets outcome["not_accepted"]."""
+    outcome = {} if outcome is None else outcome
     state = env.get("NXLX_STATE_DIR", DEFAULT_STATE)
     node_id = clipstick.own_node_id(state)
     record = clipstick.read_record(state)
@@ -327,18 +338,35 @@ def _is_own(devnode, info, env, runner, log):
         return None, False
     if not clipstick.marker_matches(marker, node_id, label, record, uuid):
         log("%s has no marker with this node's claim on it" % label)
+        outcome["not_accepted"] = True
         return None, False
     return record, True
 
 
-def _mount_clip_stick(devnode, info, env, runner, log):
+def _clear_leftover(clip_dir, env, runner, proc_mounts, log):
+    """A binding at clip_dir whose device node is gone (its stick pulled while no unit stopped it, for example after a
+    claim): take it and that device's private mount down, and clear its status. True when clip_dir is free now."""
+    if not _ismount(clip_dir):
+        return True
+    mounts = read_mounts(proc_mounts)
+    sources = [dev for dev, p in mounts if p.rstrip("/") == clip_dir.rstrip("/")]
+    if not sources or not all(DEVNODE.match(dev) and not _exists(dev) for dev in sources):
+        return False
+    for dev in sources:
+        log("taking down the clips binding of %s, which is no longer plugged in" % dev)
+        unmount(dev, env=env, runner=runner, proc_mounts=proc_mounts, log=log)
+    return not _ismount(clip_dir)
+
+
+def _mount_clip_stick(devnode, info, env, runner, log, proc_mounts="/proc/mounts", outcome=None):
     """The node's own clip stick, under the lock. Returns the clips folder (or the private folder of a stick without
     one), or None when it did not pass as the clip stick; then nothing of it is left mounted."""
+    outcome = {} if outcome is None else outcome
     clip_dir = _clip_dir(env)
-    if _ismount(clip_dir):
+    if not _clear_leftover(clip_dir, env, runner, proc_mounts, log):
         log("another clip stick is already at %s; %s is not mounted" % (clip_dir, devnode))
         return None
-    record, own = _is_own(devnode, info, env, runner, log)
+    record, own = _is_own(devnode, info, env, runner, log, outcome)
     if not own:
         return None
     state = env.get("NXLX_STATE_DIR", DEFAULT_STATE)
@@ -369,6 +397,7 @@ def _mount_clip_stick(devnode, info, env, runner, log):
         # The stick could have been swapped between the look and this mount: the marker is read again here.
         if not clipstick.marker_matches(clipstick.read_marker(priv), node_id, label, record, uuid):
             log("%s changed between the check and the mount" % label)
+            outcome["not_accepted"] = True
             return None
         writable = ok
         if writable:
@@ -427,13 +456,15 @@ def unmount(devnode, env=None, runner=subprocess.run, proc_mounts="/proc/mounts"
     base = env.get("NXLX_USB_BASE", DEFAULT_BASE)
     clip_dir = _clip_dir(env).rstrip("/")
     mnt = os.path.join(_run_dir(env), "mnt")
+    peek = os.path.join(_run_dir(env), "peek")
     clipstick.clear_status(_status_path(env), devnode)          # the library goes back to the SD first
     points = [p for dev, p in read_mounts(proc_mounts) if dev == devnode]
-    # The clips binding first (it sits on the private mount), then the private mount, then the ordinary folders.
+    # The clips binding first (it sits on the private mount), then the private mount, then a look left over, then the
+    # ordinary folders.
     order = sorted(points, key=lambda p: 0 if p.rstrip("/") == clip_dir else 1 if os.path.dirname(p.rstrip("/")) == mnt else 2)
     for point in order:
         parent = os.path.dirname(point.rstrip("/"))
-        if point.rstrip("/") != clip_dir and parent not in (base.rstrip("/"), mnt):
+        if point.rstrip("/") != clip_dir and parent not in (base.rstrip("/"), mnt, peek):
             log("not unmounting %s: outside %s" % (point, base))
             continue
         _run(runner, ["umount", "-l", point], 30, log)            # lazy: the device may be gone
@@ -511,10 +542,16 @@ def claim(devnode, force=False, env=None, runner=subprocess.run, proc_mounts="/p
             raise UsbError("the stick could not be unmounted after the claim; pull it, plug it in and claim it again")
         clipstick.write_claim(state, label, info.get("UUID", ""), token)
         log("claimed %s (%s) as this node's clip stick" % (devnode, label))
-        point = _mount_clip_stick(devnode, info, env, runner, log)
-    if point is None:
-        raise UsbError("the claimed stick did not mount as the clip stick; look at the log")
-    return point
+    # Out of the lock: the unit's own mount takes it. The unit mounts the stick, so unplugging it runs the unit's
+    # ExecStop and ExecStopPost (a mount made here would belong to no unit and outlive the stick).
+    unit = "nxlx-usb@%s.service" % os.path.basename(devnode)     # the kernel name, as the udev rule names it (%k)
+    r = _run(runner, ["systemctl", "restart", unit], 20 * 60, log)
+    if not _ok(r):
+        raise UsbError("the stick is claimed, but %s did not start (%s); pull the stick and plug it in again"
+                       % (unit, (r.stderr or r.stdout).strip()))
+    status = clipstick.read_status(_status_path(env)) or {}
+    log("%s: %s" % (label, status.get("state") or "no status yet; look at: journalctl -u %s" % unit))
+    return status.get("state")
 
 
 def main(argv=None):
@@ -525,7 +562,9 @@ def main(argv=None):
         elif len(argv) == 2 and argv[0] == "unmount":
             unmount(argv[1])
         elif len(argv) in (2, 3) and argv[0] == "claim" and (len(argv) == 2 or argv[2] == "--force"):
-            claim(argv[1], force=len(argv) == 3)
+            state = claim(argv[1], force=len(argv) == 3)
+            if state != "in":
+                return 1
         elif argv == ["forget-clip-stick"]:
             gone = forget_clip_stick()
             print("this node no longer expects a clip stick" if gone else "this node had no clip stick")
