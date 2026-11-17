@@ -11,17 +11,22 @@ disk. Rules of this module:
 * mounted read-only unless NXLX_USB_RW=1, with nosuid,nodev,noexec, because a
   drive yanked mid-write at a gig is the usual way to corrupt it
 * the one exception is the node's own clip stick (mctl/clipstick.py, D143): an
-  exFAT partition labelled Nxx-CLIPS whose marker names this node. It is checked
-  with fsck.exfat -p and then mounted writable; if the check fails it is mounted
-  read-only like any other stick
+  exFAT partition labelled Nxx-CLIPS that root claimed on this node (the marker on
+  the stick carries the secret of the node's root-only claim record). It is checked
+  with fsck.exfat -p, mounted in a folder only root can reach, and only its clips
+  folder is bound at /media/nxlx-clips for the panel; if the check fails, that
+  binding is read-only too
 * never touch a disk that also holds the running system
 """
 
+import fcntl
 import grp
 import os
 import re
 import subprocess
 import sys
+import tempfile
+import time
 
 from . import clipstick, paths
 
@@ -31,7 +36,7 @@ SYSTEM_MOUNTS = ("/", "/boot", "/boot/firmware", "/home", "/var", "/usr", "/etc"
 DEFAULT_BASE = "/media/nxlx"
 DEFAULT_LINK = "/media/usb"
 DEFAULT_STATE = "/var/lib/nxlx"
-PEEK_DIR = os.path.join(paths.USB_DIR, "peek")
+LOCK_SECONDS = 900          # a claim or another clip stick's check may hold the lock this long (fsck is at most 600 s)
 
 
 class UsbError(Exception):
@@ -128,107 +133,249 @@ def _check_device(devnode, mounts, system_disks):
             raise UsbError("refusing %s: %s holds the running system (%s)" % (devnode, disk, point))
 
 
-def _peek_marker(devnode, info, env, runner, log):
-    """Mount the partition read-only at a private folder, read its marker, unmount. None when it cannot be read.
-    Read-only, so the stick is not written before fsck has looked at it."""
-    peek = os.path.join(env.get("NXLX_USB_PEEK", PEEK_DIR), os.path.basename(devnode))
+# --- where the clip stick's private things live -------------------------------------------------------------------------
+def _run_dir(env):
+    return env.get("NXLX_USB_RUN", paths.USB_DIR)
+
+
+def _status_path(env):
+    return env.get("NXLX_CLIP_STATUS", os.path.join(_run_dir(env), "clip-stick.json"))
+
+
+def _clip_dir(env):
+    return env.get("NXLX_CLIP_DIR", clipstick.DEFAULT_CLIP_DIR)
+
+
+def _private(env, name):
+    """A folder under the run folder that only root can enter (peek/, mnt/)."""
+    path = os.path.join(_run_dir(env), name)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+    return path
+
+
+class _Lock:
+    """flock on <run>/clip.lock: one claim or clip stick mount at a time, with a deadline."""
+
+    def __init__(self, env, seconds=None):
+        self.path = os.path.join(_run_dir(env), "clip.lock")
+        self.seconds = float(env.get("NXLX_CLIP_LOCK_SECONDS", LOCK_SECONDS)) if seconds is None else seconds
+        self.fd = None
+
+    def __enter__(self):
+        os.makedirs(os.path.dirname(self.path), mode=0o755, exist_ok=True)
+        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        end = time.monotonic() + self.seconds
+        while True:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except BlockingIOError:
+                if time.monotonic() >= end:
+                    os.close(self.fd)
+                    self.fd = None
+                    raise UsbError("another clip stick mount or claim is still running")
+                time.sleep(0.2)
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            os.close(self.fd)          # closing releases the lock
+            self.fd = None
+
+
+def _run(runner, cmd, timeout, log):
+    """A mount or umount; a time-out is a failure (returncode None), never an exception."""
     try:
-        os.makedirs(peek, mode=0o700, exist_ok=True)
+        return runner(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log("%s did not finish in %d s" % (" ".join(cmd[:1] + cmd[-1:]), timeout))
+        return subprocess.CompletedProcess(cmd, None, "", "timed out")
+
+
+def _ok(r):
+    return r.returncode == 0
+
+
+def _umount(runner, point, log, lazy=False):
+    """Unmount; True only for a clean unmount. A plain unmount that fails is detached lazily (so the folder can go),
+    and still counts as a failure: something held the stick."""
+    r = _run(runner, ["umount"] + (["-l"] if lazy else []) + [point], 60, log)
+    if not _ok(r) and not lazy:
+        log("could not unmount %s (%s); detaching it" % (point, (r.stderr or r.stdout).strip()))
+        _run(runner, ["umount", "-l", point], 30, log)
+    return _ok(r)
+
+
+def _peek_marker(devnode, env, runner, log):
+    """Mount the partition read-only at a folder of this call's own, read its marker, unmount. Returns (marker, ok):
+    ok is False when the look could not be finished cleanly, and then the stick is mounted as any other stick."""
+    try:
+        peek = tempfile.mkdtemp(prefix=os.path.basename(devnode) + ".", dir=_private(env, "peek"))
     except OSError as e:
-        log("could not make %s: %s" % (peek, e))
-        return None
-    r = runner(["mount", "-t", "exfat", "-o", mount_options("exfat", False, None), devnode, peek],
-               capture_output=True, text=True, timeout=60)
-    if r.returncode != 0:
+        log("could not make a folder to look at %s: %s" % (devnode, e))
+        return None, False
+    r = _run(runner, ["mount", "-t", "exfat", "-o", mount_options("exfat", False, None), devnode, peek], 60, log)
+    if not _ok(r):
         log("could not look for a clip stick marker on %s: %s" % (devnode, (r.stderr or r.stdout).strip()))
-        try:
-            os.rmdir(peek)
-        except OSError:
-            pass
-        return None
+        _umount(runner, peek, log, lazy=True)            # a mount that timed out may still have happened
+        _rmdir(peek)
+        return None, False
     try:
-        return clipstick.read_marker(peek)
+        marker = clipstick.read_marker(peek)
     finally:
-        runner(["umount", peek], capture_output=True, text=True, timeout=30)
-        try:
-            os.rmdir(peek)
-        except OSError:
-            pass
+        done = _umount(runner, peek, log)
+        _rmdir(peek)
+    if not done:
+        log("the look at %s could not be unmounted cleanly; treating it as any other stick" % devnode)
+        return None, False
+    return marker, True
 
 
-def _mount(runner, driver, opts, devnode, point):
-    return runner(["mount", "-t", driver, "-o", opts, devnode, point], capture_output=True, text=True, timeout=60)
+def _rmdir(path):
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
+def _mount(runner, driver, opts, devnode, point, log=print):
+    return _run(runner, ["mount", "-t", driver, "-o", opts, devnode, point], 60, log)
+
+
+def _bind(runner, src, dst, writable, log):
+    """Bind `src` at `dst` with its own nosuid,nodev,noexec (and ro unless `writable`)."""
+    r = _run(runner, ["mount", "--bind", src, dst], 60, log)
+    if not _ok(r):
+        return r
+    flags = "remount,bind,%s,nosuid,nodev,noexec" % ("rw" if writable else "ro")
+    r2 = _run(runner, ["mount", "-o", flags, dst], 60, log)
+    if not _ok(r2):
+        _umount(runner, dst, log, lazy=True)
+    return r2
 
 
 def mount(devnode, env=None, runner=subprocess.run, proc_mounts="/proc/mounts", log=print, system_disks=None):
     env = os.environ if env is None else env
     if not DEVNODE.match(devnode or ""):
         raise UsbError("refusing %r (not a USB disk device node)" % devnode)
-    base = env.get("NXLX_USB_BASE", DEFAULT_BASE)
-    link = env.get("NXLX_USB_LINK", DEFAULT_LINK)
-    rw = env.get("NXLX_USB_RW", "0") == "1"
-
     mounts = read_mounts(proc_mounts)
     if any(dev == devnode for dev, _ in mounts):
         log("%s is already mounted" % devnode)
         return None
     _check_device(devnode, mounts, system_disks)
-
     info = probe(devnode, runner)
-    fstype = info.get("TYPE", "")
-    if fstype not in ALLOWED_FS:
-        raise UsbError("unsupported filesystem %r on %s" % (fstype, devnode))
-
-    # The node's own clip stick? Only an exFAT Nxx-CLIPS partition whose marker names this node (never the serial).
-    own, why_ro = False, ""
+    if info.get("TYPE", "") not in ALLOWED_FS:
+        raise UsbError("unsupported filesystem %r on %s" % (info.get("TYPE", ""), devnode))
     if clipstick.candidate(info):
-        node_id = clipstick.own_node_id(env.get("NXLX_STATE_DIR", DEFAULT_STATE))
-        marker = _peek_marker(devnode, info, env, runner, log) if node_id else None
-        if clipstick.marker_matches(marker, node_id, info.get("LABEL")):
-            own = True
-            ok, why_ro = clipstick.fsck(devnode, runner, log)       # before the writable mount, never after
-            if not ok:
-                log("clip stick %s: %s; mounting it read-only" % (info.get("LABEL"), why_ro))
-        elif marker is not None:
-            log("%s is a clip stick of another node; mounting it read-only" % info.get("LABEL"))
-    writable = own and not why_ro
+        with _Lock(env):
+            point = _mount_clip_stick(devnode, info, env, runner, log)
+        if point is not None:
+            return point
+    return _mount_plain(devnode, info, env, runner, proc_mounts, log)
 
+
+def _mount_plain(devnode, info, env, runner, proc_mounts, log, force_ro=False):
+    """Every stick but the node's own clip stick, as before: /media/nxlx/<label>, read-only unless NXLX_USB_RW=1."""
+    base = env.get("NXLX_USB_BASE", DEFAULT_BASE)
+    link = env.get("NXLX_USB_LINK", DEFAULT_LINK)
+    rw = env.get("NXLX_USB_RW", "0") == "1" and not force_ro
+    fstype = info.get("TYPE", "")
     name = sanitize_label(info.get("LABEL"), os.path.basename(devnode))
     os.makedirs(base, mode=0o755, exist_ok=True)
-    point = _free_mountpoint(base, name, {p for _, p in mounts})
+    point = _free_mountpoint(base, name, {p for _, p in read_mounts(proc_mounts)})
     os.makedirs(point, mode=0o755, exist_ok=True)
     driver = "ntfs3" if fstype == "ntfs" else fstype
-    gid = _gid()
-    if writable:
-        r = _mount(runner, driver, mount_options(fstype, True, gid, errors_ro=True), devnode, point)
-        if r.returncode != 0:
-            log("the exfat driver refused errors=remount-ro (%s); mounting the clip stick without it"
-                % (r.stderr or r.stdout).strip())
-            r = _mount(runner, driver, mount_options(fstype, True, gid), devnode, point)
-    else:
-        r = _mount(runner, driver, mount_options(fstype, rw and not own, gid), devnode, point)
-    if r.returncode != 0:
-        try:
-            os.rmdir(point)
-        except OSError:
-            pass
+    r = _mount(runner, driver, mount_options(fstype, rw, _gid()), devnode, point, log)
+    if not _ok(r):
+        _rmdir(point)
         raise UsbError("mount failed: %s" % (r.stderr or r.stdout).strip())
     _point_link(link, point, log)
-    if own:
-        status = {"device": devnode, "point": point, "label": info.get("LABEL"), "writable": writable, "why": why_ro}
-        if writable:
-            try:
-                clipstick.ensure_clip_folder(point)
-            except (OSError, clipstick.ClipStickError) as e:
-                log("clip stick %s: no clips folder (%s)" % (info.get("LABEL"), e))
-                status.update(writable=False, why="no clips folder")
-        try:
-            clipstick.write_status(env.get("NXLX_CLIP_STATUS", clipstick.DEFAULT_STATUS), status)
-        except OSError as e:
-            log("could not write the clip stick status: %s" % e)
-    log("mounted %s (%s, %s%s) at %s" % (devnode, fstype, "rw" if (writable or (rw and not own)) else "ro",
-                                         ", the node's clip stick" if own else "", point))
+    log("mounted %s (%s, %s) at %s" % (devnode, fstype, "rw" if rw else "ro", point))
     return point
+
+
+def _is_own(devnode, info, env, runner, log, peek=True):
+    """(record, marker_ok): the node's claim record for this partition and whether the stick's marker carries its
+    secret. No record, a record for another label or volume, or a marker without the secret: not the node's."""
+    state = env.get("NXLX_STATE_DIR", DEFAULT_STATE)
+    node_id = clipstick.own_node_id(state)
+    record = clipstick.read_record(state)
+    label, uuid = info.get("LABEL"), info.get("UUID", "")
+    if node_id is None or not clipstick.record_matches(record, label, uuid):
+        return None, False
+    marker, done = _peek_marker(devnode, env, runner, log)
+    if not done:
+        return None, False
+    if not clipstick.marker_matches(marker, node_id, label, record, uuid):
+        if marker is not None:
+            log("%s has a clip stick marker that is not this node's claim; mounting it read-only" % label)
+        return None, False
+    return record, True
+
+
+def _mount_clip_stick(devnode, info, env, runner, log):
+    """The node's own clip stick, under the lock. Returns the clips folder, or None to mount it as any other stick."""
+    record, own = _is_own(devnode, info, env, runner, log)
+    if not own:
+        return None
+    state = env.get("NXLX_STATE_DIR", DEFAULT_STATE)
+    node_id, label, uuid = clipstick.own_node_id(state), info.get("LABEL"), info.get("UUID", "")
+    status_path, clip_dir = _status_path(env), _clip_dir(env)
+    status = {"device": devnode, "label": label, "state": "checking", "why": ""}
+    try:
+        clipstick.write_status(status_path, status)              # the panel says "checking" while fsck runs
+    except OSError as e:
+        log("could not write the clip stick status: %s" % e)
+    ok, why = clipstick.fsck(devnode, runner, log)               # before the writable mount, never after
+    if not ok:
+        log("clip stick %s: %s; mounting it read-only" % (label, why))
+    priv = os.path.join(_private(env, "mnt"), os.path.basename(devnode))
+    os.makedirs(priv, mode=0o700, exist_ok=True)
+    gid = _gid()
+    if ok:
+        r = _mount(runner, "exfat", mount_options("exfat", True, gid, errors_ro=True), devnode, priv, log)
+        if not _ok(r):
+            log("the exfat driver refused errors=remount-ro (%s); mounting the clip stick without it"
+                % (r.stderr or r.stdout).strip())
+            r = _mount(runner, "exfat", mount_options("exfat", True, gid), devnode, priv, log)
+    else:
+        r = _mount(runner, "exfat", mount_options("exfat", False, gid), devnode, priv, log)
+    if not _ok(r):
+        _umount(runner, priv, log, lazy=True)
+        _rmdir(priv)
+        clipstick.clear_status(status_path, devnode)
+        raise UsbError("mount failed: %s" % (r.stderr or r.stdout).strip())
+    # The stick could have been swapped between the look and this mount: the marker is read again here.
+    if not clipstick.marker_matches(clipstick.read_marker(priv), node_id, label, record, uuid):
+        log("%s changed between the check and the mount; mounting it read-only as any other stick" % label)
+        _umount(runner, priv, log)
+        _rmdir(priv)
+        clipstick.clear_status(status_path, devnode)
+        return None
+    writable = ok
+    if writable:
+        try:
+            clipstick.ensure_clip_folder(priv)
+        except (OSError, clipstick.ClipStickError) as e:
+            log("clip stick %s: could not make the clips folder (%s)" % (label, e))
+            writable, why = False, "no clips folder"
+    if not clipstick.has_clip_folder(priv):
+        status.update(state="no-clips", why=why or "no clips folder")
+        clipstick.write_status(status_path, status)
+        log("mounted %s (%s) without a clips folder; the library stays on the SD card" % (devnode, label))
+        return priv
+    os.makedirs(clip_dir, mode=0o755, exist_ok=True)
+    r = _bind(runner, os.path.join(priv, clipstick.CLIP_FOLDER), clip_dir, writable, log)
+    if not _ok(r):
+        _umount(runner, priv, log, lazy=True)
+        _rmdir(priv)
+        clipstick.clear_status(status_path, devnode)
+        raise UsbError("could not bind the clips folder: %s" % (r.stderr or r.stdout).strip())
+    status.update(state="in" if writable else "read-only", why=why)
+    clipstick.write_status(status_path, status)
+    log("mounted %s (%s, the node's clip stick, %s) with its clips folder at %s"
+        % (devnode, label, "rw" if writable else "ro", clip_dir))
+    return clip_dir
 
 
 def _point_link(link, point, log):
@@ -252,17 +399,20 @@ def unmount(devnode, env=None, runner=subprocess.run, proc_mounts="/proc/mounts"
         raise UsbError("refusing %r" % devnode)
     link = env.get("NXLX_USB_LINK", DEFAULT_LINK)
     base = env.get("NXLX_USB_BASE", DEFAULT_BASE)
-    clipstick.clear_status(env.get("NXLX_CLIP_STATUS", clipstick.DEFAULT_STATUS), devnode)   # the library goes back to the SD first
+    clip_dir = _clip_dir(env).rstrip("/")
+    mnt = os.path.join(_run_dir(env), "mnt")
+    clipstick.clear_status(_status_path(env), devnode)          # the library goes back to the SD first
     points = [p for dev, p in read_mounts(proc_mounts) if dev == devnode]
-    for point in points:
-        if os.path.dirname(point.rstrip("/")) != base.rstrip("/"):
+    # The clips binding first (it sits on the private mount), then the private mount, then the ordinary folders.
+    order = sorted(points, key=lambda p: 0 if p.rstrip("/") == clip_dir else 1 if os.path.dirname(p.rstrip("/")) == mnt else 2)
+    for point in order:
+        parent = os.path.dirname(point.rstrip("/"))
+        if point.rstrip("/") != clip_dir and parent not in (base.rstrip("/"), mnt):
             log("not unmounting %s: outside %s" % (point, base))
             continue
-        runner(["umount", "-l", point], capture_output=True, text=True, timeout=30)  # lazy: the device may be gone
-        try:
-            os.rmdir(point)
-        except OSError:
-            pass
+        _run(runner, ["umount", "-l", point], 30, log)            # lazy: the device may be gone
+        if point.rstrip("/") != clip_dir:
+            _rmdir(point)
         if os.path.islink(link) and os.readlink(link) == point:
             os.unlink(link)
         log("unmounted %s from %s" % (devnode, point))
@@ -274,9 +424,9 @@ def claim(devnode, force=False, env=None, runner=subprocess.run, proc_mounts="/p
     """Make the stick at `devnode` this node's clip stick (root only, from a terminal: `sudo nxlx-usb claim DEV`).
 
     The partition must be exFAT and labelled Nxx-CLIPS. It is unmounted if mounted, checked with fsck.exfat -p (which
-    must pass), mounted writable at a private folder, given the marker and a clips folder, unmounted, and then mounted
-    the normal way. A stick whose marker names another node is refused unless `force`. The node keeps a record that it
-    has a clip stick, so the panel can say when it is missing."""
+    must pass), mounted writable at a private folder, given the marker with a new secret and a clips folder, unmounted,
+    and then mounted the normal way. The same secret goes into the node's root-only claim record. A stick whose marker
+    names another node is refused unless `force`."""
     env = os.environ if env is None else env
     state = env.get("NXLX_STATE_DIR", DEFAULT_STATE)
     if not DEVNODE.match(devnode or ""):
@@ -290,43 +440,44 @@ def claim(devnode, force=False, env=None, runner=subprocess.run, proc_mounts="/p
     node_id = clipstick.own_node_id(state)
     if node_id is None:
         raise UsbError("this node has no id in %s yet; start the panel once (nxlx-web), then claim the stick" % state)
-    if any(dev == devnode for dev, _ in read_mounts(proc_mounts)):
-        unmount(devnode, env=env, runner=runner, proc_mounts=proc_mounts, log=log)
+    with _Lock(env):
         if any(dev == devnode for dev, _ in read_mounts(proc_mounts)):
-            raise UsbError("%s is still mounted; unmount it first" % devnode)
-    ok, why = clipstick.fsck(devnode, runner, log)
-    if not ok:
-        raise UsbError("the stick did not pass its check (%s); repair it on a computer first" % why)
-    peek = os.path.join(env.get("NXLX_USB_PEEK", PEEK_DIR), os.path.basename(devnode))
-    os.makedirs(peek, mode=0o700, exist_ok=True)
-    r = _mount(runner, "exfat", mount_options("exfat", True, _gid()), devnode, peek)
-    if r.returncode != 0:
+            unmount(devnode, env=env, runner=runner, proc_mounts=proc_mounts, log=log)
+            if any(dev == devnode for dev, _ in read_mounts(proc_mounts)):
+                raise UsbError("%s is still mounted; unmount it first" % devnode)
+        ok, why = clipstick.fsck(devnode, runner, log)
+        if not ok:
+            raise UsbError("the stick did not pass its check (%s); repair it on a computer first" % why)
+        peek = tempfile.mkdtemp(prefix=os.path.basename(devnode) + ".", dir=_private(env, "peek"))
+        r = _mount(runner, "exfat", mount_options("exfat", True, _gid()), devnode, peek, log)
+        if not _ok(r):
+            _umount(runner, peek, log, lazy=True)
+            _rmdir(peek)
+            raise UsbError("mount failed: %s" % (r.stderr or r.stdout).strip())
+        token = clipstick.new_token()
         try:
-            os.rmdir(peek)
-        except OSError:
-            pass
-        raise UsbError("mount failed: %s" % (r.stderr or r.stdout).strip())
-    try:
-        old = clipstick.read_marker(peek)
-        if (old is not None and isinstance(old.get("node_id"), str) and old.get("node_id") != node_id and not force):
-            raise UsbError("this stick is claimed by another node (%s); add --force to take it over"
-                           % (old.get("node_name") or old.get("node_id")))
-        if node_name is None:
-            import socket
-            node_name = socket.gethostname().split(".")[0]
-        clipstick.write_marker(peek, clipstick.make_marker(node_id, node_name, label))
-        clipstick.ensure_clip_folder(peek)
-    except clipstick.ClipStickError as e:
-        raise UsbError(str(e))
-    finally:
-        runner(["umount", peek], capture_output=True, text=True, timeout=120)
-        try:
-            os.rmdir(peek)
-        except OSError:
-            pass
-    clipstick.write_claim(state, label)
-    log("claimed %s (%s) as this node's clip stick" % (devnode, label))
-    return mount(devnode, env=env, runner=runner, proc_mounts=proc_mounts, log=log, system_disks=system_disks)
+            old = clipstick.read_marker(peek)
+            if old is not None and isinstance(old.get("node_id"), str) and old.get("node_id") != node_id and not force:
+                raise UsbError("this stick is claimed by another node (%s); add --force to take it over"
+                               % (old.get("node_name") or old.get("node_id")))
+            if node_name is None:
+                import socket
+                node_name = socket.gethostname().split(".")[0]
+            clipstick.write_marker(peek, clipstick.make_marker(node_id, node_name, label, token))
+            clipstick.ensure_clip_folder(peek)
+        except clipstick.ClipStickError as e:
+            raise UsbError(str(e))
+        finally:
+            done = _umount(runner, peek, log)
+            _rmdir(peek)
+        if not done:
+            raise UsbError("the stick could not be unmounted after the claim; pull it, plug it in and claim it again")
+        clipstick.write_claim(state, label, info.get("UUID", ""), token)
+        log("claimed %s (%s) as this node's clip stick" % (devnode, label))
+        point = _mount_clip_stick(devnode, info, env, runner, log)
+    if point is None:
+        raise UsbError("the claimed stick did not mount as the clip stick; look at the log")
+    return point
 
 
 def main(argv=None):

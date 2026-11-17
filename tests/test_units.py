@@ -480,9 +480,9 @@ class WebUnitLightsTest(unittest.TestCase):
         self.assertEqual(web["CapabilityBoundingSet"], ["CAP_NET_BIND_SERVICE"])
         self.assertEqual(web["AmbientCapabilities"], ["CAP_NET_BIND_SERVICE"])
         self.assertEqual(sorted(words(web, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
-        # /media/nxlx (D143): the node's own clip stick is mounted writable there, every other stick read-only by the mounter;
-        # a stick already mounted when the service starts would be read-only inside its namespace without this.
-        self.assertEqual(words(web, "ReadWritePaths"), ["/var/lib/nxlx", "/run/nxlx/web", "-/media/nxlx"])
+        # /media/nxlx-clips (D143): the clips folder of the node's own clip stick is bound there, nothing else of any stick;
+        # a binding already there when the service starts would be read-only inside its namespace without this.
+        self.assertEqual(words(web, "ReadWritePaths"), ["/var/lib/nxlx", "/run/nxlx/web", "-/media/nxlx-clips"])
         for key, value in (("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"), ("ProtectHome", "yes"), ("PrivateTmp", "yes"),
                            ("ProtectKernelTunables", "yes"), ("ProtectKernelModules", "yes"), ("ProtectControlGroups", "yes"),
                            ("RestrictNamespaces", "yes"), ("LockPersonality", "yes"), ("SystemCallArchitectures", "native"), ("UMask", "0007")):

@@ -5,6 +5,7 @@ import copy
 import json
 import re
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -1429,6 +1430,52 @@ class FactoryResetTest(Base):
         self.assertEqual(os.listdir(stick), ["show.mp4"])
         self.assertEqual(self.reset(confirm="factory-reset", media="keep")[0], 200)       # keeping them is fine
         self.assertEqual(os.listdir(stick), ["show.mp4"])
+
+    def test_a_claimed_clip_stick_keeps_every_clip_even_while_it_reads_missing(self):
+        """D143: the stick can be plugged in at any moment, so a node with a claimed clip stick never empties its media
+        folder, whichever folder that is just now."""
+        from mctl import clipstick
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state, True)
+        clipstick.write_claim(state, "N01-CLIPS", "", "00112233445566778899aabbccddeeff")
+        self.api.clip_chooser = clipstick.Chooser(self.media, os.path.join(state, "clips"), state, os.path.join(state, "s.json"), ttl=0)
+        self.assertEqual(self.api.clip_stick_state()["state"], "missing")
+        media = sorted(os.listdir(self.media))
+        st, out = self.reset(confirm="factory-reset", media="delete")
+        self.assertEqual(st, 409, out)
+        self.assertEqual(sorted(os.listdir(self.media)), media)
+        self.assertEqual(self.reset(confirm="factory-reset", media="keep")[0], 200)
+
+    def test_the_folder_checked_is_the_folder_emptied(self):
+        """If the media folder changed between the check and the delete (a stick plugged in meanwhile), the delete still
+        empties only the folder that was checked."""
+        elsewhere = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, elsewhere, True)
+        open(os.path.join(elsewhere, "keep-me.mp4"), "w").close()
+        media, flipped = self.media, []
+
+        class Flip:
+            clip_dir = "/nonexistent-clips"
+
+            def choose(self):
+                return (elsewhere if flipped else media), {"state": "none", "label": None, "text": ""}
+
+            def media_dir(self):
+                return self.choose()[0]
+
+            def state(self):
+                return self.choose()[1]
+
+            def claimed(self):
+                return False
+        self.api.clip_chooser = Flip()
+        real_stop = self.api.vibes.stop
+        self.api.vibes.stop = lambda: flipped.append(1) or real_stop()     # runs after the check, before the delete
+        st, out = self.reset(confirm="factory-reset", media="delete")
+        self.assertEqual(st, 200, out)
+        self.assertEqual(flipped, [1])
+        self.assertEqual(os.listdir(elsewhere), ["keep-me.mp4"])
+        self.assertNotIn("a.mp4", os.listdir(self.media))
 
     def test_a_clip_that_cannot_be_deleted_is_reported(self):
         real = self.care._unlink

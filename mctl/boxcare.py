@@ -1242,12 +1242,17 @@ class BoxCare:
         return {"name": self._name("diagnostics"), "file": scrub(out, secrets)}
 
     # ---- factory reset -----------------------------------------------------------------------------------------
-    def _media_on_usb(self):
-        """True when the media folder is on (or is) a USB drive: NXLX_MEDIA_DIR may point there, and a reset must
-        never empty a drive someone plugged in."""
+    def _media_on_usb(self, media=None):
+        """True when the media folder (`media`, resolved, or the one now) is on (or is) a USB drive: NXLX_MEDIA_DIR may
+        point there, and a reset must never empty a drive someone plugged in. True as well whenever this node has a
+        claimed clip stick (D143), even while it reads missing: the stick could be plugged in at any moment."""
         api = self.api
-        media = os.path.realpath(api.media_dir)
-        for root in (api.usb_root, api.usb_link):
+        claimed = getattr(api, "clip_stick_claimed", None)
+        if claimed is not None and claimed():
+            return True
+        media = media or os.path.realpath(api.media_dir)
+        chooser = getattr(api, "clip_chooser", None)
+        for root in (api.usb_root, api.usb_link, getattr(chooser, "clip_dir", None)):
             try:
                 root = os.path.realpath(root)
                 if os.path.commonpath([media, root]) == root:
@@ -1256,13 +1261,13 @@ class BoxCare:
                 pass
         return False
 
-    def _delete_media(self, problems):
-        """The clips in the box's own media folder: media files (and left-over upload pieces) at its top level only,
-        plain files and links, one by one. Anything else someone put there stays."""
+    def _delete_media(self, problems, folder):
+        """The clips in the box's own media folder (`folder`, the one _reset checked): media files (and left-over
+        upload pieces) at its top level only, plain files and links, one by one. Anything else someone put there stays."""
         api, removed = self.api, 0
         with api._media_lock:
             try:
-                entries = list(os.scandir(api.media_dir))
+                entries = list(os.scandir(folder))
             except OSError as e:
                 problems.append("the media folder could not be read: %s" % (e.strerror or e))
                 return 0
@@ -1320,7 +1325,8 @@ class BoxCare:
 
     def _reset(self, media, device, client):
         api = self.api
-        if media == "delete" and self._media_on_usb():
+        folder = os.path.realpath(api.media_dir) if media == "delete" else None     # resolved once: checked and emptied
+        if media == "delete" and self._media_on_usb(folder):
             raise ApiError(409, "the clips of this node are on a USB drive, which a reset never empties; choose to keep the clips")
         if not api._upload_lock.acquire(blocking=False):
             raise ApiError(409, "an upload is running; reset when it has finished")
@@ -1368,7 +1374,7 @@ class BoxCare:
             except OSError:
                 pass
             if media == "delete":
-                deleted = self._delete_media(problems)
+                deleted = self._delete_media(problems, folder)
             problems += api.theme_store.clear(api.themes)      # the owner's added themes go with the settings
             if api.https is not None:
                 problems += api.https.wipe()                   # the box's key and certificate: HTTP only, as a new box (D79)

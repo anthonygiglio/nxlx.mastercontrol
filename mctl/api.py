@@ -522,17 +522,29 @@ class Api:
         self._sd_media_dir = value
 
     def clip_stick_state(self):
-        """{"state": none|in|read-only|missing, "label", "text"}: what the panel says about the clip stick (D143)."""
-        chooser = self.__dict__.get("clip_chooser")
-        return chooser.state() if chooser is not None else {"state": "none", "label": None, "text": ""}
+        """{"state": none|in|checking|read-only|no-clips|missing, "label", "text"}: what the panel says about the clip
+        stick (D143)."""
+        return self._media_now()[1]
 
-    def resolve_media(self, name):
-        """A media file by name, guaranteed to live inside the media folder."""
+    def _media_now(self):
+        """(media folder, clip stick state) read once, together: an operation that uses the folder more than once
+        uses this one answer, so the stick going in or out halfway cannot split it between two folders."""
+        chooser = self.__dict__.get("clip_chooser")
+        if chooser is None:
+            return self.__dict__.get("_sd_media_dir"), {"state": "none", "label": None, "text": ""}
+        return chooser.choose()
+
+    def clip_stick_claimed(self):
+        chooser = self.__dict__.get("clip_chooser")
+        return chooser is not None and chooser.claimed()
+
+    def resolve_media(self, name, root=None):
+        """A media file by name, guaranteed to live inside the media folder (`root`, resolved, when the caller holds one)."""
         if not valid_name(name):
             raise bad("invalid file name")
         if not name.lower().endswith(MEDIA_EXTENSIONS):
             raise bad("not a media file")
-        root = os.path.realpath(self.media_dir)
+        root = root or os.path.realpath(self.media_dir)
         path = os.path.realpath(os.path.join(root, name))
         if os.path.dirname(path) != root or not os.path.isfile(path):
             raise ApiError(404, "file not found")
@@ -585,11 +597,12 @@ class Api:
             raise ApiError(404, "file not found on the USB drive")
         return path
 
-    def media_list(self):
+    def media_list(self, root=None):
+        root = root or self.media_dir
         try:
-            names = sorted(n for n in os.listdir(self.media_dir)
+            names = sorted(n for n in os.listdir(root)
                            if not n.startswith(".") and n.lower().endswith(MEDIA_EXTENSIONS)
-                           and os.path.isfile(os.path.join(self.media_dir, n)))
+                           and os.path.isfile(os.path.join(root, n)))
         except OSError:
             names = []
         return names
@@ -974,8 +987,8 @@ class Api:
             status["path"] = streams_mod.redact(path)
         return status
 
-    def _statvfs_free(self):
-        path = self.media_dir
+    def _statvfs_free(self, path=None):
+        path = path or self.media_dir
         while path and not os.path.exists(path):  # a media folder not created yet: ask its parent
             parent = os.path.dirname(path)
             if parent == path:
@@ -987,18 +1000,24 @@ class Api:
             return 0
         return st.f_bavail * st.f_frsize
 
-    def sweep_stale_uploads(self):
+    def _free_at(self, root):
+        """Free bytes where `root` is (the folder this operation holds); a free-space function given to the Api for
+        tests is asked as it is."""
+        return self._statvfs_free(root) if self._free_space == self._statvfs_free else self._free_space()
+
+    def sweep_stale_uploads(self, root=None):
         """Delete .upload-* temp files. They are hidden, can be gigabytes, and are left behind by a
         power cut or a killed service. Safe whenever no upload is running (we hold the lock or are starting)."""
         removed = 0
+        root = root or self.media_dir
         try:
-            names = os.listdir(self.media_dir)
+            names = os.listdir(root)
         except OSError:
             return 0
         for n in names:
             if n.startswith(".upload-"):
                 try:
-                    os.unlink(os.path.join(self.media_dir, n))
+                    os.unlink(os.path.join(root, n))
                     removed += 1
                 except OSError:
                     pass
@@ -1006,14 +1025,15 @@ class Api:
 
     def media(self, body, device, client):
         details = []
-        for name in self.media_list():
+        root, clip_stick = self._media_now()
+        for name in self.media_list(root):
             try:
-                st = os.stat(os.path.join(self.media_dir, name))
+                st = os.stat(os.path.join(root, name))
                 details.append({"name": name, "size": st.st_size, "modified": int(st.st_mtime)})
             except OSError:
                 pass
-        return {"files": [d["name"] for d in details], "details": details, "free": self._free_space(),
-                "max_upload": MAX_UPLOAD_BYTES, "usb": self.usb_drives(), "clip_stick": self.clip_stick_state(),
+        return {"files": [d["name"] for d in details], "details": details, "free": self._free_at(root),
+                "max_upload": MAX_UPLOAD_BYTES, "usb": self.usb_drives(), "clip_stick": clip_stick,
                 "autostart_usb": self.settings.data.get("autostart", {}).get("mode") == "usb"}
 
     def _safe_new_name(self, name):
@@ -1031,7 +1051,10 @@ class Api:
             raise ApiError(411, "Content-Length required")
         if length > MAX_UPLOAD_BYTES:
             raise ApiError(413, "file is larger than the %d MB limit" % (MAX_UPLOAD_BYTES // (1024 * 1024)))
-        root = os.path.realpath(self.media_dir)
+        where, clip_stick = self._media_now()
+        if clip_stick["state"] in clipstick.REFUSE_TEXT:      # a claimed stick that cannot take it: never onto the SD instead
+            raise ApiError(409, clipstick.REFUSE_TEXT[clip_stick["state"]])
+        root = os.path.realpath(where)
         try:
             os.makedirs(root, exist_ok=True)
         except OSError as e:
@@ -1040,8 +1063,8 @@ class Api:
             raise ApiError(409, "another upload is in progress")
         tmp = None
         try:
-            self.sweep_stale_uploads()  # any .upload-* file now is left over from a crash: no upload is running
-            if length + FREE_SPACE_RESERVE > self._free_space():
+            self.sweep_stale_uploads(root)  # any .upload-* file now is left over from a crash: no upload is running
+            if length + FREE_SPACE_RESERVE > self._free_at(root):
                 raise ApiError(507, "not enough free space on the node")
             final = os.path.join(root, name)
             if os.path.lexists(final) and not replace:
@@ -1295,11 +1318,12 @@ class Api:
         except OSError:
             pass  # not every filesystem supports it (some USB mounts); the file itself was synced
 
-    def _real_media_file(self, name):
-        """The path of a real (non-link) media file called `name`; links are refused so a delete or rename
-        can never act on something other than the name the user saw."""
-        path = self.resolve_media(name)
-        plain = os.path.join(os.path.realpath(self.media_dir), name)
+    def _real_media_file(self, name, root=None):
+        """The path of a real (non-link) media file called `name` in `root` (the folder the caller resolved once);
+        links are refused so a delete or rename can never act on something other than the name the user saw."""
+        root = root or os.path.realpath(self.media_dir)
+        self.resolve_media(name, root)
+        plain = os.path.join(root, name)
         if os.path.islink(plain):
             raise ApiError(409, "%s is a link; change it on the node, not from here" % name)
         return plain
@@ -1311,7 +1335,7 @@ class Api:
     def delete_media(self, body, device, client):
         name = body.get("name")
         with self._media_lock:
-            path = self._real_media_file(name)
+            path = self._real_media_file(name, os.path.realpath(self._media_now()[0]))
             try:
                 os.unlink(path)
             except OSError as e:
@@ -1322,8 +1346,9 @@ class Api:
         name = body.get("name")
         new = self._safe_new_name(body.get("new"))
         with self._media_lock:
-            src = self._real_media_file(name)
-            dst = os.path.join(os.path.realpath(self.media_dir), new)
+            root = os.path.realpath(self._media_now()[0])
+            src = self._real_media_file(name, root)
+            dst = os.path.join(root, new)
             try:
                 os.link(src, dst)  # fails if `new` exists: a rename must never overwrite
             except FileExistsError:
