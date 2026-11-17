@@ -1115,6 +1115,9 @@ def build(env=None, player=None):
                               enabled=lambda: renderer_mod.loop_lists(settings.data.get("renderer"))))
     api = Api(player, settings, auth, registry, themes, media, board, addons_dir=addons,
               spawn=env.get("NXLX_DEV_SPAWN") == "1", on_pin=lambda pin: write_pin_file(rundir, pin))
+    from . import clipstick
+    api.clip_chooser = clipstick.Chooser(media, env.get("NXLX_CLIP_DIR", clipstick.DEFAULT_CLIP_DIR), state,
+                                         env.get("NXLX_CLIP_STATUS", clipstick.DEFAULT_STATUS))
     api.net = netd_mod.NetdClient(os.path.join(env.get("NXLX_NETD_DIR") or rundir, paths.NETD_SOCKET))
     from . import capture as capture_mod
     api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))

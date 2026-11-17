@@ -252,6 +252,17 @@ if [ ${#raster_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
 	fi
 fi
 
+# Optional: the node's clip stick (D143) is checked with fsck.exfat, from exfatprogs, before it is mounted writable
+# (Raspberry Pi OS has it; Debian's netinst does not). Without it the clip stick is mounted read-only and the panel says so.
+if ! command -v fsck.exfat >/dev/null && [ ! -x /usr/sbin/fsck.exfat ] && [ ! -x /sbin/fsck.exfat ]; then
+	if [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
+		log "the clip stick will be mounted read-only until exfatprogs is installed"
+	else
+		log "installing exfatprogs (to check the clip stick)"
+		run apt-get install -y --no-install-recommends exfatprogs || log "could not install exfatprogs; the clip stick will be mounted read-only"
+	fi
+fi
+
 # Optional: sound reactivity (D96) reads a capture device with arecord, from alsa-utils (in Raspberry Pi OS already).
 # Without it the sound service idles and the panel says arecord is missing.
 if ! command -v arecord >/dev/null && [ ! -x /usr/bin/arecord ]; then
@@ -831,6 +842,7 @@ if [ "$DRY" = 0 ]; then
 	cp "$SRC/install/99-nxlx-usb.rules" "$USB_RULE"
 fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
+log "a clip stick (an exFAT partition labelled like N01-CLIPS) becomes this node's writable clip folder with: sudo nxlx-usb claim /dev/sdX2"
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	prepare_run_folder
 	systemctl daemon-reload
