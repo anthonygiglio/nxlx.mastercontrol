@@ -236,6 +236,7 @@ def write_status(path, status):
     folder = os.path.dirname(path)
     os.makedirs(folder, mode=0o755, exist_ok=True)
     clean = {k: status.get(k) for k in ("device", "label", "state", "why")}
+    clean["since"] = int(time.time())
     write_file(folder, os.path.basename(path), (json.dumps(clean, sort_keys=True) + "\n").encode("utf-8"), mode=0o644)
 
 
@@ -299,6 +300,8 @@ def forget_claim(state_dir):
 
 MISSING_TEXT = ("The clip stick %s is not plugged in. The library shows the test clips on the node's SD card; "
                 "plug the stick in to see and add your clips.")
+CHECKING_STALE = FSCK_SECONDS + 300      # a "checking" status older than this was left by a unit that was killed
+DEVNODE = re.compile(r"^/dev/sd[a-z]{1,2}[0-9]{0,2}$")
 CHECKING_TEXT = ("Checking the clip stick %s. The library shows the test clips on the node's SD card until the check "
                  "is done.")
 READ_ONLY_TEXT = ("The clip stick %s is in but read only (%s). Its clips play; to add clips, check the stick on a "
@@ -313,17 +316,28 @@ class Chooser:
     is cached for a moment; nothing here raises. The status file names no path: it cannot point the panel elsewhere."""
 
     def __init__(self, sd_dir, clip_dir, state_dir, status_path=DEFAULT_STATUS, clock=time.monotonic, ttl=1.0,
-                 ismount=os.path.ismount):
+                 ismount=os.path.ismount, now=time.time, exists=os.path.exists):
         self.sd_dir, self.clip_dir, self.state_dir, self.status_path = sd_dir, clip_dir, state_dir, status_path
-        self.clock, self.ttl, self.ismount = clock, ttl, ismount
+        self.clock, self.ttl, self.ismount, self.now, self.exists = clock, ttl, ismount, now, exists
         self._cache = (None, None)
+
+    def _live(self, st):
+        """A status the mounter could still stand behind: its device is there and, while checking, it is not older
+        than the longest check (a unit killed mid-check never cleared it)."""
+        dev = st.get("device")
+        if not (isinstance(dev, str) and DEVNODE.fullmatch(dev) and self.exists(dev)):
+            return False
+        if st.get("state") == "checking":
+            since = st.get("since")
+            return type(since) is int and 0 <= self.now() - since <= CHECKING_STALE
+        return True
 
     def claimed(self):
         return claimed_label(self.state_dir) is not None if self.state_dir else False
 
     def _look(self):
         st = read_status(self.status_path)
-        if st is not None and label_ok(st.get("label")):
+        if st is not None and label_ok(st.get("label")) and self._live(st):
             label, state, why = st["label"], st.get("state"), str(st.get("why") or "")[:200]
             if state == "checking":
                 return self.sd_dir, {"state": "checking", "label": label, "text": CHECKING_TEXT % label}

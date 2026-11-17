@@ -21,3 +21,13 @@
 - (Low 8) `flock` on `/run/nxlx-usb/clip.lock` (with a deadline) in claim and in the clip stick mount; each look has its own `mkdtemp` folder.
 - Tests: test_clipstick grew to 41, test_boxcare by 2. Each fix was taken out once to see its test fail (the in-lock name check of the upload fallback, the secret check, the swapped stick, the look's unmount, the upload refusal, the reset's one folder and the claimed-stick reset): every one failed.
 - Not run: a real node, stick, fsck.exfat, exFAT mount, bind mount or systemd namespace.
+
+## 2026-11-17, re-review of clip-stick 689dfab
+
+- (1) A start killed during the check (stick pulled, time limit) left `checking` for good: nxlx-usb@.service now runs `nxlx-usb unmount` as ExecStopPost too (it clears the status and takes the binding and the private mount of that device down, and does nothing the second time), the status carries the time, and the panel passes over a `checking` older than the longest check plus five minutes and any status whose device is gone. A stick mount waits at most 60 s for the lock (a claim still 15 min), so wait, check and mounts fit the 15 min start limit (a test holds the sum).
+- (2) Everything after the private mount is in try/finally: a failure takes the binding and the mount down and clears the status.
+- (3) A second stick with the same claim is not mounted while `/media/nxlx-clips` is a mount point.
+- (4) `forget-clip-stick` is refused while the stick is mounted (status, binding or private mount).
+- (5) A `blkid` time-out is a UsbError.
+- (6) A stick with the claim's label and volume serial is the clip stick or not mounted at all, never under /media/nxlx, so its token is never readable to the player or the panel. D143 says the token is a bearer secret: a clone needs the stick in hand, accepted.
+- New test that a delete reads the media folder once (it failed when `_real_media_file` read it a second time). Each fix was taken out once and its test failed (9 checks).
