@@ -1308,6 +1308,11 @@
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') strobeLetGo(); });
   function strobeLine(t) { t = sentence(t); return /[.!?]$/.test(t) ? t : t + '.'; }      // (the node's words may end with a full stop already)
   var STROBE_WAYS = [['colour', 'To the colour'], ['black', 'To black'], ['add', 'Colour added']];
+  var strobeOldPoll = null;              // the timer of the card before, ended only when a new card starts its own
+  function readyLine(d) {
+    if (d.warn) return 'Nothing to flash over: play a clip, a stream, a live input or a shader first.';
+    return d.path === 'effect' ? 'Ready. Hold the button to flash. (This node puts it on as the effect: the first flash takes a moment.)' : 'Ready. Hold the button to flash.';
+  }
   function strobeCard() {
     var state = h('div', { class: 'hint', id: 'strobestate', role: 'status', text: 'Getting ready...' });
     var say = function (t) { state.textContent = t; };
@@ -1315,6 +1320,7 @@
     var sets = h('div', { class: 'list sp', id: 'strobesets' });
     var card = h('div', { class: 'card', id: 'strobecard' }, h('div', { class: 'k sent', id: 'strobehead', text: 'Strobe: flashes for as long as you hold it' }), hold, state, sets);
     var renewEvery = 200;
+    var shown = '', warnRun = 0;      // the last ready or warning line this card said, and how many readings in a row carried a warning
     function show(r) {          // what a hold or a renewal said
       if (!strobeHeld) return;
       var d = r.data || {};
@@ -1389,8 +1395,30 @@
       draw(d);
       if (!d.available) { say(strobeLine(d.why || 'the strobe is not available')); return; }
       hold.disabled = false;
-      say(d.path === 'effect' ? 'Ready. Hold the button to flash. (This node puts it on as the effect: the first flash takes a moment.)' : 'Ready. Hold the button to flash.');
+      if (document.getElementById('strobecard') !== card) return;      // an answer for a card already replaced: its timer must not end the new card's
+      shown = readyLine(d);
+      warnRun = d.warn ? 2 : 0;                           // the first draw says it at once
+      say(shown);
       api('POST', '/api/strobe', { arm: true });          // so the first hold is quick (D134: the loaded copy)
+      // The node says "warn" when nothing plays for the strobe to flash over; that changes without the card being drawn
+      // again, so the status line is read again every 3 seconds: this card's own timer, ended when it is gone, idle while
+      // held or while the page is hidden. It changes the line only while the line still shows what the card last said (a
+      // refusal or an error stays), and the warning needs two readings in a row (a loop point or a clip start has no
+      // picture for a moment).
+      clearInterval(strobeOldPoll);
+      var timer = setInterval(function () {
+        if (!card.isConnected) { clearInterval(timer); return; }
+        if (strobeHeld || document.visibilityState === 'hidden') return;
+        api('GET', '/api/strobe').then(function (r2) {
+          if (strobeHeld || !card.isConnected || !r2.ok || !r2.data || !r2.data.available) return;
+          warnRun = r2.data.warn ? warnRun + 1 : 0;
+          if (r2.data.warn && warnRun < 2) return;
+          if (state.textContent !== shown && state.textContent !== 'Ready. Hold the button to flash.') return;      // (letting go says the plain line)
+          shown = readyLine(r2.data);
+          say(shown);
+        });
+      }, 3000);
+      strobeOldPoll = timer;
     });
     return card;
   }
