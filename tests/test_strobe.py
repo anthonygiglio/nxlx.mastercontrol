@@ -687,14 +687,36 @@ class RouteTest(RouteBase):
         self.assertEqual((st, body.get("ok")), (200, True), body)
         self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
 
-    def test_the_state_follows_the_picture(self):
+    def test_no_picture_on_the_effect_path_warns_and_stays_available(self):
         st, body, _ = self.get("/api/strobe")
-        self.assertEqual((st, body["available"], body["why"]), (200, True, None))
+        self.assertEqual((st, body["available"], body["path"], body.get("warn")), (200, True, "effect", None))
         self.mpv.video = None
         st, body, _ = self.get("/api/strobe")
-        self.assertEqual((st, body["available"]), (200, False))
-        self.assertIn("Nothing with a picture", body["why"])
-        self.assertEqual(body["held"], 0)
+        self.assertEqual((st, body["available"], body["why"]), (200, True, None))
+        self.assertIn("Nothing with a picture", body["warn"])
+
+    def test_no_picture_on_the_chain_path_does_not_warn(self):
+        self.player.native_chains = lambda: True
+        self.mpv.video = None
+        st, body, _ = self.get("/api/strobe")
+        self.assertEqual((st, body["available"], body["path"]), (200, True, "chain"))
+        self.assertNotIn("warn", body)
+
+    def test_a_strobe_that_is_lit_does_not_warn(self):
+        self.assertEqual(self.post("/api/strobe/hold", {"holder": "tab"})[0], 200)
+        self.mpv.video = None
+        body = self.get("/api/strobe")[1]
+        self.assertTrue(body["on"])
+        self.assertNotIn("warn", body)
+
+    def test_state_and_set_do_not_ask_the_player(self):
+        asked = []
+        real = self.mpv.request
+        self.mpv.request = lambda *a, **k: (asked.append(a), real(*a, **k))[1]
+        self.mpv.video = None
+        self.strobe.state()
+        self.strobe.set({"rate": 1.5})
+        self.assertEqual([a for a in asked if a and a[0] == "get_property" and a[1:2] == ("video-params",)], [])
 
     def test_a_press_with_no_picture_that_stays_away_is_refused(self):
         self.mpv.video = None

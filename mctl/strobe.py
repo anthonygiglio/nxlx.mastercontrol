@@ -651,7 +651,7 @@ class Strobe:
     def state(self):
         try:
             self._need()
-            ok, why = self.api.effects.available()      # the effects' own check: the module on and a picture playing (else a press is refused)
+            ok, why = True, None
         except ApiError as e:
             ok, why = False, e.message
         native, top, faster, gap = self._native(), self.top(), self.faster(), self._gap()
@@ -668,7 +668,18 @@ class Strobe:
                     "started_ms": self.started_ms}
 
     def api_get(self, body, device, client):
-        return self.state()
+        """The state, and for the panel's GET only: `warn` when the strobe would be the effect (the classic renderer) and no
+        picture is playing, which the effects' own check says in words. `available` is not touched by it: the New renderer's
+        chain takes a hold with nothing playing, and the player is not asked in state() (the controllers' threads call it)."""
+        st = self.state()
+        if st["available"] and st["path"] == "effect" and not st["on"]:
+            try:
+                ok, why = self.api.effects.available()
+            except Exception:
+                ok, why = True, None
+            if not ok:
+                st["warn"] = why
+        return st
 
     def api_set(self, body, device, client):
         return self.set(body)

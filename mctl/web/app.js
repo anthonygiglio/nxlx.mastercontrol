@@ -1308,6 +1308,11 @@
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') strobeLetGo(); });
   function strobeLine(t) { t = sentence(t); return /[.!?]$/.test(t) ? t : t + '.'; }      // (the node's words may end with a full stop already)
   var STROBE_WAYS = [['colour', 'To the colour'], ['black', 'To black'], ['add', 'Colour added']];
+  var strobePoll = null;
+  function readyLine(d) {
+    if (d.warn) return strobeLine('Nothing to flash over: ' + d.warn);
+    return d.path === 'effect' ? 'Ready. Hold the button to flash. (This node puts it on as the effect: the first flash takes a moment.)' : 'Ready. Hold the button to flash.';
+  }
   function strobeCard() {
     var state = h('div', { class: 'hint', id: 'strobestate', role: 'status', text: 'Getting ready...' });
     var say = function (t) { state.textContent = t; };
@@ -1389,8 +1394,19 @@
       draw(d);
       if (!d.available) { say(strobeLine(d.why || 'the strobe is not available')); return; }
       hold.disabled = false;
-      say(d.path === 'effect' ? 'Ready. Hold the button to flash. (This node puts it on as the effect: the first flash takes a moment.)' : 'Ready. Hold the button to flash.');
+      say(readyLine(d));
       api('POST', '/api/strobe', { arm: true });          // so the first hold is quick (D134: the loaded copy)
+      // The node says "warn" when nothing plays for the strobe to flash over; that changes without the card being drawn
+      // again, so the status line is read again every 3 seconds (one timer, ended when the card is gone, idle while held)
+      clearInterval(strobePoll);
+      strobePoll = setInterval(function () {
+        if (!card.isConnected) { clearInterval(strobePoll); strobePoll = null; return; }
+        if (strobeHeld) return;
+        api('GET', '/api/strobe').then(function (r2) {
+          if (strobeHeld || !card.isConnected || !r2.ok || !r2.data || !r2.data.available) return;
+          say(readyLine(r2.data));
+        });
+      }, 3000);
     });
     return card;
   }
