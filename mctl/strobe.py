@@ -651,7 +651,7 @@ class Strobe:
     def state(self):
         try:
             self._need()
-            ok, why = True, None
+            ok, why = self.api.effects.available()      # the effects' own check: the module on and a picture playing (else a press is refused)
         except ApiError as e:
             ok, why = False, e.message
         native, top, faster, gap = self._native(), self.top(), self.faster(), self._gap()

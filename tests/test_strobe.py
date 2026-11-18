@@ -95,6 +95,9 @@ class Effects:
     def _need(self):
         pass
 
+    def available(self):
+        return True, None
+
     def _path(self, sid):
         return "/x/" + sid, "bundled"
 
@@ -683,6 +686,15 @@ class RouteTest(RouteBase):
         st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
         self.assertEqual((st, body.get("ok")), (200, True), body)
         self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+
+    def test_the_state_follows_the_picture(self):
+        st, body, _ = self.get("/api/strobe")
+        self.assertEqual((st, body["available"], body["why"]), (200, True, None))
+        self.mpv.video = None
+        st, body, _ = self.get("/api/strobe")
+        self.assertEqual((st, body["available"]), (200, False))
+        self.assertIn("Nothing with a picture", body["why"])
+        self.assertEqual(body["held"], 0)
 
     def test_a_press_with_no_picture_that_stays_away_is_refused(self):
         self.mpv.video = None
