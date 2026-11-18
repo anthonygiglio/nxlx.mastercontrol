@@ -74,6 +74,9 @@ jobs:
         run: git fetch --depth=1 origin 0ff0ddbeb662efb405186a0e774839cb1f61b2de
       - name: The release before the package rename (tests/test_release.py runs its updater on this release's bundle)
         run: git fetch --depth=1 origin 1057087dcc9939af9044f68d03ef3ea72a322116
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -104,6 +107,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -158,6 +164,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
       - name: Install mpv, a virtual display and Mesa
         timeout-minutes: 10
         run: tools/ci-apt.sh mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
@@ -183,6 +192,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: The release before the rename of the system names (the old node is installed from it)
         run: git fetch --depth=1 origin 0ff0ddbeb662efb405186a0e774839cb1f61b2de
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -201,6 +213,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: The release before the rename of the system names (installed first, then upgraded through install.sh)
         run: git fetch --depth=1 origin 0ff0ddbeb662efb405186a0e774839cb1f61b2de
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -358,6 +373,10 @@ jobs:
       PKGS: gcc make pkg-config libc6-dev libmpv-dev libegl-dev libgles-dev libgbm-dev libdrm-dev libgl1-mesa-dri libegl-mesa0 ffmpeg fonts-dejavu-core python3 git ca-certificates
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-cache
+        if: ${{ matrix.container == '' }}   # the Debian leg does not use ci-apt.sh
+        with:
+          packages: ${{ env.PKGS }}
       - name: Install the build tools, libmpv, Mesa, ffmpeg and a font (three tries; a slow mirror is given up on)
         timeout-minutes: 12
         run: |
@@ -520,6 +539,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv
       - name: Install mpv and a browser
         timeout-minutes: 10
         run: |
