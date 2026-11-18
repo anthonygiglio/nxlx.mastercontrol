@@ -64,8 +64,9 @@ class RootfsTest(unittest.TestCase):
         self.assertEqual(r.calls[0][0], "sh")
 
     def test_enable_refused_when_media_lives_on_root(self):
+        # "/" is on the root filesystem by definition; self.media is a temp folder, which may be on its own tmpfs
         with self.assertRaises(rootfs.RootfsError):
-            rootfs.change("enable", "x86", self.media, runner=Runner(), proc_mounts=mounts("ext4"),
+            rootfs.change("enable", "x86", "/", runner=Runner(), proc_mounts=mounts("ext4"),
                           which=which_only("overlayroot-chroot"), log=self.logs.append)
 
     def test_enable_when_already_active_is_a_no_op(self):

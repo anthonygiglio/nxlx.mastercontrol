@@ -15,7 +15,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location("ci_shard", os.path.join(REPO, "tools", "ci-shard.py"))
 shard = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(shard)
-PARTS = 3
+PARTS = 4
 
 
 def workflow():

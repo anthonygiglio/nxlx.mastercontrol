@@ -1,0 +1,7 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-18, J-019: two tests that failed only on a machine with a separate /tmp, and unit parts made even again
+
+- tests/test_release.py, the dirty-tree test: `git clone --local` hard-links the object files, and in WSL /tmp is a tmpfs, a different filesystem from the checkout, so git stopped with "Invalid cross-device link". The clone now uses `--no-hardlinks`. Nothing in the product is involved.
+- tests/test_rootfs.py, test_enable_refused_when_media_lives_on_root: it passed a temp folder as the media folder and expected it to count as "on the root filesystem". That is true only when /tmp is part of /. With a tmpfs /tmp it is not, so the refusal (correctly) did not happen. The test now passes "/", which is on the root filesystem on every machine. The product code (rootfs.media_on_root) is right and unchanged.
+- Unit parts: the times in tools/ci-shard.py were from 2026-10-20 and had no entry for test_nxlx_convert (136 s), test_handover_api (89 s), test_install_convert (37 s), test_project_log (34 s), test_graphics and others. From master's run 44183092942 (Python 3.9), the three parts ran 1,100, 846 and 949 seconds of tests (part 1 took 19.4 minutes of its 20-minute step). The table is rewritten from that run and CI now runs four parts of about 725 seconds. The two required checks, test (3.9) and test (3.12), wait for every part and keep their names; only the unit job's own names change, from "part N of 3" to "part N of 4".

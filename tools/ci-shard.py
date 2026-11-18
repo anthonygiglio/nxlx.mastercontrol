@@ -5,12 +5,15 @@
 
     python3 tools/ci-shard.py K N      prints the modules of part K of N, one per line, as `tests.test_x`
 
-The whole suite took 1,731 of its 1,800 seconds on 2026-10-20, so CI runs it as N parts side by side. Every module
+The whole suite took 1,731 of its 1,800 seconds on 2026-10-20, so CI runs it as N parts (4 now) side by side. Every module
 under tests/ named test_*.py is in exactly one part, so a new module is run without anyone listing it
 (tests/test_ci_shard.py holds this). The parts are made even by the seconds each module took in CI: the heaviest
 module goes to the lightest part, and so on down. A module that is not in the list below counts as a small one.
 
-The seconds are from the Python 3.9 job of master's run 39384981398 (2026-10-20). Only modules of ten seconds or more
+The seconds are from the Python 3.9 jobs of master's run 44183092942 (2026-11-17; each test's time is the gap between
+its line and the one before it in the log), written in again on 2026-11-18 (J-019): part 1 of 3 had run 1,100 seconds
+of tests against 850 and 950 for the others, with the 3 parts' sum at 2,900, so CI runs 4 parts of about 730 seconds.
+It was first from the Python 3.9 job of master's run 39384981398 (2026-10-20). Only modules of ten seconds or more
 are listed: they are about nine tenths of the time. When a part comes close to its limit again, take the times of a
 new run (the unit step prints a line per test, each stamped by GitHub) and write them here. Added 2026-11-11, from the
 Python 3.9 job of pull request 281: test_ticket, test_peer, test_cluster_remove, test_ticket_http, test_lease, test_sandbox and
@@ -23,50 +26,66 @@ import sys
 TESTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests")
 SMALL = 3                                       # seconds; the modules under ten took about three each
 SECONDS = {
-    "test_transitions": 152,
-    "test_roles": 141,
-    "test_peer": 136,
-    "test_ticket": 136,
-    "test_ndi_sound": 133,
-    "test_projector": 112,
-    "test_cluster_remove": 110,
-    "test_ticket_http": 102,
-    "test_lease": 100,
-    "test_ndi": 79,
-    "test_shader_engine": 78,
-    "test_ndi_standin": 77,
-    "test_shader_pads": 69,
-    "test_effects": 59,
+    "test_transitions": 170,
+    "test_ndi_sound": 139,
+    "test_nxlx_convert": 136,
+    "test_roles": 129,
+    "test_peer": 123,
+    "test_projector": 116,
+    "test_cluster_remove": 108,
+    "test_handover_api": 89,
+    "test_ticket": 88,
+    "test_ticket_http": 85,
+    "test_ndi": 82,
+    "test_shader_engine": 79,
+    "test_ndi_standin": 76,
+    "test_lease": 72,
+    "test_effects": 66,
+    "test_shader_pads": 66,
+    "test_boxcare": 52,
     "test_lights": 52,
-    "test_boxcare": 49,
-    "test_server": 46,
-    "test_renderer": 44,
+    "test_renderer": 52,
+    "test_server": 45,
     "test_sandbox": 44,
-    "test_shaders": 39,
-    "test_room": 36,
-    "test_strobe": 35,
-    "test_osc_defaults": 31,
-    "test_carried_roles": 30,
+    "test_update": 39,
+    "test_shaders": 38,
+    "test_install_convert": 37,
+    "test_project_log": 34,
+    "test_room": 34,
+    "test_osc_defaults": 32,
+    "test_graphics": 28,
     "test_midi_layouts": 28,
-    "test_recovery": 26,
-    "test_support_reach": 23,
-    "test_https": 22,
-    "test_update": 21,
-    "test_000_tmp": 20,
-    "test_usb_media": 20,
-    "test_join": 18,
-    "test_sync": 18,
+    "test_carried_roles": 24,
+    "test_graphics_motion": 24,
+    "test_https": 24,
+    "test_recovery": 23,
+    "test_support_reach": 22,
+    "test_install": 20,
+    "test_join": 19,
+    "test_sync": 19,
+    "test_usb_media": 19,
+    "test_000_tmp": 18,
     "test_mapping_mode": 17,
-    "test_osc_feedback": 17,
+    "test_osc_lockdown": 17,
     "test_preview": 17,
-    "test_osc_lockdown": 16,
-    "test_controller_code_review": 14,
+    "test_strobe": 17,
+    "test_timezone": 15,
     "test_theme_api": 14,
-    "test_controller_code": 13,
+    "test_autocert": 13,
+    "test_controller_code_review": 13,
+    "test_handover": 13,
+    "test_mapper": 13,
+    "test_masks": 13,
     "test_ndi_pads": 13,
-    "test_mapper": 12,
-    "test_install": 10,
+    "test_osc_feedback": 13,
+    "test_controller_code": 12,
+    "test_sound": 12,
+    "test_looplist": 11,
+    "test_sources": 11,
+    "test_controllers": 10,
+    "test_release": 10,
     "test_render": 10,
+    "test_support": 10,
 }
 
 
