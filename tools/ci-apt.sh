@@ -19,7 +19,7 @@
 # apt still runs update and takes the versions to install from the lists it has just read, so a deb of another
 # version is never used. A file already in apt's cache is checked by its size only (not its checksum): a damaged file
 # of the right size is NOT noticed by apt, and would fail every attempt. So before a retry the restored files that
-# dpkg-deb cannot read are removed, and before the last attempt all of them. The workflow saves the cache also when
+# dpkg-deb cannot read are removed. The workflow saves the cache also when
 # the job fails (the packages of a give-up are added to it), so reruns on a slow day collect what was downloaded.
 # With no CI_APT_CACHE, or an empty folder, nothing changes.
 set -u
@@ -58,38 +58,50 @@ cache_restore() {
         echo "ci-apt: cache: $CACHE is empty (cold)"
     fi
 }
-# Remove the restored files from apt's cache again. Only the files that dpkg-deb cannot read, or all of them with $1 = all.
+# Before a retry: remove the restored files that dpkg-deb cannot read (the header and the whole archive) from apt's
+# cache and from the saved folder, so they are fetched again and the bad copy is not saved for good. The readable ones
+# stay: a slow mirror is no reason to download them again.
 cache_unrestore() {
     [ -n "$CACHE" ] || return 0
     for f in "$CACHE"/*.deb; do
         [ -f "$f" ] || continue
         b=$(basename "$f")
         [ -f "$ARCHIVES/$b" ] || continue
-        if [ "${1:-}" = all ] || ! dpkg-deb --fsys-tarfile "$ARCHIVES/$b" >/dev/null 2>&1; then
-            echo "ci-apt: cache: dropping $b from apt's cache"
+        if ! dpkg-deb --info "$ARCHIVES/$b" >/dev/null 2>&1 || ! dpkg-deb --fsys-tarfile "$ARCHIVES/$b" >/dev/null 2>&1; then
+            echo "ci-apt: cache: dropping $b from apt's cache and from $CACHE"
             sudo find "$ARCHIVES" -maxdepth 1 -name "$b" -delete
+            find "$CACHE" -maxdepth 1 -name "$b" -delete
             DROPPED=1
+            [ -z "$ADDED" ] || : > "$ADDED"
         fi
     done
 }
 # $1 = ok: the install worked, so apt's cache (after autoclean) replaces the saved files, unless a restored file was
 # dropped on the way (then the saved ones stay and the new ones are added). Anything else (a give-up): add what
-# is complete. archives/partial is not looked at: a half-downloaded file is not copied.
+# is complete. archives/partial is not looked at: a half-downloaded file is not copied. When a file is new to the
+# saved folder, or one was dropped, the file named by CI_APT_ADDED is made, and the workflow saves the cache only
+# then: a run that added nothing does not make another copy of the same cache.
 cache_save() {
     [ -n "$CACHE" ] || return 0
     mkdir -p "$CACHE" || return 0
+    for f in "$ARCHIVES"/*.deb; do
+        [ -f "$f" ] || continue
+        [ -f "$CACHE/$(basename "$f")" ] || { [ -z "$ADDED" ] || : > "$ADDED"; break; }
+    done
     if [ "${1:-}" = ok ]; then
         # autoclean drops the files whose version the lists no longer offer, so old versions do not pile up.
         sudo apt-get autoclean >/dev/null 2>&1 || true
         [ "$DROPPED" = 1 ] || find "$CACHE" -maxdepth 1 -name '*.deb' -delete
     fi
     if ls "$ARCHIVES"/*.deb >/dev/null 2>&1; then
-        sudo cp -u "$ARCHIVES"/*.deb "$CACHE"/ || echo "ci-apt: cache: save failed"
+        # Plain cp: the debs a mirror gives carry the server's old date, so cp -u would keep a newer bad copy.
+        sudo cp "$ARCHIVES"/*.deb "$CACHE"/ || echo "ci-apt: cache: save failed"
         sudo chown -R "$(id -u):$(id -g)" "$CACHE" || true
     fi
     echo "ci-apt: cache: $(find "$CACHE" -maxdepth 1 -name "*.deb" | wc -l) packages kept in $CACHE"
 }
 DROPPED=0
+ADDED=${CI_APT_ADDED:-}
 cache_restore
 n=1
 while :; do
@@ -103,7 +115,7 @@ while :; do
     fi
     [ "$n" -lt "$ATTEMPTS" ] || { echo "ci-apt: gave up after $ATTEMPTS attempts" >&2; cache_save; exit 1; }
     n=$((n + 1))
-    if [ "$n" -lt "$ATTEMPTS" ]; then cache_unrestore; else cache_unrestore all; fi
+    cache_unrestore
     finish_dpkg
     other_mirror
     sleep 5

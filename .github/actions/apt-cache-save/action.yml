@@ -15,8 +15,13 @@ runs:
     - name: Work out the cache key
       id: key
       shell: bash
-      run: bash "${{ github.action_path }}/../apt-cache/key.sh" "${{ inputs.packages }}"
-    - name: Save the packages
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        bash "${{ github.action_path }}/../apt-cache/key.sh" "$PACKAGES"
+        if [ -n "${CI_APT_ADDED:-}" ] && [ -e "$CI_APT_ADDED" ]; then echo "added=1" >> "$GITHUB_OUTPUT"; else echo "added=0" >> "$GITHUB_OUTPUT"; fi
+    - name: Save the packages (only when this job added or replaced one)
+      if: steps.key.outputs.added == '1'
       uses: actions/cache/save@v4
       with:
         path: ~/apt-cache
