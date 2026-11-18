@@ -1395,6 +1395,7 @@
       draw(d);
       if (!d.available) { say(strobeLine(d.why || 'the strobe is not available')); return; }
       hold.disabled = false;
+      if (document.getElementById('strobecard') !== card) return;      // an answer for a card already replaced: its timer must not end the new card's
       shown = readyLine(d);
       warnRun = d.warn ? 2 : 0;                           // the first draw says it at once
       say(shown);
@@ -1412,7 +1413,7 @@
           if (strobeHeld || !card.isConnected || !r2.ok || !r2.data || !r2.data.available) return;
           warnRun = r2.data.warn ? warnRun + 1 : 0;
           if (r2.data.warn && warnRun < 2) return;
-          if (state.textContent !== shown) return;
+          if (state.textContent !== shown && state.textContent !== 'Ready. Hold the button to flash.') return;      // (letting go says the plain line)
           shown = readyLine(r2.data);
           say(shown);
         });
