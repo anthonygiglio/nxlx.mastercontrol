@@ -16,9 +16,12 @@
 # "gave up after 3 attempts" before any test. When CI_APT_CACHE names a folder (the workflow's apt-cache action
 # restores it before the job and saves it after), the .deb files in it are copied into apt's own cache first, so
 # apt-get install has nothing to download for them, and after a successful install apt's cache is copied back.
-# apt still runs update, and it checks every file in its cache against the lists it has just read (version, size,
-# checksum): a deb of another version or a damaged one is ignored and fetched again, so a stale or wrong cache
-# costs a download and cannot install the wrong package. With no CI_APT_CACHE, or an empty folder, nothing changes.
+# apt still runs update and takes the versions to install from the lists it has just read, so a deb of another
+# version is never used. A file already in apt's cache is checked by its size only (not its checksum): a damaged file
+# of the right size is NOT noticed by apt, and would fail every attempt. So before a retry the restored files that
+# dpkg-deb cannot read are removed, and before the last attempt all of them. The workflow saves the cache also when
+# the job fails (the packages of a give-up are added to it), so reruns on a slow day collect what was downloaded.
+# With no CI_APT_CACHE, or an empty folder, nothing changes.
 set -u
 [ "$#" -gt 0 ] || { echo "usage: $0 package..." >&2; exit 64; }
 ATTEMPTS=${CI_APT_ATTEMPTS:-3}
@@ -55,18 +58,38 @@ cache_restore() {
         echo "ci-apt: cache: $CACHE is empty (cold)"
     fi
 }
+# Remove the restored files from apt's cache again. Only the files that dpkg-deb cannot read, or all of them with $1 = all.
+cache_unrestore() {
+    [ -n "$CACHE" ] || return 0
+    for f in "$CACHE"/*.deb; do
+        [ -f "$f" ] || continue
+        b=$(basename "$f")
+        [ -f "$ARCHIVES/$b" ] || continue
+        if [ "${1:-}" = all ] || ! dpkg-deb --fsys-tarfile "$ARCHIVES/$b" >/dev/null 2>&1; then
+            echo "ci-apt: cache: dropping $b from apt's cache"
+            sudo find "$ARCHIVES" -maxdepth 1 -name "$b" -delete
+            DROPPED=1
+        fi
+    done
+}
+# $1 = ok: the install worked, so apt's cache (after autoclean) replaces the saved files, unless a restored file was
+# dropped on the way (then the saved ones stay and the new ones are added). Anything else (a give-up): add what
+# is complete. archives/partial is not looked at: a half-downloaded file is not copied.
 cache_save() {
     [ -n "$CACHE" ] || return 0
-    # autoclean drops the files whose version the lists no longer offer, so old versions do not pile up.
-    sudo apt-get autoclean >/dev/null 2>&1 || true
     mkdir -p "$CACHE" || return 0
-    if ls "$ARCHIVES"/*.deb >/dev/null 2>&1; then
-        find "$CACHE" -maxdepth 1 -name '*.deb' -delete
-        sudo cp "$ARCHIVES"/*.deb "$CACHE"/ || echo "ci-apt: cache: save failed"
-        sudo chown -R "$(id -u):$(id -g)" "$CACHE" || true
-        echo "ci-apt: cache: $(find "$CACHE" -maxdepth 1 -name "*.deb" | wc -l) packages kept in $CACHE"
+    if [ "${1:-}" = ok ]; then
+        # autoclean drops the files whose version the lists no longer offer, so old versions do not pile up.
+        sudo apt-get autoclean >/dev/null 2>&1 || true
+        [ "$DROPPED" = 1 ] || find "$CACHE" -maxdepth 1 -name '*.deb' -delete
     fi
+    if ls "$ARCHIVES"/*.deb >/dev/null 2>&1; then
+        sudo cp -u "$ARCHIVES"/*.deb "$CACHE"/ || echo "ci-apt: cache: save failed"
+        sudo chown -R "$(id -u):$(id -g)" "$CACHE" || true
+    fi
+    echo "ci-apt: cache: $(find "$CACHE" -maxdepth 1 -name "*.deb" | wc -l) packages kept in $CACHE"
 }
+DROPPED=0
 cache_restore
 n=1
 while :; do
@@ -75,11 +98,12 @@ while :; do
     if sudo timeout -k 10 "$EACH" apt-get $OPTS update &&
        sudo timeout -k 10 "$EACH" env DEBIAN_FRONTEND=noninteractive apt-get $OPTS install -y --no-install-recommends "$@"; then
         echo "ci-apt: installed on attempt $n"
-        cache_save
+        cache_save ok
         exit 0
     fi
-    [ "$n" -lt "$ATTEMPTS" ] || { echo "ci-apt: gave up after $ATTEMPTS attempts" >&2; exit 1; }
+    [ "$n" -lt "$ATTEMPTS" ] || { echo "ci-apt: gave up after $ATTEMPTS attempts" >&2; cache_save; exit 1; }
     n=$((n + 1))
+    if [ "$n" -lt "$ATTEMPTS" ]; then cache_unrestore; else cache_unrestore all; fi
     finish_dpkg
     other_mirror
     sleep 5

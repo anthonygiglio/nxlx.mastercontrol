@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-name: apt package cache
+name: apt package cache (restore)
 description: >
-  Restores and saves the .deb files that tools/ci-apt.sh downloads, so a job installs without the runner's mirror
-  when the same packages were installed before (J-173). Put it after checkout and before the first ci-apt.sh step,
-  and give it every package the job installs. The key holds the runner image and a hash of the package list; an
-  older cache of the same job is used as a fallback, and apt ignores any file whose version the lists no longer offer.
+  Restores the .deb files that tools/ci-apt.sh downloaded in earlier runs and tells ci-apt.sh where they are
+  (CI_APT_CACHE), so a job installs without the runner's mirror (J-173). Put it after checkout and before the first
+  ci-apt.sh step, give it every package the job installs, and put ./.github/actions/apt-cache-save with the same
+  packages and `if: always()` as the last step of the job. Jobs with the same package list share a cache.
 inputs:
   packages:
     description: every package name the job gives to tools/ci-apt.sh, in any order
@@ -16,19 +16,15 @@ runs:
     - name: Work out the cache key
       id: key
       shell: bash
-      env:
-        PACKAGES: ${{ inputs.packages }}
-        JOB: ${{ github.job }}
       run: |
-        hash="$(printf '%s\n' $PACKAGES | sort -u | sha256sum | cut -c1-16)"
-        echo "prefix=apt-${RUNNER_OS}-${JOB}-${hash}" >> "$GITHUB_OUTPUT"
-        echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+        bash "${{ github.action_path }}/key.sh" "${{ inputs.packages }}"
         echo "CI_APT_CACHE=$HOME/apt-cache" >> "$GITHUB_ENV"
-    - name: Restore and later save the packages
-      uses: actions/cache@v4
+    - name: Restore the newest cache of this package list
+      uses: actions/cache/restore@v4
       with:
         path: ~/apt-cache
-        key: ${{ steps.key.outputs.prefix }}-${{ steps.key.outputs.image }}
+        key: ${{ steps.key.outputs.base }}-restore-only
         restore-keys: |
-          ${{ steps.key.outputs.prefix }}-
-          apt-${{ runner.os }}-${{ github.job }}-
+          ${{ steps.key.outputs.base }}-
+          ${{ steps.key.outputs.hash }}-
+          apt-${{ runner.os }}-
