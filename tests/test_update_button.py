@@ -120,6 +120,9 @@ class InboxTest(unittest.TestCase):
 
 class CommandLineTest(unittest.TestCase):
     def setUp(self):
+        normal = mock.patch.object(update.rootfs, "current_state", return_value="normal")     # not this machine's /proc/mounts
+        normal.start()
+        self.addCleanup(normal.stop)
         self.result = os.path.join(tempfile.mkdtemp(), "result.json")
         os.environ["NXLX_UPDATE_LOCK"] = os.path.join(tempfile.mkdtemp(), "lock")
         self.addCleanup(os.environ.pop, "NXLX_UPDATE_LOCK", None)
@@ -309,6 +312,9 @@ class SysdUpdateTest(unittest.TestCase):
 class ApiTest(ServerBase):
     def setUp(self):
         super().setUp()
+        normal = mock.patch("mctl.rootfs.current_state", return_value="normal")       # not this machine's /proc/mounts
+        normal.start()
+        self.addCleanup(normal.stop)
         self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
         self.asked = []
 

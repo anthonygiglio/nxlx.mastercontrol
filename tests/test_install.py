@@ -28,6 +28,36 @@ def install(src, stage, *extra):
                           capture_output=True, text=True, timeout=60)
 
 
+class ReadOnlyRootTest(unittest.TestCase):
+    """J-174: under the read-only root the installer would write to RAM and report success."""
+
+    def run_with(self, mounts_text, *extra):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        table = os.path.join(d, "mounts")
+        with open(table, "w") as f:
+            f.write(mounts_text)
+        env = dict(os.environ, NXLX_PROC_MOUNTS=table)
+        return subprocess.run([os.path.join(REPO, "install", "install.sh"), *extra], capture_output=True, text=True, timeout=60, env=env)
+
+    def test_refused_under_either_overlay_form(self):
+        for line in ("overlay / overlay rw 0 0\n", "overlayroot / overlay rw 0 0\n"):
+            r = self.run_with(line + "proc /proc proc rw 0 0\n")
+            self.assertEqual(r.returncode, 1, line)
+            self.assertIn("The system disk is read-only", r.stderr)
+            self.assertIn("sudo nxlx-rootfs disable", r.stderr)
+
+    def test_a_normal_root_and_a_docker_overlay_elsewhere_get_past_it(self):
+        r = self.run_with("/dev/sda2 / ext4 rw 0 0\noverlay /var/lib/docker/overlay2/x/merged overlay rw 0 0\n", "--dry-run")
+        self.assertNotIn("The system disk is read-only", r.stderr)
+
+    def test_stage_and_dry_run_are_not_refused(self):
+        r = self.run_with("overlay / overlay rw 0 0\n", "--dry-run")
+        self.assertNotIn("The system disk is read-only", r.stderr)
+        r = self.run_with("overlay / overlay rw 0 0\n", "--stage", tempfile.mkdtemp(), "--dry-run")
+        self.assertNotIn("The system disk is read-only", r.stderr)
+
+
 class InstallTest(unittest.TestCase):
     def setUp(self):
         self.stage = tempfile.mkdtemp()

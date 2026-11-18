@@ -93,6 +93,17 @@ for path in "$PREFIX" "$MEDIA"; do
 	[[ "$path" =~ (^|/)\.(/|$) ]] && die "paths may not contain . components"
 done
 
+# With the read-only root on (nxlx-rootfs enable), everything this writes lands in RAM and is gone at the next restart,
+# while the installer would report success. Same test as mctl/rootfs.py current_state(): the / line of /proc/mounts is of
+# type overlay or from the device overlayroot. Not with --stage or --dry-run, which write elsewhere or nothing.
+if [ -z "$STAGE" ] && [ "$DRY" = 0 ]; then
+	root_line=$(awk '$2 == "/" { print $1, $3; exit }' "${NXLX_PROC_MOUNTS:-/proc/mounts}" 2>/dev/null || true)
+	case "$root_line" in
+	overlayroot\ * | *\ overlay)
+		die "The system disk is read-only (power-loss protection is on), so an update would be lost at the next restart. Turn it off with: sudo nxlx-rootfs disable, restart, update, then sudo nxlx-rootfs enable and restart." ;;
+	esac
+fi
+
 if [ -n "$STAGE" ]; then
 	ROOT="${STAGE%/}"
 else

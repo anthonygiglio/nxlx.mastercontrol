@@ -76,7 +76,8 @@ class Env:
         self.healthy = True
         os.makedirs(os.path.join(self.root, "etc/nxlx"))
         os.makedirs(os.path.join(self.root, "var/lib/nxlx"))
-        self.updater = Updater(root=self.root, install=self.install, restart=self.restart, health=lambda: self.healthy)
+        self.updater = Updater(root=self.root, install=self.install, restart=self.restart, health=lambda: self.healthy,
+                               rootfs_state=lambda: "normal")      # not this machine's /proc/mounts (a container's / is an overlay)
         test.addCleanup(shutil.rmtree, self.root, True)
 
     def install(self, work, info):

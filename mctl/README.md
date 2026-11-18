@@ -73,6 +73,7 @@ Tested with a fake `blkid`/`mount` (label cleaning, options, collisions, refusal
 - **Media must not live on the system disk.** Files added while the overlay is active are lost at reboot, so `enable` refuses if `NXLX_MEDIA_DIR` is on the same filesystem as `/` (override with `--force`). Use a second disk or a USB drive.
 - **Settings are read-only too.** Changes to `/etc/nxlx` need `nxlx-rootfs disable`, a reboot, the edit, then `enable` and another reboot.
 - USB drives already mount read-only by default, so they are unaffected.
+- **Updates are refused while it is on.** An update, a rollback and `install/install.sh` would be written to RAM and lost at the next restart, so `nxlx-update`, the panel's Updates card (including the upload) and the installer say so and stop. To update: `sudo nxlx-rootfs disable`, restart, update, then `sudo nxlx-rootfs enable` and restart.
 
 Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the `raspi-config` and `overlayroot` commands (especially `overlayroot-chroot` when disabling from inside an active overlay) and the reboot behaviour. Do that on a spare card first.
 
@@ -127,7 +128,7 @@ The services read their settings from environment variables named `NXLX_*` (`NXL
 
 ## Updates and rollback
 
-Releases are signed bundles, installed by `sudo nxlx-update`. Nothing is fetched from the internet by default; an update works from a USB stick at a venue with no network.
+Releases are signed bundles, installed by `sudo nxlx-update`. Nothing is fetched from the internet by default; an update works from a USB stick at a venue with no network. While the read-only root is on (see below) updates and rollbacks are refused with a plain message, because they would be lost at the next restart: turn it off with `sudo nxlx-rootfs disable`, restart, update, then `sudo nxlx-rootfs enable` and restart.
 
 **One-time setup (your signing key).**
 

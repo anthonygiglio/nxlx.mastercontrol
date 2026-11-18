@@ -5465,8 +5465,8 @@
         if (last.state === 'running') watchUntil = Math.max(watchUntil, Date.now() + 60 * 1000);
         else if (startedAt && last.at && last.at * 1000 >= startedAt - 5000) watchUntil = 0;   // the update we started has ended
       }
-      roLocked = lockedRo = !!d.read_only_root;
-      if (lockedRo) body.appendChild(h('div', { class: 'hint warn', id: 'updatereadonly', text: d.read_only_message || 'The system disk is read-only, so an update would be lost at the next restart.' }));
+      roLocked = !!d.read_only_root;
+      if (roLocked) body.appendChild(h('div', { class: 'hint warn', id: 'updatereadonly', text: d.read_only_message || 'The system disk is read-only, so an update would be lost at the next restart.' }));
       var seen = {};
       d.usb.forEach(function (b, i) {
         if (seen[b.version]) return;
@@ -5496,7 +5496,7 @@
         next();
       });
       body.appendChild(pick);
-      body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'updateupload', text: 'Upload an update', disabled: lockedRo, onclick: function () { pick.click(); } })));
+      body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'updateupload', text: 'Upload an update', disabled: roLocked, onclick: function () { pick.click(); } })));
       body.appendChild(h('details', { class: 'fold', id: 'updatehow' }, h('summary', { text: 'How to get an update' }), h('div', { class: 'list sp' },
         h('div', { class: 'hint', text: 'An update is two files with the same name: nxlx-N.N.N.tar.gz and nxlx-N.N.N.tar.gz.sig (N.N.N is the version). A .sha256 file may come with them and is optional.' }),
         h('div', { class: 'hint', text: 'From a USB stick: put both files in a folder named nxlx-update on the stick, plug it into the node, and the version shows here.' }),
