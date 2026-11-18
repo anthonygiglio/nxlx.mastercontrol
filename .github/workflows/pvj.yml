@@ -22,12 +22,12 @@ concurrency:
 # about ten times in three days.
 jobs:
   unit:
-    # The unit tests, in three parts side by side (D104). As one step they took 1,731 of its 1,800 seconds on
+    # The unit tests, in four parts side by side (D104). As one step they took 1,731 of its 1,800 seconds on
     # 2026-10-20 (3,349 tests, Python 3.9), and that job 43.5 of its 45 minutes: one slow runner and every PR failed.
     # tools/ci-shard.py puts every tests/test_*.py in exactly one part, made even by the seconds each module took.
-    name: unit (${{ matrix.python }}, part ${{ matrix.part }} of 3)
+    name: unit (${{ matrix.python }}, part ${{ matrix.part }} of 4)
     runs-on: ubuntu-24.04
-    # A part takes about ten minutes. One once sat in the unit tests for 35 until it was cancelled, and a cancelled
+    # A part takes about twelve minutes. One once sat in the unit tests for 35 until it was cancelled, and a cancelled
     # job keeps no log; so the job has an end, and the unit tests have an earlier one that says where.
     timeout-minutes: 30
     strategy:
@@ -36,7 +36,7 @@ jobs:
       fail-fast: false
       matrix:
         python: ['3.9', '3.12']
-        part: [1, 2, 3]       # the 3 of the step below and of the job's name; tests/test_ci_shard.py holds them together
+        part: [1, 2, 3, 4]    # the 4 of the step below and of the job's name; tests/test_ci_shard.py holds them together
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -78,15 +78,15 @@ jobs:
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
       - name: Unit tests, this part (real mpv, headless)
-        # About ten minutes a part (the whole suite was 25 to 29 on 2026-10-20), so the limit here is twenty. After
+        # About twelve minutes a part (the whole suite was 25 to 29 on 2026-10-20; three parts ran 14 to 18 minutes of tests on 2026-11-17), so the limit here is twenty. After
         # that, SIGABRT: faulthandler prints every thread's stack and the step fails (the job's own limit above is 30).
         # The 25 slowest tests of the part are printed at the end, so what makes it long is seen (on Python 3.12 only:
         # 3.9's unittest has no --durations). Named modules import the tests package, which gives the run its own temp
         # folder before any test makes a file (D69; tests/test_000_tmp.py runs this way too). A part with no module
         # would make unittest look for tests in the whole checkout, so it fails instead.
         run: |
-          modules="$(python tools/ci-shard.py ${{ matrix.part }} 3)"
-          test -n "$modules" || { echo "::error::part ${{ matrix.part }} of 3 has no test module"; exit 1; }
+          modules="$(python tools/ci-shard.py ${{ matrix.part }} 4)"
+          test -n "$modules" || { echo "::error::part ${{ matrix.part }} of 4 has no test module"; exit 1; }
           timeout -s ABRT 1200 python -X faulthandler -m unittest -v ${{ matrix.python == '3.12' && '--durations 25' || '' }} $modules
 
   shaders-gpu:

@@ -105,7 +105,8 @@ class ReleaseTest(unittest.TestCase):
     def test_dirty_tree_is_refused_and_a_clean_one_builds(self):
         clone = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, clone, True)
-        subprocess.run(["git", "clone", "-q", "--local", REPO, clone], check=True)
+        # --no-hardlinks: the temp folder may be on another filesystem than the checkout (tmpfs /tmp), where a hard link fails
+        subprocess.run(["git", "clone", "-q", "--local", "--no-hardlinks", REPO, clone], check=True)
         with open(os.path.join(clone, "mctl", "README.md"), "a") as f:
             f.write("\nuncommitted edit\n")
         with open(os.path.join(clone, "mctl", "__init__.py")) as f:
