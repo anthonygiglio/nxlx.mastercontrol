@@ -222,6 +222,61 @@ class SignatureTest(unittest.TestCase):
         self.assertIn("no trusted signing key", str(cm.exception))
 
 
+class ReadOnlyRootTest(unittest.TestCase):
+    """J-174: with the read-only root on, an update or a rollback is written to RAM and lost at the restart."""
+
+    def setUp(self):
+        self.env = Env(self)
+        self.u = self.env.updater
+        self.state = "normal"
+        self.u._rootfs_state = lambda: self.state
+        self.bundle = make_bundle("1.0.0")
+
+    def snapshot(self):
+        backups = sorted(os.listdir(self.u.backup_dir())) if os.path.isdir(self.u.backup_dir()) else None
+        return (self.u.status(), self.env.restarts, backups)
+
+    def test_every_action_that_writes_a_release_is_refused_under_the_overlay(self):
+        from mctl import rootfs
+        self.u.apply(self.bundle, allow_unsigned=True, log=lambda *_: None)          # installed while the root is writable
+        self.env.write_settings(marker="kept")
+        before = self.snapshot()
+        self.state = "overlay"
+        for call in (lambda: self.u.check(self.bundle, allow_unsigned=True),
+                     lambda: self.u.apply(make_bundle("1.1.0"), allow_unsigned=True, log=lambda *_: None),
+                     lambda: self.u.apply(make_bundle("1.1.0"), allow_unsigned=True, force=True, log=lambda *_: None),
+                     lambda: self.u.rollback()):
+            with self.assertRaises(UpdateError) as cm:
+                call()
+            self.assertEqual(str(cm.exception), rootfs.UPDATE_REFUSAL)
+        self.assertEqual(before, self.snapshot())                         # no release, restart, backup or switch
+        self.assertEqual(self.env.settings()["marker"], "kept")
+        self.assertEqual([n for n in os.listdir(os.path.join(self.env.root, "opt/nxlx")) if n.startswith(".update-")], [])
+
+    def test_the_message_says_what_to_do(self):
+        from mctl import rootfs
+        for words in ("read-only", "lost at the next restart", "sudo nxlx-rootfs disable", "sudo nxlx-rootfs enable"):
+            self.assertIn(words, rootfs.UPDATE_REFUSAL)
+
+    def test_status_still_works_under_the_overlay(self):
+        self.state = "overlay"
+        self.assertEqual(self.u.status(), {"current": None, "previous": None, "releases": []})
+
+    def test_nothing_changes_when_the_root_is_normal(self):
+        self.assertEqual(self.u.apply(self.bundle, allow_unsigned=True, log=lambda *_: None), "1.0.0")
+        self.u.apply(make_bundle("1.1.0"), allow_unsigned=True, log=lambda *_: None)
+        self.assertEqual(self.u.rollback(log=lambda *_: None), "1.0.0")
+        info, _tree, scratch = self.u.check(make_bundle("1.2.0"), allow_unsigned=True)
+        shutil.rmtree(scratch, ignore_errors=True)
+        self.assertEqual(info["version"], "1.2.0")
+
+    def test_the_default_state_is_read_from_proc_mounts(self):
+        u = Updater(root=self.env.root)
+        with mock.patch("mctl.rootfs.current_state", return_value="overlay"):
+            with self.assertRaises(UpdateError):
+                u.rollback()
+
+
 class UpdaterTest(unittest.TestCase):
     def setUp(self):
         self.env = Env(self)

@@ -28,7 +28,7 @@ import tempfile
 import time
 import urllib.request
 
-from . import paths
+from . import paths, rootfs
 
 PRINCIPAL = "nxlx-release"
 NAMESPACE = "nxlx-release"
@@ -197,9 +197,15 @@ def inspect_bundle(directory):
     return {"version": version.group(1), "schema": int(schema.group(1))}
 
 
+def require_writable_root(state=None):
+    """Raise UpdateError while the read-only root (nxlx-rootfs) is on. `state` returns "overlay" or "normal"."""
+    if (state or rootfs.current_state)() == "overlay":
+        raise UpdateError(rootfs.UPDATE_REFUSAL)
+
+
 class Updater:
     def __init__(self, root="/", prefix="/opt/nxlx", state_dir="/var/lib/nxlx", etc_dir="/etc/nxlx",
-                 run=subprocess.run, restart=None, health=None, install=None, now=time.time):
+                 run=subprocess.run, restart=None, health=None, install=None, now=time.time, rootfs_state=None):
         self.root = root.rstrip("/")
         self.prefix = prefix
         self.state_dir = state_dir
@@ -209,6 +215,12 @@ class Updater:
         self._health = health or self._http_health
         self._install = install or self._run_installer
         self.now = now
+        self._rootfs_state = rootfs_state or rootfs.current_state
+
+    def require_writable_root(self):
+        """Refuse while the read-only root is on: everything an update or a rollback writes (the release, the units,
+        `current`, the settings backups) lands in RAM and is gone at the next restart, with no word of it."""
+        require_writable_root(self._rootfs_state)
 
     # --- paths ----------------------------------------------------------
     def real(self, p):
@@ -300,6 +312,7 @@ class Updater:
         With `dir_fd`, `bundle` is a name inside that (already opened) folder. A signed bundle needs no checksum
         (the signature covers the content); an unsigned one (development only) must have one. The caller removes
         `scratch`."""
+        self.require_writable_root()
         src = open_untrusted(bundle, dir_fd)
         if src is None:
             raise UpdateError("%s not found" % os.path.basename(bundle))
@@ -427,6 +440,7 @@ class Updater:
                 f.write(text)
 
     def apply(self, bundle, sha256=None, allow_unsigned=False, force=False, log=print, dir_fd=None):
+        self.require_writable_root()
         info, tree, scratch = self.check(bundle, sha256, allow_unsigned, force, dir_fd=dir_fd)
         old_version = self._link_version()
         previous_before = self._read_previous()
@@ -453,6 +467,7 @@ class Updater:
             shutil.rmtree(scratch, ignore_errors=True)
 
     def rollback(self, log=print):
+        self.require_writable_root()
         st = self.status()
         target = st["previous"]
         if not target or not os.path.isdir(self.real("%s/releases/%s" % (self.prefix, target))):
@@ -670,6 +685,7 @@ def main(argv=None):
             version = u.apply(args.bundle, args.sha256, args.allow_unsigned, args.force)
             report("done", "updated to %s" % version, version)
         elif args.cmd in ("usb", "inbox"):
+            require_writable_root()     # before anything is looked for, opened or cleared
             report("running", "looking for an update")
             if args.version is not None and not _VERSION.match(args.version):
                 raise UpdateError("not a version: %s" % args.version)

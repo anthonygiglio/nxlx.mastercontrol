@@ -22,6 +22,11 @@ class RootfsError(Exception):
     pass
 
 
+# What the updater and the panel say while the read-only root is on (an update or a rollback would be lost at the next restart).
+UPDATE_REFUSAL = ("The system disk is read-only (power-loss protection is on), so an update would be lost at the next restart. "
+                  "Turn it off with: sudo nxlx-rootfs disable, restart, update, then sudo nxlx-rootfs enable and restart.")
+
+
 def current_state(proc_mounts="/proc/mounts"):
     """'overlay' if / is an overlay filesystem right now, else 'normal'."""
     try:

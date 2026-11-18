@@ -5424,7 +5424,7 @@
   function updateCard() {
     var body = h('div', { class: 'list sp', id: 'updatebody' }, h('div', { class: 'hint', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'updatecard' }, h('h2', { text: 'Updates' }), body);
-    var watchUntil = 0, startedAt = 0;  // after Install, keep asking for a while: the panel itself restarts
+    var watchUntil = 0, startedAt = 0, roLocked = false;  // after Install, keep asking for a while: the panel itself restarts
     function later() {
       clearTimeout(updateTimer);
       if (body.isConnected && Date.now() < watchUntil) updateTimer = setTimeout(refresh, 3000);
@@ -5450,7 +5450,7 @@
     }
     function row(name, state, problem, id, go) {
       return listRow({ cls: 'update-entry', name: name, state: state, problem: problem,
-        primary: h('button', { class: 'btn on pri', id: id, text: 'Install', onclick: function (e) { go(e.currentTarget); } }) });
+        primary: h('button', { class: 'btn on pri', id: id, text: 'Install', disabled: !!roLocked, onclick: function (e) { go(e.currentTarget); } }) });
     }
     function draw(d) {
       clearTimeout(updateTimer);
@@ -5465,6 +5465,8 @@
         if (last.state === 'running') watchUntil = Math.max(watchUntil, Date.now() + 60 * 1000);
         else if (startedAt && last.at && last.at * 1000 >= startedAt - 5000) watchUntil = 0;   // the update we started has ended
       }
+      roLocked = lockedRo = !!d.read_only_root;
+      if (lockedRo) body.appendChild(h('div', { class: 'hint warn', id: 'updatereadonly', text: d.read_only_message || 'The system disk is read-only, so an update would be lost at the next restart.' }));
       var seen = {};
       d.usb.forEach(function (b, i) {
         if (seen[b.version]) return;
@@ -5494,7 +5496,7 @@
         next();
       });
       body.appendChild(pick);
-      body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'updateupload', text: 'Upload an update', onclick: function () { pick.click(); } })));
+      body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'updateupload', text: 'Upload an update', disabled: lockedRo, onclick: function () { pick.click(); } })));
       body.appendChild(h('details', { class: 'fold', id: 'updatehow' }, h('summary', { text: 'How to get an update' }), h('div', { class: 'list sp' },
         h('div', { class: 'hint', text: 'An update is two files with the same name: nxlx-N.N.N.tar.gz and nxlx-N.N.N.tar.gz.sig (N.N.N is the version). A .sha256 file may come with them and is optional.' }),
         h('div', { class: 'hint', text: 'From a USB stick: put both files in a folder named nxlx-update on the stick, plug it into the node, and the version shows here.' }),

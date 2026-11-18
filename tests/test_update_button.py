@@ -237,6 +237,35 @@ class CommandLineTest(unittest.TestCase):
             self.assertEqual(update.main(["rollback"]), 1)
         self.assertEqual(self.read()["state"], "failed")
 
+    def test_every_command_is_refused_under_the_read_only_root_and_the_result_file_says_why(self):
+        from mctl import rootfs
+        # the real Updater: the refusal comes from update.py itself, before anything is looked for or opened
+        with mock.patch.object(update.rootfs, "current_state", return_value="overlay"), \
+                mock.patch.object(update.Updater, "open_inbox", side_effect=AssertionError("the inbox was opened")):
+            for argv in (["usb", "--result", self.result], ["inbox", "--result", self.result],
+                         ["inbox", "--version", "1.2.3", "--result", self.result]):
+                self.assertEqual(update.main(argv), 1, argv)
+                self.assertEqual(self.read()["state"], "failed", argv)
+                self.assertEqual(self.read()["message"], rootfs.UPDATE_REFUSAL, argv)
+            os.environ["NXLX_UPDATE_RESULT"] = self.result
+            self.addCleanup(os.environ.pop, "NXLX_UPDATE_RESULT", None)
+            for argv in (["apply", "nxlx-1.2.3.tar.gz", "--allow-unsigned"], ["rollback"]):
+                os.unlink(self.result)
+                self.assertEqual(update.main(argv), 1, argv)
+                self.assertEqual(self.read()["state"], "failed", argv)
+                self.assertEqual(self.read()["message"], rootfs.UPDATE_REFUSAL, argv)
+            self.assertEqual(update.main(["check", "nxlx-1.2.3.tar.gz", "--allow-unsigned"]), 1)    # a terminal's check: exit code only
+
+    def test_the_commands_run_as_before_when_the_root_is_normal(self):
+        p, cleared = self.fake(["nxlx-1.5.0.tar.gz"], lambda b: "1.5.0")
+        with mock.patch.object(update.rootfs, "current_state", return_value="normal"), p:
+            self.assertEqual(update.main(["inbox", "--result", self.result]), 0)
+        self.assertEqual(self.read()["state"], "done")
+
+    def test_status_still_works_under_the_read_only_root(self):
+        with mock.patch.object(update.rootfs, "current_state", return_value="overlay"):
+            self.assertEqual(update.main(["status"]), 0)
+
     def test_finish_marks_an_interrupted_update(self):
         with open(self.result, "w") as f:
             json.dump({"state": "running", "message": "installing", "at": 1}, f)
@@ -311,6 +340,23 @@ class ApiTest(ServerBase):
         self.assertEqual(self.start({"source": "inbox", "version": "0.3", "confirm": "update"})[0], 400)
         self.assertEqual(self.start({"source": "inbox", "version": "0.3.0", "confirm": "update"})[0], 200)
         self.assertEqual(self.asked, [{"cmd": "update", "source": "inbox", "version": "0.3.0"}])
+
+    def test_the_read_only_root_is_shown_and_refuses_an_upload_and_a_start_with_409(self):
+        from mctl import rootfs
+        st, body, _ = self.call("GET", "/api/system/update", token=self.full)
+        self.assertEqual((st, body["read_only_root"], body["read_only_message"]), (200, False, ""))
+        with mock.patch("mctl.rootfs.current_state", return_value="overlay"):
+            st, body, _ = self.call("GET", "/api/system/update", token=self.full)
+            self.assertEqual((st, body["read_only_root"], body["read_only_message"]), (200, True, rootfs.UPDATE_REFUSAL))
+            for name in ("nxlx-0.2.0.tar.gz", "nxlx-0.2.0.tar.gz.sig"):
+                st, body, _ = self.upload(name, b"x" * 1000)
+                self.assertEqual((st, body["error"]), (409, rootfs.UPDATE_REFUSAL), name)
+            inbox = os.path.join(os.path.dirname(self.api.settings.path), "update-inbox")
+            self.assertEqual(os.listdir(inbox) if os.path.isdir(inbox) else [], [])     # not a byte was stored
+            st, body, _ = self.start({"source": "inbox", "version": "0.2.0", "confirm": "update"})
+            self.assertEqual((st, body["error"]), (409, rootfs.UPDATE_REFUSAL))
+        self.assertEqual(self.asked, [])
+        self.assertEqual(self.upload("nxlx-0.2.0.tar.gz", b"x" * 1000)[0], 200)           # normal again: as before
 
     def test_a_done_line_for_another_version_is_not_shown(self):
         # A box rolled back by an older nxlx-update (which wrote nothing): "updated to 9.9.9" is no longer true.
