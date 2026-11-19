@@ -330,7 +330,7 @@ class SysService:
                     names = os.listdir(fd)
                 except OSError as e:
                     return {"ok": False, "error": "the update backups could not be read: %s" % (e.strerror or e)}
-                removed, stayed = 0, 0
+                removed, stayed, first = 0, 0, None
                 for name in names:
                     if not self.BACKUP_NAME.fullmatch(name):
                         continue
@@ -342,15 +342,17 @@ class SysService:
                         removed += 1
                     except FileNotFoundError:
                         pass
-                    except OSError:
+                    except OSError as e:
                         stayed += 1
+                        first = first or (e.strerror or str(e))        # the first reason, e.g. "Read-only file system"
             finally:
                 os.close(fd)
         if removed or stayed:
             self.log("nxlx-sysd: %d update backup%s removed by the panel (factory reset)%s"
                      % (removed, "" if removed == 1 else "s", ", %d stayed" % stayed if stayed else ""))
         if stayed:
-            return {"ok": False, "error": "%d update backup%s could not be removed" % (stayed, "" if stayed == 1 else "s"), "removed": removed}
+            why = " (%s)" % first if first else ""
+            return {"ok": False, "error": "%d update backup%s could not be removed%s" % (stayed, "" if stayed == 1 else "s", why), "removed": removed}
         return {"ok": True, "removed": removed}
 
     # --- announcing the node to the local network (D127) ------------------------------------------------------------

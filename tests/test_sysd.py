@@ -145,8 +145,17 @@ class ServiceTest(unittest.TestCase):
         with mock.patch("os.unlink", stubborn):
             r = s.handle({"cmd": "clear_update_backups"})
         self.assertFalse(r["ok"])
-        self.assertIn("1 update backup could not be removed", r["error"])
+        self.assertIn("1 update backup could not be removed (Operation not permitted)", r["error"])
         self.assertEqual(r["removed"], 1)
+
+    def test_a_read_only_folder_is_named_in_the_error(self):
+        s, folder = self.backups()
+        def readonly(path, *a, **k):
+            raise OSError(30, "Read-only file system")
+        with mock.patch("os.unlink", readonly):
+            r = s.handle({"cmd": "clear_update_backups"})
+        self.assertFalse(r["ok"])
+        self.assertIn("(Read-only file system)", r["error"])
 
     def test_clear_update_backups_removes_what_the_real_updater_wrote(self):
         """The names come from update.Updater.backup_settings itself, including the "none" version of a first install."""

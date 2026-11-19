@@ -1202,6 +1202,12 @@ class FactoryResetTest(Base):
         self.assertEqual(st, 200, out)
         self.assertIn("restart the node, then reset again", out["problems"][0])
 
+    def test_a_read_only_backups_folder_is_told_to_restart_then_reset_again(self):
+        self.api.sysd = self.Helper(reply={"ok": False, "error": "2 update backups could not be removed (Read-only file system)"})
+        st, out = self.reset(confirm="factory-reset", media="keep")
+        self.assertEqual(st, 200, out)
+        self.assertIn("restart the node, then reset again", out["problems"][0])
+
     def test_a_node_with_no_helper_has_no_backups_folder_to_empty(self):
         self.api.sysd = None
         st, out = self.reset(confirm="factory-reset", media="keep")
