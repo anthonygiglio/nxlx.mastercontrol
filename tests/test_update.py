@@ -728,6 +728,90 @@ class StateFolderLinksTest(unittest.TestCase):
         self.u.now = lambda: 1001
         self.u.backup_settings("1.0.0")                     # and the second call accepts it
 
+    # --- the second review of PR 312 --------------------------------------------------------------------------------
+    def swap_after_mkdir(self, make):
+        real = os.mkdir
+
+        def mkdir(path, mode=0o777, **kw):
+            real(path, mode, **kw)
+            if path == "backups":
+                os.rename(os.path.join(self.state, "backups"), os.path.join(self.state, "hidden"))
+                make()
+        return mock.patch("os.mkdir", mkdir)
+
+    def test_a_folder_swapped_in_right_after_the_mkdir_is_not_chmoded_or_filled(self):
+        def make():
+            os.mkdir(os.path.join(self.state, "backups"), 0o755)
+            os.chmod(os.path.join(self.state, "backups"), 0o777)
+        with self.swap_after_mkdir(make):
+            with self.assertRaises(UpdateError):
+                self.u.backup_settings("1.0.0")
+        self.assertEqual(os.stat(self.u.backup_dir()).st_mode & 0o777, 0o777)
+        self.assertEqual(os.listdir(self.u.backup_dir()), [])
+
+    def test_a_link_swapped_in_right_after_the_mkdir_is_an_update_error(self):
+        def make():
+            os.symlink(self.victims, os.path.join(self.state, "backups"))
+        with self.swap_after_mkdir(make):
+            with self.assertRaises(UpdateError):
+                self.u.backup_settings("1.0.0")
+        self.assertEqual(os.listdir(self.victims), ["victim"])
+        self.victim_untouched()
+
+    def hide_backups(self):
+        b = self.u.backup_settings("1.0.0")
+        os.makedirs(os.path.join(self.env.root, "opt/nxlx"), exist_ok=True)
+        os.rename(self.u.backup_dir(), os.path.join(self.state, "hidden"))
+        os.symlink("/nonexistent", self.u.backup_dir())
+        return b
+
+    def test_a_failed_restore_is_recorded_logged_and_in_the_health_message(self):
+        b = self.hide_backups()
+        said = []
+        self.u._switch_to("1.0.0", b, log=said.append)
+        self.assertTrue(self.u.settings_problem)
+        self.assertTrue(any("could not be put back" in line for line in said), said)
+        self.assertIn("could not be put back", self.u._settings_note())
+
+    def test_apply_that_rolls_back_says_the_settings_were_not_put_back(self):
+        self.u.apply(make_bundle("1.0.0"), allow_unsigned=True, log=lambda *_: None)
+        self.env.write_settings(marker="before")
+        bundle = make_bundle("1.1.0")
+        real = self.u._switch_to
+
+        def swap_then_switch(version, backup, current=None, log=print):
+            os.rename(self.u.backup_dir(), os.path.join(self.state, "hidden"))
+            os.symlink("/nonexistent", self.u.backup_dir())
+            return real(version, backup, current, log=log)
+        self.env.healthy = False
+        said = []
+        with mock.patch.object(self.u, "_switch_to", swap_then_switch):
+            with self.assertRaises(UpdateError) as cm:
+                self.u.apply(bundle, allow_unsigned=True, log=said.append)
+        self.assertIn("rolled back", str(cm.exception))
+        self.assertIn("could not be put back", str(cm.exception))
+        self.assertEqual(self.u.status()["current"], "1.0.0")
+
+    def test_rollback_says_the_settings_were_not_put_back(self):
+        self.u.apply(make_bundle("1.0.0"), allow_unsigned=True, log=lambda *_: None)
+        self.u.apply(make_bundle("1.1.0"), allow_unsigned=True, log=lambda *_: None)
+        said = []
+        with mock.patch.object(self.u, "restore_settings", side_effect=UpdateError("the backups folder is not usable")):
+            self.assertEqual(self.u.rollback(log=said.append), "1.0.0")
+        self.assertTrue(any("could not be put back" in line for line in said), said)
+        self.assertIn("could not be put back", self.u._settings_note())
+
+    def test_a_settings_file_that_cannot_be_copied_is_said_in_the_log(self):
+        os.unlink(os.path.join(self.state, "settings.json"))
+        os.symlink(self.victim, os.path.join(self.state, "settings.json"))
+        said = []
+        self.assertIsNone(self.u.backup_settings("1.0.0", log=said.append))
+        self.assertTrue(any("not a plain file" in line and "schema check is skipped" in line for line in said), said)
+        said.clear()
+        os.unlink(os.path.join(self.state, "settings.json"))        # no file at all: nothing to say
+        self.assertIsNone(self.u.backup_settings("1.0.0", log=said.append))
+        self.assertEqual(said, [])
+
 
 if __name__ == "__main__":
     unittest.main()

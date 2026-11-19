@@ -268,6 +268,9 @@ class Updater:
     BACKUP_NAME = re.compile(r"settings-[0-9A-Za-z.+-]{1,40}-[0-9]{1,12}\.json")     # what backup_settings writes (nxlx-sysd clears the same names)
     SETTINGS_MAX = 4 << 20           # settings.json is JSON text (pictures are kept in files of their own); more than this is not what it seems
 
+    def state_dir_real(self):
+        return self.settings_path().rsplit("/", 1)[0] or "/"
+
     def _open_state(self):
         """The panel's state folder as a descriptor (the caller closes it), or None when there is none. The last name is
         never followed: the folder's parent is root's."""
@@ -282,6 +285,7 @@ class Updater:
         ENOTDIR), or a folder with the wrong owner or mode, is renamed out of the way (never followed) and, with
         `create`, replaced by a folder of our own. Any other failure to open (no descriptors left, an I/O error) touches
         nothing. Without `create` nothing is ever renamed or made: a read finds the folder or finds no backup."""
+        made = False
         for _attempt in range(3):
             fd = None
             try:
@@ -293,14 +297,26 @@ class Updater:
                     return None                      # not a reason to move root's folder
                 if not create:
                     return None
+                if made:                             # swapped for a link or a file right after it was made
+                    raise UpdateError("the settings backups folder was replaced while it was being made")
                 self._set_aside(state_fd)
             if fd is not None:
                 st = os.fstat(fd)
                 if stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid() and not st.st_mode & 0o022:
+                    if made:
+                        # the folder this call made inherits the setgid bit and group of the panel's folder: mode as
+                        # meant, set on the descriptor of the folder that just passed the check
+                        try:
+                            os.fchmod(fd, 0o700)
+                        except OSError:
+                            os.close(fd)
+                            raise UpdateError("the settings backups folder could not be set up")
                     return fd
                 os.close(fd)
                 if not create:
                     return None
+                if made:                             # not ours after all: the panel swapped it in
+                    raise UpdateError("the settings backups folder was replaced while it was being made")
                 self._set_aside(state_fd)
             if not create:
                 return None
@@ -310,10 +326,7 @@ class Updater:
                 continue
             except OSError:
                 return None
-            # a new folder inherits the setgid bit and group of the panel's folder: mode and owner as meant
-            fd = os.open("backups", self._DIR, dir_fd=state_fd)
-            os.fchmod(fd, 0o700)
-            return fd
+            made = True                              # the next round opens it again and checks it, like any other
         return None
 
     def _set_aside(self, state_fd):
@@ -369,7 +382,7 @@ class Updater:
             return None
 
     # --- backups --------------------------------------------------------
-    def backup_settings(self, version):
+    def backup_settings(self, version, log=print):
         """Copy settings.json into the root-only backups folder. settings.json is the panel's file: it is read without
         following a link (a link, a pipe or a device there means no backup, not a copy of what it points to), and the
         copy is made with O_EXCL inside the folder that was opened and checked, so no planted name can redirect it."""
@@ -379,6 +392,9 @@ class Updater:
         try:
             data = self._read_plain("settings.json", state_fd)
             if data is None:
+                if os.path.lexists(os.path.join(self.state_dir_real(), "settings.json")):
+                    log("settings.json is not a plain file of at most %d MiB (a link, a pipe or too large), so no copy of the "
+                        "settings is kept for this update and the settings schema check is skipped" % (self.SETTINGS_MAX >> 20))
                 return None
             bfd = self._open_backups(state_fd, create=True)
             if bfd is None:
@@ -409,17 +425,15 @@ class Updater:
         return os.path.join(self.backup_dir(), name)
 
     @staticmethod
-    def _write_new(dir_fd, name, data, mode, owner=None, replace_over=None):
+    def _write_new(dir_fd, name, data, mode, owner=None):
         """Make `name` in the open folder with exactly `data`: a new file (O_EXCL, no link followed), owner and mode set
-        on the descriptor. With `replace_over`, it is written under a temporary name and renamed over that name, which
-        replaces whatever stands there (a link included) without following it. A name that is taken is replaced."""
-        target = name if replace_over is None else ".%s.%d.tmp" % (replace_over, os.getpid())
+        on the descriptor. A name that is already taken is removed first (the name itself, a link included)."""
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
         try:
-            fd = os.open(target, flags, mode, dir_fd=dir_fd)
+            fd = os.open(name, flags, mode, dir_fd=dir_fd)
         except FileExistsError:
-            os.unlink(target, dir_fd=dir_fd)          # unlink removes the name itself, a link included
-            fd = os.open(target, flags, mode, dir_fd=dir_fd)
+            os.unlink(name, dir_fd=dir_fd)
+            fd = os.open(name, flags, mode, dir_fd=dir_fd)
         try:
             os.fchmod(fd, mode)
             if owner is not None:
@@ -431,13 +445,11 @@ class Updater:
         except BaseException:
             os.close(fd)
             try:
-                os.unlink(target, dir_fd=dir_fd)
+                os.unlink(name, dir_fd=dir_fd)
             except OSError:
                 pass
             raise
         os.close(fd)
-        if replace_over is not None:
-            os.rename(target, replace_over, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
 
     def restore_settings(self, backup):
         """Put a backup back as settings.json with the SAME owner as before: the panel runs as its
@@ -659,13 +671,16 @@ class Updater:
             with open(self._previous_file(), "w") as f:
                 f.write(text)
 
+    settings_problem = None         # why the last switch back could not put the settings back (None: it did, or none was asked)
+
     def apply(self, bundle, sha256=None, allow_unsigned=False, force=False, log=print, dir_fd=None):
         self.require_writable_root()
+        self.settings_problem = None
         info, tree, scratch = self.check(bundle, sha256, allow_unsigned, force, dir_fd=dir_fd)
         old_version = self._link_version()
         previous_before = self._read_previous()
         try:
-            backup = self.backup_settings(old_version or "none")
+            backup = self.backup_settings(old_version or "none", log=log)
             log("installing %s (was %s)" % (info["version"], old_version or "nothing"))
             try:
                 self._install(tree, info)
@@ -673,21 +688,25 @@ class Updater:
                 healthy = self._health()
             except BaseException:
                 if old_version:
-                    self._switch_to(old_version, backup)
+                    self._switch_to(old_version, backup, log=log)
                 self._restore_previous(previous_before)
                 raise
             if not healthy:
                 log("the new version did not come up; rolling back")
-                self._switch_to(old_version, backup)
+                self._switch_to(old_version, backup, log=log)
                 self._restore_previous(previous_before)  # a failed update must not disturb rollback history
-                raise UpdateError("update to %s failed its health check and was rolled back" % info["version"])
+                raise UpdateError("update to %s failed its health check and was rolled back%s" % (info["version"], self._settings_note()))
             log("update complete: %s" % info["version"])
             return info["version"]
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
+    def _settings_note(self):
+        return "; the settings could not be put back (%s) and stay as they are" % self.settings_problem if self.settings_problem else ""
+
     def rollback(self, log=print):
         self.require_writable_root()
+        self.settings_problem = None
         st = self.status()
         target = st["previous"]
         if not target or not os.path.isdir(self.real("%s/releases/%s" % (self.prefix, target))):
@@ -703,12 +722,12 @@ class Updater:
         if backup is None:
             # Normal after a factory reset, which removes every saved copy (J-055): the program goes back, the settings stay as they are.
             log("there is no saved copy of the settings for %s (a factory reset removes them), so the settings stay as they are" % target)
-        self._switch_to(target, backup, current=st["current"])
+        self._switch_to(target, backup, current=st["current"], log=log)
         if not self._health():
-            raise UpdateError("rolled back, but the panel did not answer; check the services")
+            raise UpdateError("rolled back, but the panel did not answer; check the services%s" % self._settings_note())
         return target
 
-    def _switch_to(self, version, backup, current=None):
+    def _switch_to(self, version, backup, current=None, log=print):
         if version is None:
             raise UpdateError("nothing to switch back to")
         tmp = self.current_link + ".tmp"
@@ -722,7 +741,8 @@ class Updater:
             except (UpdateError, OSError) as e:
                 # The program is switched already: the restart and the note of the previous release still have to
                 # happen, or unhealthy processes keep running and the rollback history is lost.
-                print("the settings could not be put back (%s); they stay as they are" % e)
+                self.settings_problem = str(e.strerror or e) if isinstance(e, OSError) else str(e)
+                log("the settings could not be put back (%s); they stay as they are" % self.settings_problem)
         if current:
             with open(self.real(self.prefix + "/previous"), "w") as f:
                 f.write("%s/releases/%s\n" % (self.prefix, current))
@@ -943,7 +963,7 @@ def main(argv=None):
                     os.close(inbox)
         elif args.cmd == "rollback":
             version = u.rollback()
-            report("done", "rolled back to %s" % version, version)
+            report("done", "rolled back to %s%s" % (version, u._settings_note()), version)
     except UpdateError as e:
         print("nxlx-update: %s" % e, file=sys.stderr)
         report("failed", str(e))
