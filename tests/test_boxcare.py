@@ -1162,6 +1162,45 @@ class FactoryResetTest(Base):
     def reset(self, device=None, client=LAN, **body):
         return self.h("POST", "/api/system/factory-reset", body, device or self.full_dev, client)
 
+    class Helper:
+        """The root helper as the reset sees it: it is asked for one thing, and says ok or not."""
+        def __init__(self, reply=None, error=None):
+            self.asked, self.reply, self.error = [], reply or {"ok": True, "removed": 2}, error
+
+        def request(self, message):
+            self.asked.append(message)
+            if self.error:
+                raise self.error
+            return self.reply
+
+    def test_a_reset_has_the_root_helper_remove_the_update_backups(self):
+        helper = self.api.sysd = self.Helper()
+        st, out = self.reset(confirm="factory-reset", media="keep")
+        self.assertEqual(st, 200, out)
+        self.assertEqual(helper.asked, [{"cmd": "clear_update_backups"}])           # exactly this one request, no name or path
+        self.assertEqual(out["problems"], [])
+
+    def test_a_refused_reset_does_not_touch_the_update_backups(self):
+        helper = self.api.sysd = self.Helper()
+        self.assertEqual(self.reset(confirm="factory-reset")[0], 400)
+        self.assertEqual(self.reset(self.view_dev, confirm="factory-reset", media="keep")[0], 403)
+        self.assertEqual(helper.asked, [])
+
+    def test_a_reset_says_in_plain_words_when_the_backups_stayed(self):
+        for helper in (self.Helper(reply={"ok": False, "error": "1 update backup could not be removed"}),
+                       self.Helper(error=OSError("the system helper (nxlx-sysd) is not running"))):
+            self.api.sysd = helper
+            st, out = self.reset(confirm="factory-reset", media="keep")
+            self.assertEqual(st, 200, out)                                  # the rest of the reset still happened
+            self.assertEqual(len(out["problems"]), 1)
+            self.assertIn("a rollback could bring old devices back", out["problems"][0])
+            self.assertEqual(len(helper.asked), 1)
+
+    def test_a_node_with_no_helper_has_no_backups_folder_to_empty(self):
+        self.api.sysd = None
+        st, out = self.reset(confirm="factory-reset", media="keep")
+        self.assertEqual((st, out["problems"]), (200, []))
+
     def test_every_refusal_changes_nothing(self):
         self.h("POST", "/api/access/code", {"role": "view"}, self.full_dev)
         dev, _ = self.remote_login()

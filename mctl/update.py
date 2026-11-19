@@ -479,7 +479,11 @@ class Updater:
             raise UpdateError("the previous release %s is from before the rename of the system names (pvj to nxlx) "
                               "and does not run under them; to go back to it: sudo nxlx-convert --undo" % target)
         log("rolling back %s -> %s" % (st["current"], target))
-        self._switch_to(target, self.latest_backup(target), current=st["current"])
+        backup = self.latest_backup(target)
+        if backup is None:
+            # Normal after a factory reset, which removes every saved copy (J-055): the program goes back, the settings stay as they are.
+            log("there is no saved copy of the settings for %s (a factory reset removes them), so the settings stay as they are" % target)
+        self._switch_to(target, backup, current=st["current"])
         if not self._health():
             raise UpdateError("rolled back, but the panel did not answer; check the services")
         return target

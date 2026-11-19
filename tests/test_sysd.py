@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import os
 import subprocess
+import tempfile
 import unittest
+from unittest import mock
 
 from mctl import sysd
 from tests.test_server import ServerBase
@@ -50,6 +52,69 @@ class ServiceTest(unittest.TestCase):
         fn()
         self.assertEqual(self.run.calls[-1], ["systemctl", "reboot"])
         self.assertTrue(s.handle({"cmd": "poweroff"})["already"])                     # a second request does not queue another
+
+    def backups(self, names=("settings-1.0.0-1790000000.json", "settings-1.1.0-1790000100.json")):
+        state = tempfile.mkdtemp()
+        folder = os.path.join(state, "backups")
+        os.makedirs(folder)
+        for n in names:
+            with open(os.path.join(folder, n), "w") as f:
+                f.write("{}")
+        s = self.make()
+        s.state_dir = state
+        return s, folder
+
+    def test_clear_update_backups_removes_the_settings_copies_and_nothing_else(self):
+        s, folder = self.backups()
+        other = os.path.join(folder, "notes.txt")
+        with open(other, "w") as f:
+            f.write("keep")
+        os.makedirs(os.path.join(folder, "settings-9.9.9-1.json"))              # a folder with a matching name stays
+        outside = os.path.join(os.path.dirname(folder), "settings-x-1.json")
+        with open(outside, "w") as f:
+            f.write("keep")
+        os.symlink(outside, os.path.join(folder, "settings-2.0.0-5.json"))     # a link stays, and so does what it points at
+        self.assertEqual(s.handle({"cmd": "clear_update_backups"}), {"ok": True, "removed": 2})
+        self.assertEqual(sorted(os.listdir(folder)), ["notes.txt", "settings-2.0.0-5.json", "settings-9.9.9-1.json"])
+        self.assertTrue(os.path.exists(outside))
+        self.assertEqual(s.handle({"cmd": "clear_update_backups"}), {"ok": True, "removed": 0})      # again: nothing to do
+
+    def test_clear_update_backups_takes_no_name_from_the_caller(self):
+        s, folder = self.backups()
+        victim = os.path.join(os.path.dirname(folder), "settings.json")
+        with open(victim, "w") as f:
+            f.write("{}")
+        for extra in ({"path": victim}, {"name": "../settings.json"}, {"folder": "/"}, {"dir": os.path.dirname(folder)}):
+            msg = dict(extra, cmd="clear_update_backups")
+            self.assertTrue(s.handle(msg)["ok"])
+        self.assertTrue(os.path.exists(victim))
+        self.assertEqual(os.listdir(folder), [])                               # only the fixed folder was emptied
+
+    def test_clear_update_backups_with_no_folder_or_a_linked_folder(self):
+        s = self.make()
+        s.state_dir = tempfile.mkdtemp()
+        self.assertEqual(s.handle({"cmd": "clear_update_backups"}), {"ok": True, "removed": 0})
+        target = tempfile.mkdtemp()
+        with open(os.path.join(target, "settings-1.0.0-1.json"), "w") as f:
+            f.write("{}")
+        os.symlink(target, os.path.join(s.state_dir, "backups"))
+        r = s.handle({"cmd": "clear_update_backups"})
+        self.assertFalse(r["ok"])
+        self.assertEqual(os.listdir(target), ["settings-1.0.0-1.json"])
+
+    def test_clear_update_backups_says_when_a_file_stayed(self):
+        s, folder = self.backups()
+        real = os.unlink
+
+        def stubborn(path, *a, **k):
+            if path.endswith("1.1.0-1790000100.json"):
+                raise PermissionError(1, "Operation not permitted")
+            return real(path, *a, **k)
+        with mock.patch("os.unlink", stubborn):
+            r = s.handle({"cmd": "clear_update_backups"})
+        self.assertFalse(r["ok"])
+        self.assertIn("1 update backup could not be removed", r["error"])
+        self.assertEqual(r["removed"], 1)
 
     def test_a_refusal_is_reported_not_swallowed(self):
         s = self.make(dry_run_fails=True)

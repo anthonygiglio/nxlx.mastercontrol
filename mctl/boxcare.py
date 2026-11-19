@@ -1310,6 +1310,22 @@ class BoxCare:
             auth._revoked(None)             # nobody is connected after a reset, and nothing is told of what they changed (D126)
         return pin
 
+    def _clear_update_backups(self):
+        """Ask the root helper to delete the settings copies a software update keeps (a rollback would put them back: old
+        devices, passwords, pairings). Returns the problems, in plain words. No helper (a test machine, a laptop) means no
+        root-only folder to empty."""
+        sysd = getattr(self.api, "sysd", None)
+        if sysd is None:
+            return []
+        try:
+            reply = sysd.request({"cmd": "clear_update_backups"})
+        except OSError as e:
+            return ["the saved copies from software updates could not be removed (%s); a rollback could bring old devices back" % e]
+        if not reply.get("ok"):
+            return ["the saved copies from software updates could not all be removed (%s); a rollback could bring old devices back"
+                    % reply.get("error", "the helper refused")]
+        return []
+
     def factory_reset(self, body, device, client):
         """{"confirm": "factory-reset", "media": "keep" | "delete"}: playback stopped, settings back to defaults, every
         paired device, join code and support session gone, a new PIN (so the PIN screen returns), and the clips kept
@@ -1368,6 +1384,7 @@ class BoxCare:
                 for path in self._siblings(suffix):
                     if not self._unlink(path):
                         problems.append("could not remove %s" % os.path.basename(path))
+            problems += self._clear_update_backups()       # the root-only copies an update keeps would bring the old devices back (J-055)
             try:
                 for name in os.listdir(api._update_inbox()):
                     self._unlink(os.path.join(api._update_inbox(), name))

@@ -354,6 +354,20 @@ class UpdaterTest(unittest.TestCase):
         aside = [n for n in os.listdir(os.path.join(self.env.root, "var/lib/nxlx")) if "rolled-back" in n]
         self.assertEqual(len(aside), 1)  # newer settings set aside, not deleted
 
+    def test_rollback_after_the_backups_were_removed_brings_nothing_back(self):
+        """J-055: a factory reset removes the saved settings copies; a rollback then changes the program and says so in
+        words, and the settings (the reset ones) stay as they are."""
+        self.apply("1.0.0")
+        self.env.write_settings(schema=1, marker="old-devices")
+        self.apply("1.1.0")
+        for name in os.listdir(self.u.backup_dir()):                  # what the helper's clear_update_backups does
+            os.unlink(os.path.join(self.u.backup_dir(), name))
+        self.env.write_settings(schema=2, marker="after-reset")
+        said = []
+        self.assertEqual(self.u.rollback(log=said.append), "1.0.0")
+        self.assertEqual(self.env.settings()["marker"], "after-reset")
+        self.assertTrue(any("no saved copy of the settings" in line and "factory reset" in line for line in said), said)
+
     def test_rollback_without_previous_is_an_error(self):
         self.apply("1.0.0")
         with self.assertRaises(UpdateError):
