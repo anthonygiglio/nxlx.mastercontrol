@@ -243,9 +243,10 @@ class UpdateRestartTest(unittest.TestCase):
         self.assertEqual(calls, [["systemctl", "try-restart", "nxlx-netd.service"],
                                  ["systemctl", "try-restart", "nxlx-ndi.service"],
                                  ["systemctl", "try-restart", "nxlx-link.service"],
-                                 ["systemctl", "restart", "nxlx-player.service", "nxlx-web.service"]])
-        flat = " ".join(sum(calls, []))
-        self.assertNotIn("nxlx-sysd", flat)           # it started this update
+                                 ["systemctl", "restart", "nxlx-player.service", "nxlx-web.service"],
+                                 ["systemctl", "try-restart", "--no-block", "nxlx-sysd.service"]])    # last, to run new code (J-055)
+        flat = " ".join(sum(calls[:-1], []))
+        self.assertNotIn("nxlx-sysd", flat)           # only the last call restarts it, by try-restart: it started this update
         self.assertNotIn("nxlx-supportd", flat)       # a support session may be the one updating
 
 

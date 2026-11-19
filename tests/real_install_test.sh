@@ -734,6 +734,7 @@ if ! /usr/local/bin/nxlx-ndi-runtime install "$NDI_STANDIN" 2>&1 | tee "$OUT"; t
 grep -q "^installed $NDI_LIB\$" "$OUT" || fail "the command did not say where it placed the library"
 grep -q "^sha256 $(sha256sum "$NDI_STANDIN" | cut -d' ' -f1) " "$OUT" || fail "the sha256 the command printed is not the stand-in's"
 grep -q "the helper nxlx-ndi is installed and was running" "$OUT" || fail "the command did not say that the helper stayed up"
+is /var/lib/nxlx/backups "root:root 700 directory"      # J-055: where an update keeps settings copies, root's
 is /opt/nxlx-ndi "root:root 755 directory"
 is "$NDI_LIB" "root:root 644 regular file"
 cmp "$NDI_STANDIN" "$NDI_LIB" || fail "what was placed is not what was given"

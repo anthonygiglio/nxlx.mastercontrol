@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 import os
+import shutil
 import subprocess
+import tempfile
 import unittest
+from unittest import mock
 
 from mctl import sysd
 from tests.test_server import ServerBase
@@ -50,6 +53,130 @@ class ServiceTest(unittest.TestCase):
         fn()
         self.assertEqual(self.run.calls[-1], ["systemctl", "reboot"])
         self.assertTrue(s.handle({"cmd": "poweroff"})["already"])                     # a second request does not queue another
+
+    def tmp(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
+    def backups(self, names=("settings-1.0.0-1790000000.json", "settings-1.1.0-1790000100.json")):
+        state = self.tmp()
+        folder = os.path.join(state, "backups")
+        os.makedirs(folder)
+        for n in names:
+            with open(os.path.join(folder, n), "w") as f:
+                f.write("{}")
+        s = self.make()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        s.state_dir = state
+        s.owner_uid = os.getuid()               # root's on a node; whoever runs the tests here
+        return s, folder
+
+    def test_clear_update_backups_removes_the_settings_copies_and_nothing_else(self):
+        s, folder = self.backups()
+        other = os.path.join(folder, "notes.txt")
+        with open(other, "w") as f:
+            f.write("keep")
+        os.makedirs(os.path.join(folder, "settings-9.9.9-1.json"))              # a folder with a matching name stays, and is said
+        outside = os.path.join(os.path.dirname(folder), "settings-x-1.json")
+        with open(outside, "w") as f:
+            f.write("keep")
+        os.symlink(outside, os.path.join(folder, "settings-2.0.0-5.json"))     # so does a link, and what it points at
+        r = s.handle({"cmd": "clear_update_backups"})
+        self.assertEqual((r["ok"], r["removed"]), (False, 2))
+        self.assertIn("2 update backups could not be removed", r["error"])
+        self.assertEqual(sorted(os.listdir(folder)), ["notes.txt", "settings-2.0.0-5.json", "settings-9.9.9-1.json"])
+        self.assertTrue(os.path.exists(outside))
+        os.unlink(os.path.join(folder, "settings-2.0.0-5.json"))
+        os.rmdir(os.path.join(folder, "settings-9.9.9-1.json"))
+        self.assertEqual(s.handle({"cmd": "clear_update_backups"}), {"ok": True, "removed": 0})      # again: nothing to do
+
+    def test_clear_update_backups_logs_what_was_removed_and_what_stayed(self):
+        s, folder = self.backups()
+        os.makedirs(os.path.join(folder, "settings-9.9.9-1.json"))
+        logged = []
+        s.log = logged.append
+        s.handle({"cmd": "clear_update_backups"})
+        self.assertEqual(logged, ["nxlx-sysd: 2 update backups removed by the panel (factory reset), 1 stayed"])
+
+    def test_clear_update_backups_takes_no_name_from_the_caller(self):
+        s, folder = self.backups()
+        victim = os.path.join(os.path.dirname(folder), "settings.json")
+        with open(victim, "w") as f:
+            f.write("{}")
+        for extra in ({"path": victim}, {"name": "../settings.json"}, {"folder": "/"}, {"dir": os.path.dirname(folder)}):
+            self.assertTrue(s.handle(dict(extra, cmd="clear_update_backups"))["ok"])
+        self.assertTrue(os.path.exists(victim))
+        self.assertEqual(os.listdir(folder), [])                               # only the fixed folder was emptied
+
+    def test_clear_update_backups_with_no_folder(self):
+        s = self.make()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        s.state_dir = self.tmp()
+        self.assertEqual(s.handle({"cmd": "clear_update_backups"}), {"ok": True, "removed": 0})
+
+    def test_clear_update_backups_refuses_a_linked_folder_or_one_that_is_not_roots(self):
+        s = self.make()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        s.state_dir = self.tmp()
+        s.owner_uid = os.getuid()
+        target = self.tmp()
+        with open(os.path.join(target, "settings-1.0.0-1.json"), "w") as f:
+            f.write("{}")
+        os.symlink(target, os.path.join(s.state_dir, "backups"))
+        r = s.handle({"cmd": "clear_update_backups"})
+        self.assertFalse(r["ok"])
+        self.assertEqual(os.listdir(target), ["settings-1.0.0-1.json"])        # not followed
+        s2, folder = self.backups()
+        s2.owner_uid = os.getuid() + 1                                          # somebody else's folder
+        r = s2.handle({"cmd": "clear_update_backups"})
+        self.assertFalse(r["ok"])
+        self.assertIn("not root's", r["error"])
+        self.assertEqual(len(os.listdir(folder)), 2)
+
+    def test_clear_update_backups_says_when_a_file_stayed(self):
+        s, folder = self.backups()
+        real = os.unlink
+
+        def stubborn(path, *a, **k):
+            if str(path).endswith("1.1.0-1790000100.json"):
+                raise PermissionError(1, "Operation not permitted")
+            return real(path, *a, **k)
+        with mock.patch("os.unlink", stubborn):
+            r = s.handle({"cmd": "clear_update_backups"})
+        self.assertFalse(r["ok"])
+        self.assertIn("1 update backup could not be removed (Operation not permitted)", r["error"])
+        self.assertEqual(r["removed"], 1)
+
+    def test_a_read_only_folder_is_named_in_the_error(self):
+        s, folder = self.backups()
+        def readonly(path, *a, **k):
+            raise OSError(30, "Read-only file system")
+        with mock.patch("os.unlink", readonly):
+            r = s.handle({"cmd": "clear_update_backups"})
+        self.assertFalse(r["ok"])
+        self.assertIn("(Read-only file system)", r["error"])
+
+    def test_clear_update_backups_removes_what_the_real_updater_wrote(self):
+        """The names come from update.Updater.backup_settings itself, including the "none" version of a first install."""
+        from mctl.update import Updater
+        root = self.tmp()
+        os.makedirs(os.path.join(root, "var/lib/nxlx"))
+        with open(os.path.join(root, "var/lib/nxlx/settings.json"), "w") as f:
+            f.write("{}")
+        clock = iter(range(1790000000, 1790000100))
+        u = Updater(root=root, now=lambda: next(clock))
+        for version in ("none", "1.0.0", "1.2.3-rc1", "2.0.0"):
+            self.assertTrue(u.backup_settings(version))
+        folder = u.backup_dir()
+        self.assertEqual(len(os.listdir(folder)), 4)
+        self.assertTrue(any(n.startswith("settings-none-") for n in os.listdir(folder)))
+        s = self.make()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        s.state_dir, s.owner_uid = os.path.join(root, "var/lib/nxlx"), os.getuid()
+        self.assertEqual(s.handle({"cmd": "clear_update_backups"}), {"ok": True, "removed": 4})
+        self.assertEqual(os.listdir(folder), [])
+        self.assertIsNone(u.latest_backup("1.0.0"))                             # nothing for a rollback to find
 
     def test_a_refusal_is_reported_not_swallowed(self):
         s = self.make(dry_run_fails=True)

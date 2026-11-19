@@ -21,6 +21,9 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
   takes effect at the next start of the node;
 * throttled (the stats overlay): `vcgencmd get_throttled`, a fixed argument list, read-only; the reply is the number the firmware
   keeps (bit 0 under-voltage now, 1 capped now, 2 throttled now, 3 soft temperature limit now; bits 16 to 19 the same since boot);
+* clear_update_backups (J-055): delete the copies of the settings that an update keeps in the root-only backups folder
+  (`settings-<version>-<time>.json`, plain files only, that one fixed folder), so a factory reset leaves nothing a rollback
+  could bring back (old devices, passwords, pairings). No path or name comes from the caller;
 * update: start nxlx-update-usb@V.service or nxlx-update-inbox@V.service (fixed template units, V a checked version: nxlx-update checks the signature,
   refuses older versions and rolls back by itself).
 
@@ -32,6 +35,7 @@ import json
 import socket
 import os
 import re
+import stat
 import subprocess
 import threading
 import time
@@ -299,6 +303,58 @@ class SysService:
         self.log("nxlx-sysd: update to %s from %s started by the panel" % (version, source))
         return {"ok": True, "started": source, "version": version}
 
+    # --- the update backups (J-055) ----------------------------------------------------------------------------------
+    state_dir = paths.STATE_DIR
+    owner_uid = 0               # whose the folder must be (root); a test machine says otherwise
+    BACKUP_NAME = re.compile(r"settings-[0-9A-Za-z.+-]{1,40}-[0-9]{1,12}\.json")     # what mctl/update.py backup_settings writes
+
+    def clear_update_backups(self):
+        """Delete the settings copies an update keeps (update.Updater.backup_dir: <state>/backups/settings-<version>-<time>.json,
+        0600, root's). Only that one fixed folder, opened without following a link and checked to be root's; every name is then
+        handled relative to that open folder. Only plain files of that name go; a matching name that is anything else (a link,
+        a folder) is not removed and is counted as one that stayed. The caller sends no name. A missing folder is nothing to
+        do. {"ok", "removed"}: ok is False if anything stayed."""
+        folder = os.path.join(self.state_dir, "backups")
+        with self.lock:
+            try:
+                fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+            except FileNotFoundError:
+                return {"ok": True, "removed": 0}
+            except OSError as e:     # a link (ELOOP) or not a folder (ENOTDIR) arrives here too
+                return {"ok": False, "error": "the update backups folder could not be opened, so nothing was removed: %s" % (e.strerror or e)}
+            try:
+                st = os.fstat(fd)
+                if not stat.S_ISDIR(st.st_mode) or st.st_uid != self.owner_uid:
+                    return {"ok": False, "error": "the update backups folder is not root's, so nothing was removed"}
+                try:
+                    names = os.listdir(fd)
+                except OSError as e:
+                    return {"ok": False, "error": "the update backups could not be read: %s" % (e.strerror or e)}
+                removed, stayed, first = 0, 0, None
+                for name in names:
+                    if not self.BACKUP_NAME.fullmatch(name):
+                        continue
+                    try:
+                        if not stat.S_ISREG(os.lstat(name, dir_fd=fd).st_mode):
+                            stayed += 1
+                            continue
+                        os.unlink(name, dir_fd=fd)
+                        removed += 1
+                    except FileNotFoundError:
+                        pass
+                    except OSError as e:
+                        stayed += 1
+                        first = first or (e.strerror or str(e))        # the first reason, e.g. "Read-only file system"
+            finally:
+                os.close(fd)
+        if removed or stayed:
+            self.log("nxlx-sysd: %d update backup%s removed by the panel (factory reset)%s"
+                     % (removed, "" if removed == 1 else "s", ", %d stayed" % stayed if stayed else ""))
+        if stayed:
+            why = " (%s)" % first if first else ""
+            return {"ok": False, "error": "%d update backup%s could not be removed%s" % (stayed, "" if stayed == 1 else "s", why), "removed": removed}
+        return {"ok": True, "removed": removed}
+
     # --- announcing the node to the local network (D127) ------------------------------------------------------------
     AVAHI_SERVICES = "/etc/avahi/services"
     AVAHI_SOCKET = "/run/avahi-daemon/socket"
@@ -408,6 +464,8 @@ class SysService:
             return self.av_output(message.get("enable"), message.get("norm"))
         if cmd == "journal":
             return self.journal(message.get("lines"), message.get("hours"), message.get("boot"))
+        if cmd == "clear_update_backups":
+            return self.clear_update_backups()
         if cmd == "fleet_announce":
             return self.fleet_announce(message)
         if cmd == "fleet_withdraw":

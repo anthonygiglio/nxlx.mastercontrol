@@ -676,6 +676,11 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then
 	# through to the media folder and read, but not create, rename or replace files: 2750, owned by nxlx-web.
 	mkdir -p /var/lib/nxlx; chown nxlx-web:nxlx-svc /var/lib/nxlx; chmod 2750 /var/lib/nxlx
 	[ -e /var/lib/nxlx/settings.json ] && chown nxlx-web:nxlx-svc /var/lib/nxlx/settings.json* 2>/dev/null
+	# The settings copies an update keeps (J-055): root's, so the path exists when nxlx-sysd starts (its unit can write only a
+	# path that is there then) and a factory reset can empty it. Already there from an update: left as it is, owner and mode set.
+	# A link planted there must never be followed by the chown and chmod below: it is removed (a real folder is left alone).
+	if [ -L /var/lib/nxlx/backups ]; then rm -f /var/lib/nxlx/backups; fi
+	mkdir -p /var/lib/nxlx/backups; chown root:root /var/lib/nxlx/backups; chmod 0700 /var/lib/nxlx/backups; chmod g-s /var/lib/nxlx/backups   # g-s: the parent is setgid and chmod keeps that bit on a folder
 	true
 fi
 if [ "$DRY" = 0 ]; then
@@ -877,6 +882,10 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	# (it is idle until the Owner chooses a device): a box updated from before D96 gets it at once.
 	if [ "$START" = 1 ]; then systemctl restart nxlx-sound.service || log "the sound service did not start; see: journalctl -u nxlx-sound -n 30"
 	else systemctl try-restart nxlx-sound.service || true; systemctl start nxlx-sound.service 2>/dev/null || true; fi
+	# The root helper (J-055), with --no-start only: an update from the panel restarts the panel and player itself, and a helper
+	# that is running must move to the new program, or an action this release adds answers "unknown command" until a reboot. The
+	# old updater that runs this installer has no such line of its own. try-restart starts nothing; --no-block does not wait.
+	if [ "$START" = 0 ]; then systemctl try-restart --no-block nxlx-sysd.service || true; fi
 	# The Link follower the same way. Where it could not be built its condition skips it, which is no failure.
 	systemctl enable nxlx-link.service || log "could not enable the Ableton Link service"
 	if [ "$START" = 1 ]; then systemctl restart nxlx-link.service || log "the Ableton Link service did not start; see: journalctl -u nxlx-link -n 30"

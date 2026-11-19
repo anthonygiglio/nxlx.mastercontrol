@@ -479,7 +479,11 @@ class Updater:
             raise UpdateError("the previous release %s is from before the rename of the system names (pvj to nxlx) "
                               "and does not run under them; to go back to it: sudo nxlx-convert --undo" % target)
         log("rolling back %s -> %s" % (st["current"], target))
-        self._switch_to(target, self.latest_backup(target), current=st["current"])
+        backup = self.latest_backup(target)
+        if backup is None:
+            # Normal after a factory reset, which removes every saved copy (J-055): the program goes back, the settings stay as they are.
+            log("there is no saved copy of the settings for %s (a factory reset removes them), so the settings stay as they are" % target)
+        self._switch_to(target, backup, current=st["current"])
         if not self._health():
             raise UpdateError("rolled back, but the panel did not answer; check the services")
         return target
@@ -556,7 +560,7 @@ class Updater:
         if os.path.isdir("/run/systemd/system") and self.root == "":
             # The network helper too, only if it is running (try-restart starts nothing): its socket's place is
             # part of a release (mctl/paths.py), and the panel must find the helper that matches it. Not nxlx-sysd
-            # (it started this update) and not nxlx-supportd (a support session may be the one updating).
+            # (it started this update; it is restarted last, below) and not nxlx-supportd (a support session may be the one updating).
             # The NDI helper likewise, which exists only on a box that opted in (mctl/ndisetup.py): after a switch to
             # another release it must run that release's code, like the panel that asks it.
             # Two calls, so that the network helper's restart does not depend on what systemctl makes of a unit
@@ -567,6 +571,11 @@ class Updater:
             # panel cannot tell it off and it would stay on the network; the unit's condition keeps it down there.
             self.run(["systemctl", "try-restart", "nxlx-link.service"], capture_output=True)
             self.run(["systemctl", "restart", "nxlx-player.service", "nxlx-web.service"], capture_output=True)
+            # The root helper last (J-055): a running nxlx-sysd keeps the code it started with, so an action a new release adds
+            # (clear_update_backups) would answer "unknown command" until the next start. Safe here: the update runs in its own unit
+            # (nxlx-update-*@.service, a separate cgroup), not inside the helper, and the panel has been restarted already. --no-block:
+            # nothing waits for it, and try-restart starts nothing where the helper is not running.
+            self.run(["systemctl", "try-restart", "--no-block", "nxlx-sysd.service"], capture_output=True)
 
     def configured_port(self):
         """The panel's port as the service sees it: /etc/nxlx/nxlx.env, else our environment, else 80."""

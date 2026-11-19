@@ -616,10 +616,10 @@ class HelperCommandTest(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertIn("no boot configuration", r["error"])
 
-    def test_the_unit_may_write_the_boot_folder_and_nothing_more_of_the_system(self):
+    def test_the_unit_may_write_only_its_run_folder_the_avahi_file_the_boot_folder_and_the_update_backups(self):
         with open(os.path.join(os.path.dirname(sysd.__file__), "..", "install", "nxlx-sysd.service")) as f:
             unit = f.read()
-        self.assertIn("ReadWritePaths=/run/nxlx-sysd -/etc/avahi/services -/boot/firmware\n", unit)   # D127 avahi file and D128 boot files
+        self.assertIn("ReadWritePaths=/run/nxlx-sysd -/etc/avahi/services -/boot/firmware -/var/lib/nxlx/backups\n", unit)   # D127 avahi file, D128 boot files, J-055 update backups
         self.assertIn("ProtectSystem=strict", unit)
 
 
