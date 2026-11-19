@@ -61,14 +61,14 @@ class ServiceTest(unittest.TestCase):
 
     def backups(self, names=("settings-1.0.0-1790000000.json", "settings-1.1.0-1790000100.json")):
         state = self.tmp()
-        folder = os.path.join(state, "backups")
+        folder = os.path.join(state, "nxlx-update")          # root's own folder, beside the panel's (J-178)
         os.makedirs(folder)
         for n in names:
             with open(os.path.join(folder, n), "w") as f:
                 f.write("{}")
         s = self.make()
         self.addCleanup(shutil.rmtree, self.dir, True)
-        s.state_dir = state
+        s.backup_folder = folder
         s.owner_uid = os.getuid()               # root's on a node; whoever runs the tests here
         return s, folder
 
@@ -85,7 +85,7 @@ class ServiceTest(unittest.TestCase):
         r = s.handle({"cmd": "clear_update_backups"})
         self.assertEqual((r["ok"], r["removed"]), (False, 2))
         self.assertIn("2 update backups could not be removed", r["error"])
-        self.assertEqual(sorted(os.listdir(folder)), ["notes.txt", "settings-2.0.0-5.json", "settings-9.9.9-1.json"])
+        self.assertEqual(sorted(n for n in os.listdir(folder) if n != "migrated"), ["notes.txt", "settings-2.0.0-5.json", "settings-9.9.9-1.json"])
         self.assertTrue(os.path.exists(outside))
         os.unlink(os.path.join(folder, "settings-2.0.0-5.json"))
         os.rmdir(os.path.join(folder, "settings-9.9.9-1.json"))
@@ -107,23 +107,30 @@ class ServiceTest(unittest.TestCase):
         for extra in ({"path": victim}, {"name": "../settings.json"}, {"folder": "/"}, {"dir": os.path.dirname(folder)}):
             self.assertTrue(s.handle(dict(extra, cmd="clear_update_backups"))["ok"])
         self.assertTrue(os.path.exists(victim))
-        self.assertEqual(os.listdir(folder), [])                               # only the fixed folder was emptied
+        self.assertEqual([n for n in os.listdir(folder) if n != "migrated"], [])                               # only the fixed folder was emptied
+
+    def test_a_reset_leaves_the_marker_that_ends_the_move_out_of_the_panels_folder(self):
+        s, folder = self.backups()
+        s.handle({"cmd": "clear_update_backups"})
+        self.assertTrue(os.path.isfile(os.path.join(folder, "migrated")))
+        self.assertEqual(os.stat(os.path.join(folder, "migrated")).st_mode & 0o777, 0o600)
+        self.assertEqual(s.handle({"cmd": "clear_update_backups"}), {"ok": True, "removed": 0})      # again: the marker is no copy
 
     def test_clear_update_backups_with_no_folder(self):
         s = self.make()
         self.addCleanup(shutil.rmtree, self.dir, True)
-        s.state_dir = self.tmp()
+        s.backup_folder = os.path.join(self.tmp(), "nxlx-update")
         self.assertEqual(s.handle({"cmd": "clear_update_backups"}), {"ok": True, "removed": 0})
 
     def test_clear_update_backups_refuses_a_linked_folder_or_one_that_is_not_roots(self):
         s = self.make()
         self.addCleanup(shutil.rmtree, self.dir, True)
-        s.state_dir = self.tmp()
+        s.backup_folder = os.path.join(self.tmp(), "nxlx-update")
         s.owner_uid = os.getuid()
         target = self.tmp()
         with open(os.path.join(target, "settings-1.0.0-1.json"), "w") as f:
             f.write("{}")
-        os.symlink(target, os.path.join(s.state_dir, "backups"))
+        os.symlink(target, s.backup_folder)
         r = s.handle({"cmd": "clear_update_backups"})
         self.assertFalse(r["ok"])
         self.assertEqual(os.listdir(target), ["settings-1.0.0-1.json"])        # not followed
@@ -173,9 +180,9 @@ class ServiceTest(unittest.TestCase):
         self.assertTrue(any(n.startswith("settings-none-") for n in os.listdir(folder)))
         s = self.make()
         self.addCleanup(shutil.rmtree, self.dir, True)
-        s.state_dir, s.owner_uid = os.path.join(root, "var/lib/nxlx"), os.getuid()
+        s.backup_folder, s.owner_uid = folder, os.getuid()
         self.assertEqual(s.handle({"cmd": "clear_update_backups"}), {"ok": True, "removed": 4})
-        self.assertEqual(os.listdir(folder), [])
+        self.assertEqual([n for n in os.listdir(folder) if n != "migrated"], [])
         self.assertIsNone(u.latest_backup("1.0.0"))                             # nothing for a rollback to find
 
     def test_a_refusal_is_reported_not_swallowed(self):

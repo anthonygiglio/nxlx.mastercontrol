@@ -1488,7 +1488,7 @@ class FactoryResetTest(Base):
         from mctl import clipstick
         state = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, state, True)
-        clipstick.write_claim(state, "N01-CLIPS", "", "00112233445566778899aabbccddeeff")
+        clipstick.write_claim(state, "N01-CLIPS", "", "00112233445566778899aabbccddeeff", root_dir=state)
         self.api.clip_chooser = clipstick.Chooser(self.media, os.path.join(state, "clips"), state, os.path.join(state, "s.json"), ttl=0)
         self.assertEqual(self.api.clip_stick_state()["state"], "missing")
         media = sorted(os.listdir(self.media))

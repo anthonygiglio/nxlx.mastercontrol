@@ -655,7 +655,7 @@ class StateFolderLinksTest(unittest.TestCase):
                 f.write('#!/bin/sh\necho "%s $*" >> "%s"\n' % (cmd, os.path.join(self.work, "calls")))
             os.chmod(os.path.join(bindir, cmd), 0o755)
         fake = 'nxlx_fd_own() { echo "fd_own $*" >> "%s"; mkdir -p "$1"; }\n' % os.path.join(self.work, "calls")
-        script = ('set -euo pipefail\nlog() { echo "$*"; }\ndie() { echo "DIE $*" >&2; exit 1; }\nNXLX_USER=%s\n' % self.me
+        script = ('set -euo pipefail\nlog() { echo "$*"; }\ndie() { echo "DIE $*" >&2; exit 1; }\nNXLX_USER=%s\nSRC=%s\n' % (self.me, REPO)
                   + "".join(funcs) + (fake if fake_fd_own else "") + call + "\n")
         env = dict(os.environ, PATH=bindir + ":" + os.environ["PATH"])
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, timeout=30)
@@ -691,7 +691,7 @@ class StateFolderLinksTest(unittest.TestCase):
             a = os.stat(p)
             self.assertEqual((a.st_uid, a.st_gid, a.st_mode), (b.st_uid, b.st_gid, b.st_mode), p)
 
-    def test_links_in_the_settings_names_and_at_backups_are_not_followed(self):
+    def test_links_in_the_settings_names_and_at_the_old_backups_name_are_not_followed(self):
         with open(os.path.join(self.sd, "settings.json"), "w") as f:
             f.write("{}")
         os.symlink(self.victim, os.path.join(self.sd, "settings.json.bak"))
@@ -705,9 +705,12 @@ class StateFolderLinksTest(unittest.TestCase):
         self.assertFalse(any(os.path.join(self.sd, "settings.json.") in c for c in calls), calls)
         self.assertTrue(os.path.islink(os.path.join(self.sd, "settings.json.bak")))   # skipped, left as planted
         b = os.path.join(self.sd, "backups")
-        self.assertTrue(os.path.isdir(b) and not os.path.islink(b))     # the link was removed, a folder is made
-        self.assertIn("fd_own %s %s root root 0700" % (b, self.sd), calls)
-        self.assertFalse(any(c.startswith("chmod") and b in c for c in calls), calls)   # never chmod by path
+        self.assertFalse(os.path.lexists(b))                            # J-178: root's folder is no longer here; the link was set aside by the move, not followed
+        self.assertTrue([n for n in os.listdir(self.sd) if n.startswith("backups.rejected-")])
+        ud = self.sd + "-update"                                         # root's own folder, beside the panel's
+        self.assertIn("fd_own %s %s root root 0700" % (ud, os.path.dirname(self.sd)), calls)
+        self.assertFalse(any(c.startswith("chmod") and (b in c or ud in c) for c in calls), calls)   # never chmod by path
+        self.assertEqual(os.listdir(self.victim_dir), [])
 
     def test_every_chown_by_path_in_the_state_folder_uses_h(self):
         r, calls = self.run_fix('nxlx_state_fix "%s"' % self.sd, fake_fd_own=True)

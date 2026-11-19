@@ -36,6 +36,7 @@ SYSTEM_MOUNTS = ("/", "/boot", "/boot/firmware", "/home", "/var", "/usr", "/etc"
 DEFAULT_BASE = "/media/nxlx"
 DEFAULT_LINK = "/media/usb"
 DEFAULT_STATE = "/var/lib/nxlx"
+DEFAULT_ROOT_STATE = paths.ROOT_STATE_DIR       # root's own folder: the claim record (J-178)
 LOCK_SECONDS = 900          # a claim from a terminal waits this long for the lock (another stick's check is at most 600 s)
 # A clip stick being mounted by its unit waits at most this long, so that this wait, the check (clipstick.FSCK_SECONDS)
 # and the mounts stay well inside the unit's TimeoutStartSec (15 min); a test holds that sum.
@@ -298,8 +299,7 @@ def _claimed_here(info, env):
     """True for an exFAT partition with the label and volume serial of this node's claim record."""
     if not clipstick.candidate(info):
         return False
-    state = env.get("NXLX_STATE_DIR", DEFAULT_STATE)
-    return clipstick.record_matches(clipstick.read_record(state), info.get("LABEL"), info.get("UUID", ""))
+    return clipstick.record_matches(clipstick.read_record(env.get("NXLX_ROOT_STATE_DIR", DEFAULT_ROOT_STATE)), info.get("LABEL"), info.get("UUID", ""))
 
 
 def _mount_plain(devnode, info, env, runner, proc_mounts, log, force_ro=False):
@@ -329,7 +329,7 @@ def _is_own(devnode, info, env, runner, log, outcome=None):
     outcome = {} if outcome is None else outcome
     state = env.get("NXLX_STATE_DIR", DEFAULT_STATE)
     node_id = clipstick.own_node_id(state)
-    record = clipstick.read_record(state)
+    record = clipstick.read_record(env.get("NXLX_ROOT_STATE_DIR", DEFAULT_ROOT_STATE))
     label, uuid = info.get("LABEL"), info.get("UUID", "")
     if node_id is None or not clipstick.record_matches(record, label, uuid):
         return None, False
@@ -484,7 +484,7 @@ def forget_clip_stick(env=None, proc_mounts="/proc/mounts"):
         os.path.dirname(p.rstrip("/")) == mnt for _, p in read_mounts(proc_mounts))
     if busy:
         raise UsbError("the clip stick is still in; unplug it, then run this again")
-    return clipstick.forget_claim(env.get("NXLX_STATE_DIR", DEFAULT_STATE))
+    return clipstick.forget_claim(env.get("NXLX_STATE_DIR", DEFAULT_STATE), env.get("NXLX_ROOT_STATE_DIR", DEFAULT_ROOT_STATE))
 
 
 def claim(devnode, force=False, env=None, runner=subprocess.run, proc_mounts="/proc/mounts", log=print,
@@ -540,7 +540,10 @@ def claim(devnode, force=False, env=None, runner=subprocess.run, proc_mounts="/p
             _rmdir(peek)
         if not done:
             raise UsbError("the stick could not be unmounted after the claim; pull it, plug it in and claim it again")
-        clipstick.write_claim(state, label, info.get("UUID", ""), token)
+        try:
+            clipstick.write_claim(state, label, info.get("UUID", ""), token, root_dir=env.get("NXLX_ROOT_STATE_DIR", DEFAULT_ROOT_STATE))
+        except clipstick.ClipStickError as e:
+            raise UsbError(str(e))
         log("claimed %s (%s) as this node's clip stick" % (devnode, label))
     # Out of the lock: the unit's own mount takes it. The unit mounts the stick, so unplugging it runs the unit's
     # ExecStop and ExecStopPost (a mount made here would belong to no unit and outlive the stick).

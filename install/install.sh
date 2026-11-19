@@ -711,11 +711,18 @@ nxlx_state_fix() {
 	# as planted and unused; so is a file with another hard link (chown would change the other name's file too). find
 	# tests the type and chown -h will not follow a link swapped in meanwhile.
 	find "$sd" -maxdepth 1 -name 'settings.json*' -type f -links 1 -exec chown -h nxlx-web:nxlx-svc {} + 2>/dev/null || true
-	# The settings copies an update keeps (J-055): root's, so the path exists when nxlx-sysd starts (its unit can write only a
-	# path that is there then) and a factory reset can empty it. Already there from an update: left as it is, owner and mode set.
-	# 0700 also clears the setgid bit the parent would give a new folder.
-	if [ -L "$sd/backups" ]; then rm -f "$sd/backups"; fi
-	nxlx_fd_own "$sd/backups" "$sd" root root 0700 || die "could not set up $sd/backups safely; see the line above"
+	# Root's own folder (J-178), NOT inside $sd: the settings copies an update keeps (J-055) and the clip stick's claim. The
+	# panel's account can rename anything inside its own folder, so root's files there could be hidden before a factory reset
+	# and put back after it. Beside $sd (/var/lib/nxlx-update), made here so the path exists when nxlx-sysd starts (its unit
+	# can write only a path that is there then), and so a factory reset can empty it. nxlx_fd_own is not needed for the
+	# panel's sake here (the parent is root's) but it opens every name without following a link, and sets owner and mode on
+	# the folder it holds.
+	ud="$sd-update"
+	nxlx_fd_own "$ud" "$(dirname "$sd")" root root 0700 || die "could not set up $ud safely; see the line above"
+	# A one-time move of what older versions kept in $sd (backups/ and clip-stick.json): the same descriptor-relative,
+	# no-follow code the updater runs (mctl/update.py migrate_legacy_state); a link or a file of the panel's is never used.
+	# Not stage mode: here only on a box, as root.
+	python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from mctl import update; update.Updater(state_dir=sys.argv[2], root_state_dir=sys.argv[3]).migrate_legacy_state(lambda m: print("nxlx-install: " + m))' "$SRC" "$sd" "$ud" || log "the move of root's files out of $sd did not finish (see above); the next update tries again"
 }
 # The media folder. Inside /var/lib/nxlx (the default) it is made and handed over the same way, by nxlx_fd_own; a link at
 # its name is removed. Elsewhere it is the owner's own choice, and a link there is followed as before.
