@@ -794,7 +794,8 @@ class RollbackTest(unittest.TestCase):
         # In this order on purpose of what it costs: the helper before the panel is why an update can restart it twice (D110).
         self.assertEqual(ran, [["systemctl", "try-restart", "nxlx-netd.service"], ["systemctl", "try-restart", "nxlx-ndi.service"],
                                ["systemctl", "try-restart", "nxlx-link.service"],     # or a rollback leaves Link on the network
-                               ["systemctl", "restart", "nxlx-player.service", "nxlx-web.service"]])
+                               ["systemctl", "restart", "nxlx-player.service", "nxlx-web.service"],
+                               ["systemctl", "try-restart", "--no-block", "nxlx-sysd.service"]])     # last: J-055, the new action needs it
         self.assertEqual([c for c in ran if "nxlx-ndi.service" in c], [["systemctl", "try-restart", "nxlx-ndi.service"]])      # alone in its call
         # try-restart, never restart or start: on a box that did not opt in there is no such unit, and nothing is started
         self.assertFalse([c for c in ran if "nxlx-ndi.service" in c and c[1] != "try-restart"])

@@ -1196,6 +1196,12 @@ class FactoryResetTest(Base):
             self.assertIn("a rollback could bring old devices back", out["problems"][0])
             self.assertEqual(len(helper.asked), 1)
 
+    def test_an_older_helper_after_an_update_is_told_to_restart_then_reset_again(self):
+        self.api.sysd = self.Helper(reply={"ok": False, "error": "unknown command"})
+        st, out = self.reset(confirm="factory-reset", media="keep")
+        self.assertEqual(st, 200, out)
+        self.assertIn("restart the node, then reset again", out["problems"][0])
+
     def test_a_node_with_no_helper_has_no_backups_folder_to_empty(self):
         self.api.sysd = None
         st, out = self.reset(confirm="factory-reset", media="keep")

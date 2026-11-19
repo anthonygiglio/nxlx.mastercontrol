@@ -305,40 +305,52 @@ class SysService:
 
     # --- the update backups (J-055) ----------------------------------------------------------------------------------
     state_dir = paths.STATE_DIR
+    owner_uid = 0               # whose the folder must be (root); a test machine says otherwise
     BACKUP_NAME = re.compile(r"settings-[0-9A-Za-z.+-]{1,40}-[0-9]{1,12}\.json")     # what mctl/update.py backup_settings writes
 
     def clear_update_backups(self):
         """Delete the settings copies an update keeps (update.Updater.backup_dir: <state>/backups/settings-<version>-<time>.json,
-        0600, root's). Only that one fixed folder, only plain files of that name (never a link, a folder or anything else); the
-        caller sends no name. A missing folder is nothing to do. {"ok", "removed"}: ok is False if a file stayed."""
+        0600, root's). Only that one fixed folder, opened without following a link and checked to be root's; every name is then
+        handled relative to that open folder. Only plain files of that name go; a matching name that is anything else (a link,
+        a folder) is not removed and is counted as one that stayed. The caller sends no name. A missing folder is nothing to
+        do. {"ok", "removed"}: ok is False if anything stayed."""
         folder = os.path.join(self.state_dir, "backups")
         with self.lock:
-            if os.path.islink(folder):
-                return {"ok": False, "error": "the backups folder is a link, so nothing was removed"}
             try:
-                names = os.listdir(folder)
+                fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
             except FileNotFoundError:
                 return {"ok": True, "removed": 0}
-            except OSError as e:
-                return {"ok": False, "error": "the update backups could not be read: %s" % (e.strerror or e)}
-            removed, stayed = 0, 0
-            for name in names:
-                if not self.BACKUP_NAME.fullmatch(name):
-                    continue
-                path = os.path.join(folder, name)
+            except OSError as e:     # a link (ELOOP) or not a folder (ENOTDIR) arrives here too
+                return {"ok": False, "error": "the update backups folder could not be opened, so nothing was removed: %s" % (e.strerror or e)}
+            try:
+                st = os.fstat(fd)
+                if not stat.S_ISDIR(st.st_mode) or st.st_uid != self.owner_uid:
+                    return {"ok": False, "error": "the update backups folder is not root's, so nothing was removed"}
                 try:
-                    if not stat.S_ISREG(os.lstat(path).st_mode):
+                    names = os.listdir(fd)
+                except OSError as e:
+                    return {"ok": False, "error": "the update backups could not be read: %s" % (e.strerror or e)}
+                removed, stayed = 0, 0
+                for name in names:
+                    if not self.BACKUP_NAME.fullmatch(name):
                         continue
-                    os.unlink(path)
-                    removed += 1
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    stayed += 1
+                    try:
+                        if not stat.S_ISREG(os.lstat(name, dir_fd=fd).st_mode):
+                            stayed += 1
+                            continue
+                        os.unlink(name, dir_fd=fd)
+                        removed += 1
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        stayed += 1
+            finally:
+                os.close(fd)
+        if removed or stayed:
+            self.log("nxlx-sysd: %d update backup%s removed by the panel (factory reset)%s"
+                     % (removed, "" if removed == 1 else "s", ", %d stayed" % stayed if stayed else ""))
         if stayed:
             return {"ok": False, "error": "%d update backup%s could not be removed" % (stayed, "" if stayed == 1 else "s"), "removed": removed}
-        if removed:
-            self.log("nxlx-sysd: %d update backup%s removed by the panel (factory reset)" % (removed, "" if removed == 1 else "s"))
         return {"ok": True, "removed": removed}
 
     # --- announcing the node to the local network (D127) ------------------------------------------------------------

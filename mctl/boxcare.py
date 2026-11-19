@@ -1322,8 +1322,12 @@ class BoxCare:
         except OSError as e:
             return ["the saved copies from software updates could not be removed (%s); a rollback could bring old devices back" % e]
         if not reply.get("ok"):
-            return ["the saved copies from software updates could not all be removed (%s); a rollback could bring old devices back"
-                    % reply.get("error", "the helper refused")]
+            why = str(reply.get("error", "the helper refused"))
+            if "unknown command" in why or "read-only" in why.lower():
+                # an older helper still running after an update, or a folder its sandbox cannot write: a restart fixes both
+                return ["the saved copies from software updates were not removed (%s); restart the node, then reset again, "
+                        "or a rollback could bring old devices back" % why]
+            return ["the saved copies from software updates could not all be removed (%s); a rollback could bring old devices back" % why]
         return []
 
     def factory_reset(self, body, device, client):

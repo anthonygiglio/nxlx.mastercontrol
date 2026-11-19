@@ -676,6 +676,9 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then
 	# through to the media folder and read, but not create, rename or replace files: 2750, owned by nxlx-web.
 	mkdir -p /var/lib/nxlx; chown nxlx-web:nxlx-svc /var/lib/nxlx; chmod 2750 /var/lib/nxlx
 	[ -e /var/lib/nxlx/settings.json ] && chown nxlx-web:nxlx-svc /var/lib/nxlx/settings.json* 2>/dev/null
+	# The settings copies an update keeps (J-055): root's, so the path exists when nxlx-sysd starts (its unit can write only a
+	# path that is there then) and a factory reset can empty it. Already there from an update: left as it is, owner and mode set.
+	mkdir -p /var/lib/nxlx/backups; chown root:root /var/lib/nxlx/backups; chmod 0700 /var/lib/nxlx/backups
 	true
 fi
 if [ "$DRY" = 0 ]; then
