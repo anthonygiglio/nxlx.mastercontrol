@@ -74,6 +74,9 @@ jobs:
         run: git fetch --depth=1 origin 0ff0ddbeb662efb405186a0e774839cb1f61b2de
       - name: The release before the package rename (tests/test_release.py runs its updater on this release's bundle)
         run: git fetch --depth=1 origin 1057087dcc9939af9044f68d03ef3ea72a322116
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -88,6 +91,10 @@ jobs:
           modules="$(python tools/ci-shard.py ${{ matrix.part }} 4)"
           test -n "$modules" || { echo "::error::part ${{ matrix.part }} of 4 has no test module"; exit 1; }
           timeout -s ABRT 1200 python -X faulthandler -m unittest -v ${{ matrix.python == '3.12' && '--durations 25' || '' }} $modules
+      - uses: ./.github/actions/apt-cache-save
+        if: always()   # also when the job failed, so the packages already downloaded are kept
+        with:
+          packages: mpv
 
   shaders-gpu:
     # The shader steps on a software GPU, which ran after the unit tests in one job until D104: about fourteen
@@ -104,6 +111,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -115,6 +125,10 @@ jobs:
         run: NXLX_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
       - name: The same on desktop OpenGL 3.1 with GLSL 1.40, the context mpv makes on a Raspberry Pi 4
         run: MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140 NXLX_GPU_TEST=1 NXLX_GPU_ONLY=desktop xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
+      - uses: ./.github/actions/apt-cache-save
+        if: always()   # also when the job failed, so the packages already downloaded are kept
+        with:
+          packages: mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
 
   test:
     # The checks "test (3.9)" and "test (3.12)" are required by name by the ruleset "Protect master". Since D104 they
@@ -158,11 +172,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
       - name: Install mpv, a virtual display and Mesa
         timeout-minutes: 10
         run: tools/ci-apt.sh mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
       - name: Effects on the real mpv (a skip here is a failure)
         run: env ${{ matrix.env }} NXLX_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_effects_gpu
+      - uses: ./.github/actions/apt-cache-save
+        if: always()   # also when the job failed, so the packages already downloaded are kept
+        with:
+          packages: mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
 
   shellcheck:
     runs-on: ubuntu-24.04
@@ -183,11 +204,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: The release before the rename of the system names (the old node is installed from it)
         run: git fetch --depth=1 origin 0ff0ddbeb662efb405186a0e774839cb1f61b2de
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
       - name: Convert a real install, confirm, undo, and the timed undo
         run: sudo NXLX_REAL_CONVERT_TEST=yes-this-machine-is-disposable bash tests/real_convert_test.sh
+      - uses: ./.github/actions/apt-cache-save
+        if: always()   # also when the job failed, so the packages already downloaded are kept
+        with:
+          packages: mpv
 
   real-install:
     # The installer run for real, as root, under the runner's systemd: first the release before the rename of the
@@ -201,6 +229,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: The release before the rename of the system names (installed first, then upgraded through install.sh)
         run: git fetch --depth=1 origin 0ff0ddbeb662efb405186a0e774839cb1f61b2de
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -208,6 +239,10 @@ jobs:
         run: mpv --version | head -n 1
       - name: Real install as root and the owners of the runtime folders
         run: sudo NXLX_REAL_INSTALL_TEST=yes-this-machine-is-disposable bash tests/real_install_test.sh
+      - uses: ./.github/actions/apt-cache-save
+        if: always()   # also when the job failed, so the packages already downloaded are kept
+        with:
+          packages: mpv
 
   ndi-mpv:
     # The NDI input against the mpv the Pi runs. On 2026-10-12 a mended hand-over of the pipe was green in real-install
@@ -358,6 +393,10 @@ jobs:
       PKGS: gcc make pkg-config libc6-dev libmpv-dev libegl-dev libgles-dev libgbm-dev libdrm-dev libgl1-mesa-dri libegl-mesa0 ffmpeg fonts-dejavu-core python3 git ca-certificates
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/apt-cache
+        if: ${{ matrix.container == '' }}   # the Debian leg does not use ci-apt.sh
+        with:
+          packages: ${{ env.PKGS }}
       - name: Install the build tools, libmpv, Mesa, ffmpeg and a font (three tries; a slow mirror is given up on)
         timeout-minutes: 12
         run: |
@@ -424,6 +463,10 @@ jobs:
           fi
           grep -q -E "^Ran [1-9]" /tmp/native.txt || { echo "::error::no test ran"; exit 1; }
           exit "${code:-0}"
+      - uses: ./.github/actions/apt-cache-save
+        if: ${{ always() && matrix.container == '' }}   # also when the job failed, so the packages already downloaded are kept
+        with:
+          packages: ${{ env.PKGS }}
 
   pvj-link:
     # The Ableton Link follower (render/link/, D117): built with every warning an error against Debian 13's own
@@ -520,6 +563,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: ./.github/actions/apt-cache
+        with:
+          packages: mpv
       - name: Install mpv and a browser
         timeout-minutes: 10
         run: |
@@ -548,3 +594,7 @@ jobs:
           name: ui-mockups
           path: ${{ runner.temp }}/ui-mockups/
           if-no-files-found: warn
+      - uses: ./.github/actions/apt-cache-save
+        if: always()   # also when the job failed, so the packages already downloaded are kept
+        with:
+          packages: mpv

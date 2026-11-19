@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+name: apt package cache (restore)
+description: >
+  Restores the .deb files that tools/ci-apt.sh downloaded in earlier runs and tells ci-apt.sh where they are
+  (CI_APT_CACHE), so a job installs without the runner's mirror (J-173). Put it after checkout and before the first
+  ci-apt.sh step, give it every package the job installs, and put ./.github/actions/apt-cache-save with the same
+  packages and `if: always()` as the last step of the job. Jobs with the same package list share a cache.
+inputs:
+  packages:
+    description: every package name the job gives to tools/ci-apt.sh, in any order
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Work out the cache key
+      id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        bash "${{ github.action_path }}/key.sh" "$PACKAGES"
+        echo "CI_APT_CACHE=$HOME/apt-cache" >> "$GITHUB_ENV"
+        echo "CI_APT_ADDED=$RUNNER_TEMP/apt-cache-added" >> "$GITHUB_ENV"
+    - name: Restore the newest cache of this package list
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/apt-cache
+        key: ${{ steps.key.outputs.base }}-restore-only
+        restore-keys: |
+          ${{ steps.key.outputs.base }}-
+          ${{ steps.key.outputs.hash }}-
+          apt-${{ runner.os }}-

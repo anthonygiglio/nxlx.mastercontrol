@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+name: apt package cache (save)
+description: >
+  Saves the folder that ./.github/actions/apt-cache restored and tools/ci-apt.sh added to, under a key of this run
+  and attempt, so the next restore finds the newest one. Use it with `if: always()` as the last step of the job: it
+  then runs when the install gave up too (J-173).
+inputs:
+  packages:
+    description: the same packages that were given to ./.github/actions/apt-cache
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Work out the cache key
+      id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        bash "${{ github.action_path }}/../apt-cache/key.sh" "$PACKAGES"
+        if [ -n "${CI_APT_ADDED:-}" ] && [ -e "$CI_APT_ADDED" ]; then echo "added=1" >> "$GITHUB_OUTPUT"; else echo "added=0" >> "$GITHUB_OUTPUT"; fi
+    - name: Save the packages (only when this job added or replaced one)
+      if: steps.key.outputs.added == '1'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/apt-cache
+        key: ${{ steps.key.outputs.base }}-${{ github.run_id }}-${{ github.run_attempt }}
