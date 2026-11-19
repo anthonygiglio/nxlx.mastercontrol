@@ -3893,7 +3893,9 @@ function startServer(env) {          // env: more for the harness's environment 
         const real = await (await route.fetch()).json();
         const text = 'The system disk is read-only (power-loss protection is on), so an update would be lost at the next restart.';
         return route.fulfill({ status: 200, contentType: 'application/json',
-          body: JSON.stringify(Object.assign({}, real, { read_only_root: readOnly, read_only_message: readOnly ? text : '' })) });
+          // One bundle on a stick, so at least one Install button exists: with an empty list the "every button" check below passes for nothing.
+          body: JSON.stringify(Object.assign({}, real, { read_only_root: readOnly, read_only_message: readOnly ? text : '',
+            usb: [{ version: '9.9.9', drive: 'TESTSTICK', signed: true }], inbox: [] })) });
       };
       const ask = async (readOnly, until) => {
         const handler = statusAs(readOnly);
@@ -3913,9 +3915,11 @@ function startServer(env) {          // env: more for the harness's environment 
       };
       const normal = await ask(false, () => !!document.getElementById('updateupload'));
       assert.deepStrictEqual([normal.upload, normal.warn], [false, null], 'a normal node: Upload an update is enabled, no read-only warning');
+      assert(normal.installs.length >= 1 && normal.installs.every((d) => d === false), 'a normal node: the Install button is enabled');
       const locked = await ask(true, () => !!document.getElementById('updatereadonly'));
       assert.match(locked.warn, /read-only .*lost at the next restart/, 'the read-only sentence is shown');
       assert.strictEqual(locked.upload, true, 'Upload an update is disabled while the root is read-only');
+      assert(locked.installs.length >= 1, 'the answer lists a bundle, so there is an Install button to check');
       assert(locked.installs.every((d) => d === true), 'every Install button is disabled while the root is read-only');
       await sys('Sound');
       await page.waitForSelector('#audioline, #audiomsg');
