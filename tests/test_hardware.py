@@ -95,6 +95,25 @@ class HardwareTest(unittest.TestCase):
         self.assertTrue(p["notes"])
 
 
+class PlayerUnitNoiseTest(unittest.TestCase):
+    """J-135: the player's unit keeps libpipewire's probe line (pw.conf) out of the journal on a node."""
+
+    def test_the_unit_turns_off_the_pipewire_library_log(self):
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(here, "install", "nxlx-player.service")) as f:
+            self.assertRegex(f.read(), r"(?m)^Environment=PIPEWIRE_DEBUG=0$")
+
+    def test_the_render_log_filter_names_only_two_lines(self):
+        """No module is silenced: the filter in render/src/main.c is by module and exact words, for two lines."""
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(here, "render", "src", "main.c")) as f:
+            text = f.read()
+        body = text[text.index("static int known_noise"):text.index("static int speaks_for_a_clip")]
+        self.assertEqual(body.count("strstr("), 2, body)
+        self.assertIn("Cannot load libcuda.so.1", body)
+        self.assertIn("pw.conf: can't load config", body)
+
+
 if __name__ == "__main__":
     unittest.main()
 

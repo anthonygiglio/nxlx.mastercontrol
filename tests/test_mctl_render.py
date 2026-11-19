@@ -908,6 +908,29 @@ class ClipTest(Base):
         self.assertTrue(r.wait(lambda: r("get_property", "idle-active") is True, 10), r.stderr())
 
 
+    def test_a_decoder_warning_names_the_clip(self):
+        """J-135: a decoder's warning is of one clip and mpv's line does not say which, so the log line carries the clip's
+        file name. A clip with damaged picture data makes FFmpeg complain."""
+        bad = os.path.join(self.tmp, "damaged clip.mp4")
+        with open(self.clip, "rb") as f:
+            data = bytearray(f.read())
+        for at in range(len(data) // 3, len(data) // 3 + 4000, 7):      # inside the picture data, away from the headers
+            data[at] ^= 0xFF
+        with open(bad, "wb") as f:
+            f.write(data)
+        self.r.load(bad)
+        self.assertTrue(self.r.wait(lambda: "[damaged clip.mp4]" in self.r.stderr(), 10), self.r.stderr())
+        lines = [x for x in self.r.stderr().splitlines() if "[damaged clip.mp4]" in x]
+        self.assertTrue(lines, self.r.stderr())
+        for x in lines:
+            self.assertRegex(x, r"video [0-9] (ffmpeg/[a-z0-9_]+|vd|ad|demux|lavf|cplayer) \[damaged clip.mp4\]: ")
+
+    def test_a_clip_without_trouble_logs_no_clip_name(self):
+        self.r.load(self.clip)
+        self.assertTrue(self.r.wait(lambda: (self.r("get_property", "time-pos") or 0) > 0.3), self.r.stderr())
+        self.assertNotIn("[clip.mp4]", self.r.stderr())
+
+
 def need_hooks(case):
     """The renderer must be a TEST_HOOKS build (a skip without, a failure where NXLX_RENDER_TEST=1)."""
     if "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout:

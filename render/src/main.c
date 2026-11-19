@@ -384,6 +384,42 @@ static int plays_a_list(mpv_handle *h)
     return yes;
 }
 
+// Two lines that fill the log on a node and say nothing true about it (J-135). Both are matched whole, by the module that
+// says them and their own words, and only when the log is not verbose: no module is silenced, so every other line of the
+// same modules still reaches the log, and --verbose shows these too.
+//   - "Cannot load libcuda.so.1": FFmpeg probing for NVIDIA's decoder, which a Pi or an Intel PC does not have.
+//   - "pw.conf: can't load config client.conf": libpipewire, tried before ALSA, on a node that runs no PipeWire.
+static int known_noise(const mpv_event_log_message *m)
+{
+    return (!strncmp(m->prefix, "ffmpeg/", 7) && strstr(m->text, "Cannot load libcuda.so.1"))
+           || strstr(m->text, "pw.conf: can't load config");
+}
+
+// A warning from a decoder or a demuxer is of one clip, and mpv's line does not say which. These are the modules that
+// speak for the clip being opened or played; the clip's name is added to their lines (a log can then say which file
+// has the SEI or timescale trouble).
+static int speaks_for_a_clip(const mpv_event_log_message *m)
+{
+    return !strncmp(m->prefix, "ffmpeg/", 7) || !strcmp(m->prefix, "vd") || !strcmp(m->prefix, "ad")
+           || !strcmp(m->prefix, "demux") || !strcmp(m->prefix, "lavf") || !strcmp(m->prefix, "cplayer");
+}
+
+// The name of the file the layer has, without its folder, one line and printable (a name is the owner's or a drive's;
+// it must not be able to break a log line). Empty when there is none.
+static void clip_name(mpv_handle *h, char *out, size_t cap)
+{
+    out[0] = 0;
+    char *f = mpv_get_property_string(h, "filename");
+    if (!f) return;
+    size_t o = 0;
+    for (const char *p = f; *p && o + 1 < cap; p++) {
+        unsigned char ch = (unsigned char)*p;
+        out[o++] = ch < 0x20 || ch == 0x7f ? '?' : (char)ch;
+    }
+    out[o] = 0;
+    mpv_free(f);
+}
+
 static void *event_loop(void *arg)
 {
     Layer *l = arg;
@@ -443,7 +479,11 @@ static void *event_loop(void *arg)
             if (i < 0) snprintf(who, sizeof who, "text");
             else if (i < LAYERS) snprintf(who, sizeof who, "video %d", i);
             else snprintf(who, sizeof who, "source %d", i);
-            LOG("%s %s: %.*s", who, m->prefix, (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
+            if (!app.cfg->verbose && known_noise(m)) continue;
+            char clip[160];
+            clip[0] = 0;
+            if (i >= 0 && speaks_for_a_clip(m)) clip_name(h, clip, sizeof clip);
+            LOG("%s %s%s%s%s: %.*s", who, m->prefix, clip[0] ? " [" : "", clip, clip[0] ? "]" : "", (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
         }
     }
     return NULL;
