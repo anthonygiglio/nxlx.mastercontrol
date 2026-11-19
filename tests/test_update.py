@@ -539,5 +539,113 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual(self.u.status()["current"], "1.0.0")
 
 
+class StateFolderLinksTest(unittest.TestCase):
+    """J-177: /var/lib/nxlx is the panel's and has no sticky bit; root's update code must not follow a name the panel
+    planted there. Each test plants a link and proves what it points to is untouched."""
+
+    def setUp(self):
+        self.env = Env(self)
+        self.u = self.env.updater
+        self.state = os.path.join(self.env.root, "var/lib/nxlx")
+        self.victims = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.victims, True)
+        self.victim = os.path.join(self.victims, "victim")
+        with open(self.victim, "w") as f:
+            f.write("ROOT-SECRET")
+        os.chmod(self.victim, 0o644)
+        self.env.write_settings(marker="mine")
+        self.u.now = lambda: 1000
+
+    def victim_untouched(self):
+        with open(self.victim) as f:
+            self.assertEqual(f.read(), "ROOT-SECRET")
+        self.assertEqual(os.stat(self.victim).st_mode & 0o777, 0o644)
+
+    def test_a_link_for_settings_json_is_not_copied_into_a_backup(self):
+        os.unlink(os.path.join(self.state, "settings.json"))
+        os.symlink(self.victim, os.path.join(self.state, "settings.json"))
+        self.assertIsNone(self.u.backup_settings("1.0.0"))
+        self.assertEqual(os.listdir(self.u.backup_dir()) if os.path.isdir(self.u.backup_dir()) else [], [])
+        self.victim_untouched()
+
+    def test_a_pipe_for_settings_json_does_not_hang_the_update(self):
+        os.unlink(os.path.join(self.state, "settings.json"))
+        os.mkfifo(os.path.join(self.state, "settings.json"))
+        self.assertIsNone(self.u.backup_settings("1.0.0"))
+        self.assertIsNone(self.u._settings_schema())
+
+    def test_a_link_for_the_backups_folder_is_set_aside_not_written_through_or_pruned(self):
+        target = os.path.join(self.victims, "folder")
+        os.mkdir(target)
+        names = ["settings-9.9.%d-%d.json" % (i, i) for i in range(8)]
+        for i, n in enumerate(names):
+            with open(os.path.join(target, n), "w") as f:
+                f.write("keep")
+            os.utime(os.path.join(target, n), (i, i))
+        os.symlink(target, self.u.backup_dir())
+        dst = self.u.backup_settings("1.0.0")
+        self.assertEqual(sorted(os.listdir(target)), sorted(names))             # nothing added, nothing pruned
+        self.assertFalse(os.path.islink(self.u.backup_dir()))
+        self.assertTrue(os.path.isfile(dst) and not os.path.islink(dst))
+        self.assertEqual(os.stat(dst).st_mode & 0o777, 0o600)
+
+    def test_a_folder_the_panel_made_for_backups_is_not_trusted(self):
+        os.mkdir(self.u.backup_dir())
+        os.chmod(self.u.backup_dir(), 0o777)                                   # not ours alone to write
+        dst = self.u.backup_settings("1.0.0")
+        self.assertEqual(os.listdir(self.u.backup_dir()), [os.path.basename(dst)])
+        self.assertEqual(os.stat(self.u.backup_dir()).st_mode & 0o777, 0o700)
+
+    def test_a_link_at_the_name_of_the_new_backup_is_replaced_not_written_through(self):
+        os.mkdir(self.u.backup_dir(), 0o700)
+        os.symlink(self.victim, os.path.join(self.u.backup_dir(), "settings-1.0.0-1000.json"))
+        dst = self.u.backup_settings("1.0.0")
+        self.assertFalse(os.path.islink(dst))
+        with open(dst) as f:
+            self.assertEqual(json.load(f)["marker"], "mine")
+        self.victim_untouched()
+
+    def test_restoring_over_a_link_at_settings_json_leaves_the_target_alone(self):
+        dst = self.u.backup_settings("1.0.0")
+        settings = os.path.join(self.state, "settings.json")
+        os.unlink(settings)
+        os.symlink(self.victim, settings)
+        os.symlink(self.victim, os.path.join(self.state, ".settings.json.%d.tmp" % os.getpid()))   # and at the temporary name
+        self.u.restore_settings(dst)
+        self.assertFalse(os.path.islink(settings))
+        self.assertEqual(self.env.settings()["marker"], "mine")
+        self.assertEqual(os.stat(settings).st_mode & 0o777, 0o600)
+        self.victim_untouched()
+
+    def test_restoring_never_reads_the_backup_through_a_link(self):
+        dst = self.u.backup_settings("1.0.0")
+        os.unlink(dst)
+        os.symlink(self.victim, dst)
+        with self.assertRaises(UpdateError):
+            self.u.restore_settings(dst)
+        self.assertEqual(self.env.settings()["marker"], "mine")
+        self.victim_untouched()
+
+    def test_restoring_with_a_link_for_the_backups_folder_fails_and_changes_nothing(self):
+        target = os.path.join(self.victims, "folder")
+        os.mkdir(target)
+        with open(os.path.join(target, "settings-1.0.0-1000.json"), "w") as f:
+            f.write('{"schema": 1, "marker": "planted"}')
+        os.symlink(target, self.u.backup_dir())
+        self.assertIsNone(self.u.latest_backup("1.0.0"))
+        with self.assertRaises(UpdateError):
+            self.u.restore_settings(os.path.join(self.u.backup_dir(), "settings-1.0.0-1000.json"))
+        self.assertEqual(self.env.settings()["marker"], "mine")
+
+    def test_a_link_for_the_state_folder_is_not_followed(self):
+        real = os.path.join(self.victims, "state")
+        os.mkdir(real)
+        shutil.move(os.path.join(self.state, "settings.json"), real)
+        shutil.rmtree(self.state)
+        os.symlink(real, self.state)
+        self.assertIsNone(self.u.backup_settings("1.0.0"))
+        self.assertEqual(os.listdir(real), ["settings.json"])
+
+
 if __name__ == "__main__":
     unittest.main()

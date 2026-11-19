@@ -257,50 +257,236 @@ class Updater:
             pass
         return {"current": self._link_version(), "previous": prev, "releases": releases}
 
-    def _settings_schema(self):
+    # --- the panel's state folder -----------------------------------------------------------------------------------
+    # /var/lib/nxlx belongs to the panel's account and has no sticky bit, so that account can rename, delete or swap any
+    # name in it, a folder for a link included. Everything below therefore works on descriptors: the state folder and the
+    # backups folder are opened with O_NOFOLLOW|O_DIRECTORY, every name is then handled relative to the open folder
+    # (dir_fd), files are made with O_EXCL|O_NOFOLLOW, and owners and modes are set on the descriptor, never on a path.
+    _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    BACKUP_NAME = re.compile(r"settings-[0-9A-Za-z.+-]{1,40}-[0-9]{1,12}\.json")     # what backup_settings writes (nxlx-sysd clears the same names)
+    SETTINGS_MAX = 64 << 20          # a settings file larger than this is not what it seems
+
+    def _open_state(self):
+        """The panel's state folder as a descriptor (the caller closes it), or None when there is none. The last name is
+        never followed: the folder's parent is root's."""
         try:
-            with open(self.settings_path()) as f:
-                return int(json.load(f).get("schema", 0))
-        except (OSError, ValueError):
+            return os.open(self.settings_path().rsplit("/", 1)[0] or "/", self._DIR)
+        except OSError:
+            return None
+
+    def _open_backups(self, state_fd, create=False):
+        """The settings backups folder as a descriptor: opened without following a link, and it must be a folder of this
+        process's user (root on a box) that nobody else can write. A name that is anything else (a link, a folder the
+        panel made) is renamed out of the way, never followed, and a folder of our own is made in its place (only with
+        `create`). None when there is no usable folder."""
+        for _attempt in range(3):
+            try:
+                fd = os.open("backups", self._DIR, dir_fd=state_fd)
+            except FileNotFoundError:
+                fd = None
+            except OSError:                          # a link (ELOOP) or not a folder (ENOTDIR)
+                fd = None
+                self._set_aside(state_fd)
+            if fd is not None:
+                st = os.fstat(fd)
+                if stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid() and not st.st_mode & 0o022:
+                    return fd
+                os.close(fd)
+                self._set_aside(state_fd)
+            if not create:
+                return None
+            try:
+                os.mkdir("backups", 0o700, dir_fd=state_fd)
+            except FileExistsError:
+                continue
+            except OSError:
+                return None
+        return None
+
+    def _set_aside(self, state_fd):
+        """Move what stands at `backups` away by rename (which follows nothing) so that the name is free."""
+        try:
+            os.rename("backups", "backups.rejected-%d-%d" % (int(self.now()), os.getpid()), src_dir_fd=state_fd, dst_dir_fd=state_fd)
+        except OSError:
+            pass
+
+    def _read_plain(self, name, dir_fd):
+        """The bytes of a plain file inside an open folder, or None: never through a link, never a pipe or a device,
+        bounded."""
+        try:
+            fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0),
+                         dir_fd=dir_fd)
+        except OSError:
+            return None
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_size > self.SETTINGS_MAX:
+                return None
+            chunks, left = [], self.SETTINGS_MAX + 1
+            while left > 0:
+                block = os.read(fd, min(left, 1 << 20))
+                if not block:
+                    break
+                chunks.append(block)
+                left -= len(block)
+            data = b"".join(chunks)
+            return data if len(data) <= self.SETTINGS_MAX else None
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+
+    def _settings_schema(self):
+        state_fd = self._open_state()
+        if state_fd is None:
+            return None
+        try:
+            data = self._read_plain("settings.json", state_fd)
+        finally:
+            os.close(state_fd)
+        try:
+            return int(json.loads(data.decode("utf-8")).get("schema", 0)) if data is not None else None
+        except (ValueError, AttributeError, TypeError):
             return None
 
     # --- backups --------------------------------------------------------
     def backup_settings(self, version):
-        src = self.settings_path()
-        if not os.path.isfile(src):
+        """Copy settings.json into the root-only backups folder. settings.json is the panel's file: it is read without
+        following a link (a link, a pipe or a device there means no backup, not a copy of what it points to), and the
+        copy is made with O_EXCL inside the folder that was opened and checked, so no planted name can redirect it."""
+        state_fd = self._open_state()
+        if state_fd is None:
             return None
-        os.makedirs(self.backup_dir(), mode=0o700, exist_ok=True)
-        dst = os.path.join(self.backup_dir(), "settings-%s-%d.json" % (version, int(self.now())))
-        shutil.copyfile(src, dst)
-        os.chmod(dst, 0o600)
-        old = sorted(glob.glob(os.path.join(self.backup_dir(), "settings-*.json")), key=os.path.getmtime)
-        for path in old[:-KEEP_BACKUPS]:
-            os.unlink(path)
-        return dst
+        try:
+            data = self._read_plain("settings.json", state_fd)
+            if data is None:
+                return None
+            bfd = self._open_backups(state_fd, create=True)
+            if bfd is None:
+                raise UpdateError("the settings backups folder is not usable (it is not a folder of root's that only root can write)")
+            try:
+                name = "settings-%s-%d.json" % (version, int(self.now()))
+                if not self.BACKUP_NAME.fullmatch(name):
+                    raise UpdateError("not a version that can be backed up: %r" % version)
+                self._write_new(bfd, name, data, 0o600)
+                old = []
+                for entry in os.listdir(bfd):
+                    if self.BACKUP_NAME.fullmatch(entry):
+                        try:
+                            st = os.lstat(entry, dir_fd=bfd)
+                        except OSError:
+                            continue
+                        if stat.S_ISREG(st.st_mode):
+                            old.append((st.st_mtime, entry))
+                for _mtime, entry in sorted(old)[:-KEEP_BACKUPS]:
+                    try:
+                        os.unlink(entry, dir_fd=bfd)
+                    except OSError:
+                        pass
+            finally:
+                os.close(bfd)
+        finally:
+            os.close(state_fd)
+        return os.path.join(self.backup_dir(), name)
+
+    @staticmethod
+    def _write_new(dir_fd, name, data, mode, owner=None, replace_over=None):
+        """Make `name` in the open folder with exactly `data`: a new file (O_EXCL, no link followed), owner and mode set
+        on the descriptor. With `replace_over`, it is written under a temporary name and renamed over that name, which
+        replaces whatever stands there (a link included) without following it. A name that is taken is replaced."""
+        target = name if replace_over is None else ".%s.%d.tmp" % (replace_over, os.getpid())
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            fd = os.open(target, flags, mode, dir_fd=dir_fd)
+        except FileExistsError:
+            os.unlink(target, dir_fd=dir_fd)          # unlink removes the name itself, a link included
+            fd = os.open(target, flags, mode, dir_fd=dir_fd)
+        try:
+            os.fchmod(fd, mode)
+            if owner is not None:
+                os.fchown(fd, *owner)
+            with os.fdopen(fd, "wb", closefd=False) as f:
+                f.write(data)
+                f.flush()
+            os.fsync(fd)
+        except BaseException:
+            os.close(fd)
+            try:
+                os.unlink(target, dir_fd=dir_fd)
+            except OSError:
+                pass
+            raise
+        os.close(fd)
+        if replace_over is not None:
+            os.rename(target, replace_over, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
 
     def restore_settings(self, backup):
         """Put a backup back as settings.json with the SAME owner as before: the panel runs as its
-        own user and could not read a root-owned 0600 file, leaving the box without a panel."""
-        current = self.settings_path()
-        owner = None
-        if os.path.isfile(current):
-            st = os.stat(current)
-            owner = (st.st_uid, st.st_gid)
-            shutil.move(current, "%s.rolled-back-%d" % (current, int(self.now())))
-        else:
+        own user and could not read a root-owned 0600 file, leaving the box without a panel.
+
+        The backup is read from the checked backups folder (never through a link); the old settings.json is renamed
+        aside by name; the new one is written under a temporary name, given its owner and mode on the descriptor and
+        renamed over settings.json, so nothing a planted name points to is ever opened, chowned or chmoded."""
+        state_fd = self._open_state()
+        if state_fd is None:
+            raise UpdateError("the panel's state folder is not usable")
+        try:
+            bfd = self._open_backups(state_fd)
+            if bfd is None:
+                raise UpdateError("the settings backups folder is not usable, so the settings were not put back")
             try:
-                web = pwd.getpwnam("nxlx-web")
-                owner = (web.pw_uid, web.pw_gid)
-            except KeyError:
-                pass
-        shutil.copyfile(backup, current)
-        os.chmod(current, 0o600)
-        if owner is not None and os.geteuid() == 0:
-            os.chown(current, *owner)
+                data = self._read_plain(os.path.basename(backup), bfd)
+            finally:
+                os.close(bfd)
+            if data is None:
+                raise UpdateError("the settings backup %s could not be read" % os.path.basename(backup))
+            owner = None
+            try:
+                st = os.stat("settings.json", dir_fd=state_fd, follow_symlinks=False)
+            except OSError:
+                st = None
+            if st is not None and stat.S_ISREG(st.st_mode) and st.st_uid != 0:
+                owner = (st.st_uid, st.st_gid)
+            if owner is None:
+                try:
+                    web = pwd.getpwnam("nxlx-web")
+                    owner = (web.pw_uid, web.pw_gid)
+                except KeyError:
+                    pass
+            if st is not None:
+                try:
+                    os.rename("settings.json", "settings.json.rolled-back-%d" % int(self.now()), src_dir_fd=state_fd, dst_dir_fd=state_fd)
+                except OSError:
+                    pass                              # the rename over it below sets the old one aside anyway
+            self._write_new(state_fd, "settings.json", data, 0o600, owner=owner if os.geteuid() == 0 else None,
+                            replace_over="settings.json")
+        finally:
+            os.close(state_fd)
 
     def latest_backup(self, version):
-        found = sorted(glob.glob(os.path.join(self.backup_dir(), "settings-%s-*.json" % version)), key=os.path.getmtime)
-        return found[-1] if found else None
+        state_fd = self._open_state()
+        if state_fd is None:
+            return None
+        try:
+            bfd = self._open_backups(state_fd)
+            if bfd is None:
+                return None
+            try:
+                prefix = "settings-%s-" % version
+                found = []
+                for entry in os.listdir(bfd):
+                    if entry.startswith(prefix) and self.BACKUP_NAME.fullmatch(entry):
+                        try:
+                            st = os.lstat(entry, dir_fd=bfd)
+                        except OSError:
+                            continue
+                        if stat.S_ISREG(st.st_mode):
+                            found.append((st.st_mtime, entry))
+            finally:
+                os.close(bfd)
+        finally:
+            os.close(state_fd)
+        return os.path.join(self.backup_dir(), sorted(found)[-1][1]) if found else None
 
     # --- actions --------------------------------------------------------
     def check(self, bundle, sha256=None, allow_unsigned=False, force=False, dir_fd=None):
