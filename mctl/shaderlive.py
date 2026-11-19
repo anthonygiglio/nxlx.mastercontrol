@@ -2009,6 +2009,10 @@ class LiveEngine(S.Engine):
             on = self.on_screen()
             if "faster" in body and on:             # the limit applies to what is on now, not only to the next shader
                 self.changer.submit(on, controls={"speed": on["controls"]["speed"]})
+            if body.get("faster") is False:         # and a flashing filter that is on goes off with the opt-in (J-128)
+                for part in (getattr(self.api, "effects", None), getattr(self.api, "chains", None)):
+                    if part is not None and part is not self and hasattr(part, "drop_flashing"):
+                        part.drop_flashing()
             if moved:
                 # Sources 2 to N draw at the new detail too (D106 step e); the same detail again builds nothing
                 return self.with_sources(self.state(), self.sources_again())

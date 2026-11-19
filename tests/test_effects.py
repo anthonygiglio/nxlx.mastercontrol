@@ -1289,7 +1289,7 @@ class ValuesTest(Base):
 
     def test_previous_and_next_step_through_the_filters_and_one_button_switches_on_and_off(self):
         ids = self.fx.order()
-        self.assertEqual((ids[0], ids[-3:]), ("fx-edge-glow.fs", ["all.fs", "moves.fs", "strobe.fs"]))
+        self.assertEqual((ids[0], ids[-2:]), ("fx-edge-glow.fs", ["all.fs", "moves.fs"]))             # (strobe.fs says it flashes: not stepped onto, J-128)
         self.assertEqual(self.fx.step(1), {"ok": True, "id": ids[0]})                  # none is on: the first
         self.assertEqual(self.mpv.loaded, [])                                          # it answers at once; the worker puts it on
         self.pump()

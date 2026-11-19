@@ -433,7 +433,7 @@ class Strobe:
     def _send(self, plan, amount):
         if self.route == "chain":
             self.api.chains.values({"source": SOURCE, "slot": self.slot, "values": self._values(plan),
-                                    "controls": {"amount": amount, "speed": plan["speed"]}})
+                                    "controls": {"amount": amount, "speed": plan["speed"]}}, hold=True)
             return None
         return self.api.effects.put(EFFECT, self._values(plan), {"amount": amount, "speed": plan["speed"]})
 
@@ -495,7 +495,7 @@ class Strobe:
             if done:
                 pass
             elif self.route == "chain":
-                self.api.chains.values({"source": SOURCE, "slot": self.slot, "controls": {"amount": 0.0}})
+                self.api.chains.values({"source": SOURCE, "slot": self.slot, "controls": {"amount": 0.0}}, hold=True)
                 done = True
             else:
                 self._stop_effect()
@@ -531,6 +531,7 @@ class Strobe:
             recent = self._recent
         if prior is not None and fx.current() is None:
             try:
+                fx.flash_gate(prior["id"])              # a flashing effect that was on before is not put back once the opt-in is off (J-128)
                 fx.put(prior["id"], prior["values"], prior["controls"])
             except ApiError as e:
                 self.log("nxlx-web: strobe: the effect that was on before could not be put back: %s" % e.message)
