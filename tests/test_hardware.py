@@ -95,6 +95,15 @@ class HardwareTest(unittest.TestCase):
         self.assertTrue(p["notes"])
 
 
+class PlayerUnitNoiseTest(unittest.TestCase):
+    """J-135: the player's unit keeps libpipewire's probe line (pw.conf) out of the journal on a node."""
+
+    def test_the_unit_turns_off_the_pipewire_library_log(self):
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(here, "install", "nxlx-player.service")) as f:
+            self.assertRegex(f.read(), r"(?m)^Environment=PIPEWIRE_DEBUG=0$")
+
+
 if __name__ == "__main__":
     unittest.main()
 

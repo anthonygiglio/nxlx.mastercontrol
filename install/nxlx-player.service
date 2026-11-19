@@ -33,6 +33,10 @@ Environment=NXLX_RUNTIME_DIR=/run/nxlx/player
 # Two malloc arenas, not one per decoder thread (D114). Measured on a Pi 4 with four sources: 396 MB at 2 hours and flat,
 # against 793 MB and climbing, for the same CPU and flips. nxlx.env can set another value: an EnvironmentFile wins.
 Environment=MALLOC_ARENA_MAX=2
+# libpipewire writes "pw.conf: can't load config client.conf" to stderr each time mpv tries PipeWire before ALSA, and a node
+# runs no PipeWire (J-135, seen 32 times in a week). Level 0 is its "no messages", for this process only; nxlx.env can set
+# another value, and a node that does run PipeWire loses only PipeWire's own log lines in this unit's journal.
+Environment=PIPEWIRE_DEBUG=0
 ExecStart=@NXLX_DIR@/bin/nxlx-player serve
 # The most real-time priority a process of this unit may ask for: 1, the lowest. It grants nothing by itself and needs
 # no capability; only mctl-render's render thread asks (SCHED_RR 1, render/src/main.c), and mpv never does. The kernel
