@@ -1138,13 +1138,14 @@ class Effects(S.Engine):
     def order(self, pair=None):
         """The filters that can be put on, in the library's order: what Previous and Next step through. Without the
         files the GPU refused, and with `pair` (the generator shader under the effects now) without the ones it
-        refused over that generator."""
+        refused over that generator. Without the filters that flash unless "Allow faster" is on (flash_gate)."""
         out = []
         for s in S.Engine.library(self):
             if not s["error"] and s["id"] not in HOLD_ONLY:
                 try:
                     digest = self._parsed(self._path(s["id"])[0])[1]
                     if digest not in self._refusals and not (pair and self._pair_said(digest, pair)):
+                        self.flash_gate(s["id"])        # a flashing filter is stepped onto only behind the opt-in (J-128)
                         out.append(s["id"])
                 except (ShaderError, ApiError):
                     pass

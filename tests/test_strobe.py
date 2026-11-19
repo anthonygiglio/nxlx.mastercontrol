@@ -794,6 +794,11 @@ class EffectsListFlashTest(RouteBase):
     """J-128 (D134 rule 7 closed): a flashing filter starts from the Effects list, a preset or the chain routes only
     behind the owner's "Allow faster than the flash limit", with a warning; the hold is the other way in."""
 
+    def pump(self):
+        self.fx.changer._last = -1e9
+        self.fx._switched = -1e9
+        self.fx.changer.pump()
+
     def faster(self, on):
         self.api.settings.data["shaders"] = dict(self.api.settings.data.get("shaders") or {}, faster=on)
 
@@ -837,6 +842,35 @@ class EffectsListFlashTest(RouteBase):
         self.assertTrue({s["id"]: s for s in self.state()["effects"]}["fx-strobe.fs"]["flashes"])
         self.faster(True)
         self.assertTrue(self.state()["faster"])
+
+    def test_next_and_previous_step_past_a_flashing_file_unless_the_opt_in_is_on(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.assertNotIn("strobe.fs", self.fx.order())
+        self.assertNotIn("fx-strobe.fs", self.fx.order())
+        seen = []
+        for direction in (1, -1):
+            for _ in range(len(self.fx.order()) + 1):
+                st, body, _ = self.post("/api/effects/step", {"dir": direction})
+                self.assertEqual(st, 200, body)
+                self.pump()
+                seen.append(self.state()["on"]["id"])
+        self.assertNotIn("strobe.fs", seen)
+        self.assertNotIn("fx-strobe.fs", seen)
+        self.faster(True)
+        self.assertIn("strobe.fs", self.fx.order())             # behind the opt-in the upload is stepped onto as before
+        self.assertNotIn("fx-strobe.fs", self.fx.order())       # the Strobe itself stays hold-only
+
+    def test_the_one_button_never_puts_a_flashing_file_back(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.faster(True)
+        self.fx.put("strobe.fs")
+        self.fx.off()
+        self.faster(False)
+        self.assertEqual(self.fx.recent, "strobe.fs")
+        st, body, _ = self.post("/api/effects", {"toggle": True})
+        self.assertEqual(st, 200, body)
+        self.pump()
+        self.assertNotEqual(self.state()["on"]["id"], "strobe.fs")
 
     def test_the_chain_route_is_refused_too(self):
         st, body, _ = self.post("/api/effects/chain", {"source": 1, "slot": 2, "id": "fx-strobe.fs"})
@@ -1125,6 +1159,20 @@ class OscHandlerTest(RouteBase):
         self.clock.t += 0.2                                              # and then nothing
         self.strobe.tick()
         self.assertIsNone(self.fx.on)
+
+    def test_an_osc_on_never_lands_on_a_flashing_file_without_the_opt_in(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.api.settings.data["shaders"] = dict(self.api.settings.data.get("shaders") or {}, faster=True)
+        self.fx.put("strobe.fs")
+        self.fx.off()
+        self.api.settings.data["shaders"]["faster"] = False
+        server = self.make_server()
+        server.handle_packet(msg("/mctl/effect", 1), self.SENDER)
+        self.fx.changer._last = -1e9
+        self.fx._switched = -1e9
+        self.fx.changer.pump()
+        self.assertNotEqual((self.fx.current() or {}).get("id"), "strobe.fs")
+        self.assertNotIn("strobe.fs", self.fx.order())
 
     def test_the_rate_over_osc_is_kept_to_the_cap(self):
         server = self.make_server()

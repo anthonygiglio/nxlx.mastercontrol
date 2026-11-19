@@ -1,0 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## Addendum to D134 (2026-11-18): flashing filters need the opt-in everywhere but the hold (J-128)
+
+Rule 7 said the Effects page could still put the Strobe on, steady. That is closed. A filter that is in `HOLD_ONLY` or whose file says it flashes is now started only by the hold (mctl/strobe.py) or while the owner's "Allow faster than the flash limit" is on. This covers the Effects list (`POST /api/effects` with an id), presets of another effect, the chain routes, Next and Previous, and the controllers' one button and OSC on and off (they step the same list, which leaves such filters out while the opt-in is off). One rule, `Effects.flash_gate`, on the node, not in the panel. Refused with 409 and a plain sentence; with the opt-in on the answer carries a seizure warning, and the panel disables "Put on" with a line while it is off. Why: the node must not rely on the panel, and a steady strobe from a list is the case the hold exists to prevent. Not covered, as before: what an effect does to a fast clip (the node cannot see it).
