@@ -963,7 +963,8 @@ def main(argv=None):
                     os.close(inbox)
         elif args.cmd == "rollback":
             version = u.rollback()
-            report("done", "rolled back to %s%s" % (version, u._settings_note()), version)
+            note = (getattr(u, "_settings_note", None) or (lambda: ""))()
+            report("done", "rolled back to %s%s" % (version, note), version)
     except UpdateError as e:
         print("nxlx-update: %s" % e, file=sys.stderr)
         report("failed", str(e))
