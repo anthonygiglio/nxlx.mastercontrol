@@ -47,15 +47,28 @@ class ReadOnlyRootTest(unittest.TestCase):
             self.assertIn("The system disk is read-only", r.stderr)
             self.assertIn("sudo nxlx-rootfs disable", r.stderr)
 
+    @unittest.skipIf(os.geteuid() == 0, "as root the installer would run for real")
     def test_a_normal_root_and_a_docker_overlay_elsewhere_get_past_it(self):
-        r = self.run_with("/dev/sda2 / ext4 rw 0 0\noverlay /var/lib/docker/overlay2/x/merged overlay rw 0 0\n", "--dry-run")
+        # No --dry-run: the read-only check runs and passes, and the next refusal (not root) is what ends the run. With
+        # --dry-run the check is skipped altogether, so that form could not fail. The overlay check comes before the root
+        # check in install.sh, so "run as root" does not hide it: a wrongly refused overlay would show the read-only message.
+        r = self.run_with("/dev/sda2 / ext4 rw 0 0\noverlay /var/lib/docker/overlay2/x/merged overlay rw 0 0\n")
+        self.assertEqual(r.returncode, 1)
         self.assertNotIn("The system disk is read-only", r.stderr)
+        self.assertIn("run as root", r.stderr)
 
+    @unittest.skipIf(os.geteuid() == 0, "as root the installer would run for real")
     def test_stage_and_dry_run_are_not_refused(self):
+        # An overlay root with --dry-run alone: skipping the check is the only thing that keeps it from refusing.
         r = self.run_with("overlay / overlay rw 0 0\n", "--dry-run")
         self.assertNotIn("The system disk is read-only", r.stderr)
-        r = self.run_with("overlay / overlay rw 0 0\n", "--stage", tempfile.mkdtemp(), "--dry-run")
+        # An overlay root with --stage alone (no --dry-run, not root): the stage path skips both the check and the root refusal.
+        stage = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, stage, True)
+        r = self.run_with("overlay / overlay rw 0 0\n", "--stage", stage)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)        # it ran through, not died for another reason
         self.assertNotIn("The system disk is read-only", r.stderr)
+        self.assertNotIn("run as root", r.stderr)
 
 
 class InstallTest(unittest.TestCase):
