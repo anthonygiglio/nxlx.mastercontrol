@@ -680,7 +680,7 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then
 	# path that is there then) and a factory reset can empty it. Already there from an update: left as it is, owner and mode set.
 	# A link planted there must never be followed by the chown and chmod below: it is removed (a real folder is left alone).
 	if [ -L /var/lib/nxlx/backups ]; then rm -f /var/lib/nxlx/backups; fi
-	mkdir -p /var/lib/nxlx/backups; chown root:root /var/lib/nxlx/backups; chmod 0700 /var/lib/nxlx/backups
+	mkdir -p /var/lib/nxlx/backups; chown root:root /var/lib/nxlx/backups; chmod 0700 /var/lib/nxlx/backups; chmod g-s /var/lib/nxlx/backups   # g-s: the parent is setgid and chmod keeps that bit on a folder
 	true
 fi
 if [ "$DRY" = 0 ]; then
