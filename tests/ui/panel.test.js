@@ -5301,6 +5301,7 @@ function startServer(env) {          // env: more for the harness's environment 
       // J-128: a filter that flashes cannot be put on from the list while "Allow faster than the flash limit" is off (a plain
       // line says why; the node refuses it too). Sync predicates only: an async waitForFunction never polls.
       assert(await page.isDisabled('#fxlist [data-put="fx-strobe.fs"]'), 'the Strobe Put on button is disabled while the opt-in is off');
+      assert(!(await page.isDisabled('#fxlist [data-put="fx-vignette.fs"]')), 'a quiet filter\'s Put on is enabled');
       assert(/Hold the Strobe button to flash it/.test(await page.textContent('#fxlist [data-effect="fx-strobe.fs"] .fxflash')), 'and the row says why in plain words');
       // the list by name and by weight
       await page.fill('#fxfilter', 'vign');

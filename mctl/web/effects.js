@@ -434,7 +434,7 @@
           s.error ? h('span', { class: 'msg err', text: 'This file cannot be used: ' + s.error }) : null,
           s.flashes && !s.error ? h('span', { class: 'msg err fxflash', text: d.faster
             ? 'Flashing light can trigger seizures in people who are sensitive to it. Do not use it where someone may be.'
-            : 'This one flashes, so it cannot be put on from this list. Hold the Strobe button to flash it, or the owner can switch on "Allow faster than the flash limit" (Shaders page, Advanced).' }) : null,
+            : 'This one flashes, so it cannot be put on from this list. Hold the Strobe button to flash it, or switch on "Allow faster than the flash limit" (Shaders page, Advanced).' }) : null,
           s.refused ? h('span', { class: 'msg err', text: 'The GPU of this node refused it: ' + s.refused })
             : (s.refused_pair ? h('span', { class: 'msg err', text: 'The GPU of this node refused it over this shader: ' + s.refused_pair }) : null)),
         h('div', { class: 'row' },

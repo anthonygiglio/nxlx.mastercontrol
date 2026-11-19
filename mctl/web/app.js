@@ -673,6 +673,7 @@
       if (lib.effects && age < 60000 && !(missing && age > 10000)) return Promise.resolve();
       return Promise.all([api('GET', '/api/effects'), api('GET', '/api/shaders')]).then(function (rs) {
         lib.effects = rs[0] && rs[0].ok ? (rs[0].data.effects || []).filter(function (x) { return !x.error; }) : [];
+        lib.faster = !!(rs[0] && rs[0].ok && rs[0].data.faster);          // "Allow faster than the flash limit": a flashing filter is offered only with it (J-128)
         lib.shaders = rs[1] && rs[1].ok ? (rs[1].data.shaders || []).filter(function (x) { return !x.error; }) : [];
         lib.at = Date.now();
       });
@@ -702,8 +703,12 @@
       var id = 'srcfx-' + k + '-' + slot;
       // the one chosen by hand stays chosen over the redraws until it is put on (or another is)
       var pick = h('select', { class: 'text-input', id: id, 'aria-label': 'Effect ' + slot + ' of Source ' + k },
-        lib.effects.map(function (e) { return h('option', { value: e.id, text: e.name || e.id, selected: chosen[id] ? chosen[id] === e.id : !!on && on.id === e.id }); }));
-      pick.addEventListener('change', function () { chosen[id] = pick.value; });
+        lib.effects.map(function (e) { return h('option', { value: e.id, text: (e.name || e.id) + (e.flashes ? ' (flashes)' : ''), disabled: !!e.flashes && !lib.faster,
+          selected: chosen[id] ? chosen[id] === e.id : !!on && on.id === e.id }); }));
+      var flashes = function (v) { return lib.effects.some(function (e) { return e.id === v && e.flashes; }); };
+      var warn = h('span', { class: 'msg err', id: id + '-warn', hidden: !(lib.faster && flashes(pick.value)),
+        text: 'This one flashes. Flashing light can trigger seizures in people who are sensitive to it: do not use it where someone may be.' });
+      pick.addEventListener('change', function () { chosen[id] = pick.value; warn.hidden = !(lib.faster && flashes(pick.value)); });
       var row = h('span', { class: 'row', id: id + '-row' }, h('span', { class: 'k', text: slot === 1 ? 'Effect' : 'Effect ' + slot }), pick,
         h('button', { class: 'btn small', id: 'srcfxon-' + k + '-' + slot, text: on ? 'Change' : 'On', disabled: !lib.effects.length, onclick: function () {
           act('POST', '/api/effects/chain', { source: k, slot: slot, id: pick.value }, function () { delete chosen[id]; say('Source ' + k + ': ' + pick.value + ' is on.'); load(); });
@@ -711,6 +716,7 @@
         h('button', { class: 'btn small', id: 'srcfxoff-' + k + '-' + slot, text: 'Off', disabled: !on, onclick: function () {
           act('POST', '/api/effects/chain', { source: k, slot: slot, off: true }, function () { say('Source ' + k + ': the effect is off.'); load(); });
         } }));
+      row.appendChild(warn);
       if (on) {
         var amt = h('input', { type: 'range', min: '0', max: '1', step: '0.01', id: 'srcfxamt-' + k + '-' + slot, 'aria-label': 'Amount of effect ' + slot + ' of Source ' + k,
           value: String(on.controls && typeof on.controls.amount === 'number' ? on.controls.amount : 1) });

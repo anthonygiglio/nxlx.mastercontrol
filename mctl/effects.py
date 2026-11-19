@@ -1064,16 +1064,25 @@ class Effects(S.Engine):
             return None
         return S.SPEED_MAX if self.faster() else 1.0
 
-    FLASH_ASK = ("%s flashes. From this list it is not started unless \"Allow faster than the flash limit\" is switched on "
-                 "(Shaders page, Advanced); the Strobe's hold button is the way to flash without it.")
+    FLASH_ASK = ("%s flashes, so it is not put on from here while \"Allow faster than the flash limit\" is off (Shaders page, "
+                 "Advanced).")
+    FLASH_HOLD = " The Strobe's hold button flashes it without that switch."
     FLASH_WARN = ("%s flashes. Flashing light can trigger seizures in people who are sensitive to it: do not use it where "
                   "someone may be.")
+
+    def _flash_name(self, sid):
+        """The filter's name as the library shows it, else its file name."""
+        try:
+            return next((s.get("name") or sid for s in S.Engine.library(self) if s["id"] == sid), sid)
+        except Exception:
+            return sid
 
     def flash_gate(self, sid):
         """D134 rule 7, closed (J-128): a filter that flashes (the Strobe, or any file that says it flashes) is not
         started by a request that comes from the Effects list, a preset or the chain routes, unless the owner's
         "Allow faster than the flash limit" is on. The hold (mctl/strobe.py) does not come through here. Returns None
-        when it may start, "" when it may start behind the opt-in (the caller says the warning), else raises 409."""
+        when it may start (not a flashing filter), the warning text when it may start behind the opt-in (the caller
+        passes it on), else raises 409."""
         path, _ = self._path(sid)
         flashes = sid in HOLD_ONLY
         if not flashes:
@@ -1084,8 +1093,31 @@ class Effects(S.Engine):
         if not flashes:
             return None
         if not self.faster():
-            raise ApiError(409, self.FLASH_ASK % sid)
-        return self.FLASH_WARN % sid
+            raise ApiError(409, self.FLASH_ASK % self._flash_name(sid) + (self.FLASH_HOLD if sid in HOLD_ONLY else ""))
+        return self.FLASH_WARN % self._flash_name(sid)
+
+    def drop_flashing(self, why="Allow faster than the flash limit was switched off"):
+        """The opt-in went off (J-128): a flashing filter that is on is taken off, except the Strobe while a hold lights it."""
+        on = self.current()
+        if on is None:
+            return
+        if on["id"] in HOLD_ONLY and getattr(getattr(self.api, "strobe", None), "lit", False):
+            return
+        try:
+            self.flash_gate(on["id"])
+        except ApiError:
+            self.off(why)
+
+    def upload(self, name, source, replace=False):
+        out = super().upload(name, source, replace)
+        if replace:                                     # a replaced file that now says it flashes, and is on, goes off unless the opt-in is on
+            on = self.current()
+            if on is not None and on["id"] == name:
+                try:
+                    self.flash_gate(name)
+                except ApiError:
+                    self.off("the file was replaced by one that flashes")
+        return out
 
     def limit(self, parsed, controls):
         top = self.speed_max(parsed)
@@ -1674,6 +1706,7 @@ class Effects(S.Engine):
                     raise ApiError(409, "there is no effect that can be put on")
                 on = self._seen()
                 sid = self._flying = self._resolve(job, on["id"] if on else None, ids)
+                self.flash_gate(sid)                    # a wish queued by id (a preset, the one button) is checked again when it runs (J-128)
                 done = self.put(sid, None, None, job.get("preset"), queued=True, gen=job.get("gen"), clears=job.get("clears", getattr(self.api.player, "clears", 0)))
                 if done is None and job.get("gen") == self._gen:
                     # Not overtaken by an Off or by an effect put on by hand (those are newer wishes and need no

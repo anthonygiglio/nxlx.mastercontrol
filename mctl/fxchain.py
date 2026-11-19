@@ -21,7 +21,7 @@ import threading
 
 from . import shaderlive as L, shaders as S
 from .api import ApiError
-from .effects import translate_native
+from .effects import HOLD_ONLY, translate_native
 from .player import PlayerError
 from .shaders import ShaderError
 
@@ -287,8 +287,10 @@ class Chains:
         with self._lock:
             return {s: r["id"] for (s, k), r in self._seen().items() if k == 0}
 
-    def values(self, body):
-        """{"source", "slot", "values"?, "controls"?}: new values for the effect in that slot, set while it plays."""
+    def values(self, body, hold=False):
+        """{"source", "slot", "values"?, "controls"?}: new values for the effect in that slot, set while it plays. Not with
+        an amount above 0 for a flashing filter unless "Allow faster" is on (J-128); `hold` is the Strobe's own call
+        (mctl/strobe.py), which is not asked."""
         if body.get("slot") == 0:
             return self.generator_values(body.get("source"), body.get("values"), body.get("controls"))
         fx = self.api.effects
@@ -304,6 +306,7 @@ class Chains:
                 controls = fx.limit(parsed, L.clean_fx_controls(body.get("controls"), r["controls"]))
             except ShaderError as e:
                 raise ApiError(400, str(e))
+            warn = fx.flash_gate(r["id"]) if (controls["amount"] > 0 and not hold) else None
             send = S.native_send(parsed, values, {})
             send.update({"@amount": controls["amount"], "@speed": controls["speed"]})
             try:
@@ -314,7 +317,28 @@ class Chains:
                 self._seen()
                 raise ApiError(409, "no effect is on in slot %d of source %d" % (slot, source))
             r.update(values=values, controls=controls, preset=None)
-            return {"ok": True, "source": source, "slot": slot, "id": r["id"], "values": values, "controls": controls}
+            out = {"ok": True, "source": source, "slot": slot, "id": r["id"], "values": values, "controls": controls}
+            if warn:
+                out["warning"] = warn
+            return out
+
+    def drop_flashing(self):
+        """The opt-in went off (J-128): every flashing filter that is lit in a chain slot is taken off. Not the Strobe's
+        loaded copy at amount 0 (the hold owns it), nor the Strobe while a hold lights it."""
+        fx = self.api.effects
+        held = getattr(getattr(self.api, "strobe", None), "lit", False)
+        with self._lock:
+            rows = [(k, r["id"], (r.get("controls") or {}).get("amount", 1.0)) for k, r in self._seen().items() if k[1] != 0]
+        for (source, slot), sid, amount in rows:
+            if not amount or (sid in HOLD_ONLY and held):
+                continue
+            try:
+                fx.flash_gate(sid)
+            except ApiError:
+                try:
+                    self.off({"source": source, "slot": slot})
+                except ApiError:
+                    pass
 
     def off(self, body):
         """{"source", "slot"?, "off": true}: take that slot's effect off (every slot of the source without one)."""
@@ -345,6 +369,8 @@ class Chains:
         if "shader" in body:
             return self.put_generator(body.get("source"), body["shader"], body.get("preset"), body.get("values"), body.get("controls"))
         if "id" in body:
+            self.api.effects._need()
+            self._place(body)
             warn = self.api.effects.flash_gate(body["id"]) if isinstance(body["id"], str) else None
             out = self.put(body)
             return dict(out, warning=warn) if warn else out

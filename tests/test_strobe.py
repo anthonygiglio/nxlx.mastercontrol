@@ -26,6 +26,7 @@ import tests        # noqa: F401  (the run's own temp folder, ranked locks)
 from mctl import actions, effects as E, midi, osc, policy, shaders as S, strobe as ST
 from mctl.api import ApiError
 from mctl.player import PlayerError
+from tests import test_effects as TE
 from tests.test_effects import Base as FxBase, STROBE as FLASHING_FILTER
 from tests.test_osc import msg
 
@@ -56,7 +57,7 @@ class Chains:
                                                       "values": dict(body["values"])}
         return {"ok": True}
 
-    def values(self, body):
+    def values(self, body, hold=False):
         if self.fail_values:
             self.fail_values -= 1
             raise ApiError(503, "the renderer did not answer")
@@ -100,6 +101,9 @@ class Effects:
 
     def _path(self, sid):
         return "/x/" + sid, "bundled"
+
+    def flash_gate(self, sid):
+        return None                             # (the real rule is tested with the real engine)
 
     def current(self):
         return dict(self.on) if self.on else None
@@ -872,7 +876,94 @@ class EffectsListFlashTest(RouteBase):
         self.pump()
         self.assertNotEqual(self.state()["on"]["id"], "strobe.fs")
 
+    def chains(self):
+        """The New renderer's chain slots, stood in for: what each slot holds and every amount sent to one."""
+        held, sent, p = {}, [], self.player
+        p.native_chains = lambda: True
+        p.sources = lambda: 4
+        p.chain_slots = lambda source, generator=False: [1, 2, 3] if source == 1 else [0, 1, 2, 3]
+        p.chain_state = lambda: dict(held)
+        p._chain_there = lambda source, slot, path: False
+
+        def put(source, slot, path):
+            held[(source, slot)] = path
+            return "ok", ""
+        p.chain_put = put
+        p.chain_values = lambda source, slot, send, path: (sent.append(send["@amount"]) or True)
+        p.chain_clear = lambda source, slot: bool(held.pop((source, slot), None))
+        return held, sent
+
+    def test_the_chain_route_cannot_light_the_parked_strobe_and_the_hold_still_can(self):
+        held, sent = self.chains()
+        self.api.chains.put({"source": 1, "slot": 3, "id": "fx-strobe.fs", "controls": {"amount": 0.0}})      # as the hold's arm does
+        self.assertIn((1, 3), held)
+        st, body, _ = self.post("/api/effects/chain", {"source": 1, "slot": 3, "controls": {"amount": 1}})
+        self.assertEqual(st, 409, body)
+        self.assertIn("flashes", body["error"])
+        self.assertEqual(sent, [])
+        st, body, _ = self.post("/api/effects/chain", {"source": 1, "slot": 3, "controls": {"amount": 0}})    # at 0 nothing is drawn
+        self.assertEqual(st, 200, body)
+        self.api.chains.values({"source": 1, "slot": 3, "controls": {"amount": 1.0}}, hold=True)               # the hold's own call
+        self.assertEqual(sent[-1], 1.0)
+        self.faster(True)
+        st, body, _ = self.post("/api/effects/chain", {"source": 1, "slot": 3, "controls": {"amount": 1}})
+        self.assertEqual(st, 200, body)
+        self.assertIn("seizures", body["warning"])
+
+    def test_switching_the_opt_in_off_takes_a_lit_flashing_filter_off_but_not_the_parked_strobe_or_a_hold(self):
+        held, sent = self.chains()
+        self.faster(True)
+        self.api.chains.put({"source": 1, "slot": 2, "id": "fx-strobe.fs", "controls": {"amount": 1.0}})
+        self.api.chains.put({"source": 1, "slot": 3, "id": "fx-strobe.fs", "controls": {"amount": 0.0}})       # parked
+        st, body, _ = self.post("/api/shaders", {"action": "config", "faster": False})
+        self.assertEqual(st, 200, body)
+        self.assertEqual(sorted(held), [(1, 3)])                        # the lit one went, the parked one stays
+        self.post("/api/effects", {"off": True})
+        self.faster(True)
+        self.post("/api/effects", {"id": "fx-strobe.fs"})
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+        self.post("/api/shaders", {"action": "config", "faster": False})
+        self.assertIsNone(self.fx.on)                                   # an effect that is on goes off too
+
+    def test_a_hold_is_not_ended_by_the_opt_in_going_off_and_a_flashing_effect_is_not_put_back_after_it(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.faster(True)
+        self.post("/api/effects", {"id": "strobe.fs"})
+        self.assertEqual(self.fx.on["id"], "strobe.fs")
+        self.post("/api/strobe/hold", {"holder": "tab"})                 # the hold takes the screen; strobe.fs is what was on before
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+        self.post("/api/shaders", {"action": "config", "faster": False})
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")               # the hold's own strobe stays lit
+        self.post("/api/strobe/release", {"holder": "tab"})
+        self.assertIsNone(self.fx.on)                                    # and the one from before is not put back
+
+    def test_a_file_replaced_by_one_that_flashes_goes_off_unless_the_opt_in_is_on(self):
+        self.fx.upload("q.fs", TE.fx(DESCRIPTION="Quiet"))
+        self.assertEqual(self.post("/api/effects", {"id": "q.fs"})[0], 200)
+        self.assertEqual(self.fx.on["id"], "q.fs")
+        self.fx.upload("q.fs", FLASHING_FILTER, True)
+        self.assertIsNone(self.fx.on)
+        self.faster(True)
+        self.fx.upload("q.fs", TE.fx(DESCRIPTION="Quiet"), True)
+        self.assertEqual(self.post("/api/effects", {"id": "q.fs"})[0], 200)
+        self.fx.upload("q.fs", FLASHING_FILTER, True)
+        self.assertEqual(self.fx.on["id"], "q.fs")                       # behind the opt-in it stays
+
+    def test_a_wish_queued_for_a_flashing_file_is_checked_again_when_it_runs(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.fx._queue("strobe.fs")
+        self.pump()
+        self.assertIsNone(self.fx.on)
+        self.assertIn("flashes", self.fx.error["message"])
+
+    def test_the_words_do_not_name_who_holds_the_switch(self):
+        st, body, _ = self.post("/api/effects", {"id": "fx-strobe.fs"})
+        self.assertNotIn("owner", body["error"].lower())
+        self.assertIn("Strobe", body["error"])                           # the filter's name, not its file
+        self.assertNotIn("fx-strobe.fs", body["error"])
+
     def test_the_chain_route_is_refused_too(self):
+        self.chains()
         st, body, _ = self.post("/api/effects/chain", {"source": 1, "slot": 2, "id": "fx-strobe.fs"})
         self.assertEqual(st, 409, body)
         self.assertIn("flashes", body["error"])
