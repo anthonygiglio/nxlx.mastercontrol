@@ -179,7 +179,7 @@ class MarkerTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, d, True)
         self.assertIsNone(clipstick.read_record(d))
         self.assertIsNone(clipstick.claimed_label(d))
-        clipstick.write_claim(d, "N01-CLIPS", UUID, SECRET)
+        clipstick.write_claim(d, "N01-CLIPS", UUID, SECRET, root_dir=d)
         rec = os.path.join(d, clipstick.CLAIM_FILE)
         self.assertEqual(stat.S_IMODE(os.stat(rec).st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(os.stat(os.path.join(d, clipstick.LABEL_FILE)).st_mode), 0o644)
@@ -194,7 +194,7 @@ class MarkerTest(unittest.TestCase):
         os.symlink(rec + ".real", rec)
         self.assertIsNone(clipstick.read_record(d))
         self.assertEqual(sorted(n for n in os.listdir(d) if n.startswith(".")), [])
-        self.assertTrue(clipstick.forget_claim(d))
+        self.assertTrue(clipstick.forget_claim(d, d))
         os.unlink(rec + ".real")
         self.assertIsNone(clipstick.claimed_label(d))
 
@@ -224,14 +224,15 @@ class MountBase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.base = os.path.join(self.tmp, "nxlx")
         self.state = os.path.join(self.tmp, "state")
+        self.root_state = os.path.join(self.tmp, "root-state")        # root's own folder (J-178): the claim record
         self.run = os.path.join(self.tmp, "run")
         self.clips = os.path.join(self.tmp, "nxlx-clips")
         os.makedirs(self.state)
         with open(os.path.join(self.state, "node-id"), "w") as f:
             f.write(NODE + "\n")
-        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
         self.status = os.path.join(self.run, "clip-stick.json")
-        self.env = {"NXLX_USB_BASE": self.base, "NXLX_USB_LINK": os.path.join(self.tmp, "usb"), "NXLX_STATE_DIR": self.state,
+        self.env = {"NXLX_USB_BASE": self.base, "NXLX_USB_LINK": os.path.join(self.tmp, "usb"), "NXLX_STATE_DIR": self.state, "NXLX_ROOT_STATE_DIR": self.root_state,
                     "NXLX_USB_RUN": self.run, "NXLX_CLIP_DIR": self.clips}
         self.mounts = os.path.join(self.tmp, "mounts")
         self.set_mounts("/dev/nvme0n1p2 / ext4 rw 0 0\n")
@@ -349,12 +350,12 @@ class MountTest(MountBase):
         self.assert_plain_read_only(stick)
 
     def test_no_record_or_a_record_for_another_volume_means_no_clip_stick(self):
-        cases = (("no record", lambda: clipstick.forget_claim(self.state)),
-                 ("readable record", lambda: os.chmod(os.path.join(self.state, clipstick.CLAIM_FILE), 0o644)),
-                 ("other volume", lambda: clipstick.write_claim(self.state, "N01-CLIPS", "9999-0000", SECRET)))
+        cases = (("no record", lambda: clipstick.forget_claim(self.state, self.root_state)),
+                 ("readable record", lambda: os.chmod(os.path.join(self.root_state, clipstick.CLAIM_FILE), 0o644)),
+                 ("other volume", lambda: clipstick.write_claim(self.state, "N01-CLIPS", "9999-0000", SECRET, root_dir=self.root_state)))
         for why, change in cases:
             with self.subTest(why):
-                clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+                clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
                 change()
                 stick = self.own()
                 self.mount(stick)
@@ -551,7 +552,7 @@ class MountTest(MountBase):
 class ClaimTest(MountBase):
     def setUp(self):
         super().setUp()
-        clipstick.forget_claim(self.state)
+        clipstick.forget_claim(self.state, self.root_state)
 
     def claim(self, stick, force=False):
         stick.on_systemctl = lambda: usb.mount("/dev/sdb2", env=self.env, runner=stick, proc_mounts=self.mounts,
@@ -566,7 +567,7 @@ class ClaimTest(MountBase):
         before = [c for c in stick.calls[:restart] if c[0] == "mount"]
         self.assertTrue(all("/peek/" in c[-1] for c in before), "claim mounts nothing of its own but its work folder")
         self.assertEqual([c for c in stick.calls[:restart] if c[0] == "mount" and c[1] == "--bind"], [])
-        rec = clipstick.read_record(self.state)
+        rec = clipstick.read_record(self.root_state)
         self.assertEqual((rec["label"], rec["uuid"]), ("N01-CLIPS", UUID))
         on_stick = json.loads(stick.files.get(clipstick.MARKER) or open(os.path.join(self.mounts_of(stick)[-1][-1], clipstick.MARKER), "rb").read())
         self.assertEqual(on_stick["token"], rec["token"])
@@ -577,7 +578,7 @@ class ClaimTest(MountBase):
         self.assertFalse(any(rec["token"] in m for m in self.logs), "the secret is never logged")
         stick2 = Stick(EXFAT_N01)
         self.claim(stick2)
-        self.assertNotEqual(clipstick.read_record(self.state)["token"], rec["token"], "every claim makes a new secret")
+        self.assertNotEqual(clipstick.read_record(self.root_state)["token"], rec["token"], "every claim makes a new secret")
 
     def test_claim_never_leaves_a_recovery_file_or_a_temporary_file(self):
         stick = Stick(EXFAT_N01)
@@ -632,6 +633,7 @@ class ChooserTest(unittest.TestCase):
         self.sd = os.path.join(self.tmp, "video")
         self.clips = os.path.join(self.tmp, "nxlx-clips")
         self.state = os.path.join(self.tmp, "state")
+        self.root_state = os.path.join(self.tmp, "root-state")
         for d in (self.sd, self.clips, self.state):
             os.makedirs(d)
         self.status = os.path.join(self.tmp, "clip-stick.json")
@@ -654,7 +656,7 @@ class ChooserTest(unittest.TestCase):
         self.assertFalse(c.claimed())
 
     def test_a_claimed_stick_that_is_missing_says_so_and_falls_back_to_the_sd(self):
-        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
         c = self.chooser()
         self.assertEqual(c.media_dir(), self.sd)
         st = c.state()
@@ -663,13 +665,14 @@ class ChooserTest(unittest.TestCase):
         self.assertIn("test clips", st["text"])
         self.assertTrue(c.claimed())
 
-    def test_the_panel_knows_of_a_claim_it_cannot_read(self):
-        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+    def test_the_panel_cannot_see_root_folder_so_without_the_label_file_there_is_no_claim_for_it(self):
+        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
         os.unlink(os.path.join(self.state, clipstick.LABEL_FILE))
-        self.assertEqual(self.chooser().state()["state"], "missing")
+        self.assertEqual(self.chooser().state()["state"], "none")
+        self.assertFalse(os.path.exists(os.path.join(self.state, clipstick.CLAIM_FILE)), "the secret is never in the panel's folder")
 
     def test_checking_then_in_then_pulled(self):
-        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
         self.put_status(state="checking")
         c = self.chooser()
         self.assertEqual((c.media_dir(), c.state()["state"]), (self.sd, "checking"))
@@ -681,7 +684,7 @@ class ChooserTest(unittest.TestCase):
 
     def test_a_checking_status_left_by_a_killed_unit_is_missing(self):
         import time as _time
-        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
         self.put_status(state="checking")
         self.assertEqual(self.chooser().state()["state"], "checking")
         later = _time.time() + clipstick.FSCK_SECONDS + 301
@@ -717,6 +720,8 @@ class ApiClipStickTest(ServerBase):
         self.token = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
         self.state = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.state, True)
+        self.root_state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root_state, True)
         self.clips = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.clips, True)
         self.status = os.path.join(self.state, "status.json")
@@ -728,7 +733,7 @@ class ApiClipStickTest(ServerBase):
     def test_while_the_stick_is_missing_the_sd_clips_are_listed_and_uploads_refused(self):
         with open(os.path.join(self.media, "test-grid.mp4"), "wb") as f:
             f.write(b"x")
-        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
         self.use_chooser()
         st, body, _ = self.call("GET", "/api/media", token=self.token)
         self.assertEqual(st, 200)
@@ -745,7 +750,7 @@ class ApiClipStickTest(ServerBase):
         self.assertEqual(sorted(os.listdir(self.media)), before, "nothing went to the SD card instead")
 
     def test_with_the_stick_in_list_upload_and_delete_use_its_clips_folder(self):
-        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
         clipstick.write_status(self.status, {"device": "/dev/sdb2", "label": "N01-CLIPS", "state": "in", "why": ""})
         with open(os.path.join(self.clips, "on-stick.mp4"), "wb") as f:
             f.write(b"s")
@@ -790,7 +795,7 @@ class ApiClipStickTest(ServerBase):
         self.assertIn("twice.mp4", os.listdir(stick))
 
     def test_a_stick_that_was_not_accepted_takes_no_upload(self):
-        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET)
+        clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
         clipstick.write_status(self.status, {"device": "/dev/sdb2", "label": "N01-CLIPS", "state": "not-accepted", "why": ""})
         self.use_chooser()
         body = self.call("GET", "/api/media", token=self.token)[1]

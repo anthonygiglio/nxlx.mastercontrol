@@ -13,7 +13,7 @@ The marker, `nxlx-clip-stick.json` at the top of the partition, is a small JSON 
     {"nxlx_clip_stick": 1, "node_id": "<the node's 32 hex digit id>", "node_name": "nxlx-node-01",
      "label": "N01-CLIPS", "token": "<32 hex digits>", "claimed": "2026-11-17T12:00:00Z"}
 
-The claim record, `clip-stick.json` in the state folder, root's and mode 0600: {"label", "uuid", "token", "claimed"}
+The claim record, `clip-stick.json` in root's own folder (paths.ROOT_STATE_DIR, not the panel's state folder), mode 0600: {"label", "uuid", "token", "claimed"}
 (uuid is the exFAT volume serial blkid reports, when it reports one). Beside it `clip-stick-label.json` (0644) holds
 only the label and the time, so the panel can say when the stick is missing without reading the secret. The secret is
 never logged, never in the status file, never sent by the panel.
@@ -42,7 +42,7 @@ CLIP_FOLDER = "clips"
 NODE_ID = re.compile(r"^[0-9a-f]{32}$")
 TOKEN = re.compile(r"^[0-9a-f]{32}$")
 NODE_ID_FILE = "node-id"                  # the same file mctl/fleet.py keeps (D127)
-CLAIM_FILE = "clip-stick.json"            # in the state folder, root's, 0600: the label, the volume uuid and the secret
+CLAIM_FILE = "clip-stick.json"            # in root's folder (paths.ROOT_STATE_DIR), 0600: the label, the volume uuid and the secret
 LABEL_FILE = "clip-stick-label.json"      # in the state folder, 0644: the label only, for the panel
 DEFAULT_STATUS = os.path.join(paths.USB_DIR, "clip-stick.json")    # written by the mounter (root) for the panel
 DEFAULT_CLIP_DIR = "/media/nxlx-clips"    # the stick's clips folder, bound here; the only writable place of any stick
@@ -260,41 +260,56 @@ def clear_status(path, devnode=None):
         return False
 
 
-def read_record(state_dir):
-    """The claim record, only when it is a small regular file of this process's user (root on a node) that its group
-    and others cannot read or write; else None, and the node has no clip stick."""
-    data = _read_small_json(os.path.join(state_dir, CLAIM_FILE), MARKER_MAX, private=True)
+def read_record(root_dir):
+    """The claim record from root's folder, only when it is a small regular file of this process's user (root on a node)
+    that its group and others cannot read or write; else None, and the node has no clip stick."""
+    data = _read_small_json(os.path.join(root_dir, CLAIM_FILE), MARKER_MAX, private=True)
     if data is None or not label_ok(data.get("label")) or not TOKEN.fullmatch(str(data.get("token", ""))):
         return None
     return data
 
 
-def write_claim(state_dir, label, uuid, token, now=None):
+def _root_folder(root_dir):
+    """Root's folder, made 0700 when missing; it must be a folder (no link) of this process's user that no one else can
+    write. Its parent is root's, so nothing else could have put a name there."""
+    try:
+        os.mkdir(root_dir, 0o700)
+    except FileExistsError:
+        pass
+    except OSError as e:
+        raise ClipStickError("%s could not be made: %s" % (root_dir, e.strerror or e))
+    try:
+        st = os.lstat(root_dir)
+    except OSError as e:
+        raise ClipStickError("%s could not be read: %s" % (root_dir, e.strerror or e))
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o022:
+        raise ClipStickError("%s is not a folder of this user's that only this user can write" % root_dir)
+
+
+def write_claim(state_dir, label, uuid, token, now=None, *, root_dir):
+    """The secret record goes into root's folder, the label (for the panel) into the state folder."""
     stamp = _stamp(now)
-    write_file(state_dir, CLAIM_FILE, (json.dumps({"label": label, "uuid": uuid or "", "token": token, "claimed": stamp},
+    _root_folder(root_dir)
+    write_file(root_dir, CLAIM_FILE, (json.dumps({"label": label, "uuid": uuid or "", "token": token, "claimed": stamp},
                                                   sort_keys=True) + "\n").encode("utf-8"), mode=0o600)
     write_file(state_dir, LABEL_FILE, (json.dumps({"label": label, "claimed": stamp}, sort_keys=True) + "\n").encode("utf-8"),
                mode=0o644)
 
 
 def claimed_label(state_dir):
-    """The label of this node's claimed clip stick, as the panel may know it: from the public label file, or "the
-    clip stick" when only the root-only record is there. None when no stick is claimed."""
+    """The label of this node's claimed clip stick, as the panel may know it: from the public label file only (the
+    record is in root's folder, which the panel cannot see). None when no stick is claimed."""
     data = _read_small_json(os.path.join(state_dir, LABEL_FILE), MARKER_MAX)
     if data is not None and label_ok(data.get("label")):
         return data["label"]
-    try:
-        os.lstat(os.path.join(state_dir, CLAIM_FILE))
-        return "clip stick"
-    except OSError:
-        return None
+    return None
 
 
-def forget_claim(state_dir):
+def forget_claim(state_dir, root_dir):
     gone = False
-    for name in (CLAIM_FILE, LABEL_FILE):
+    for folder, name in ((root_dir, CLAIM_FILE), (state_dir, LABEL_FILE)):
         try:
-            os.unlink(os.path.join(state_dir, name))
+            os.unlink(os.path.join(folder, name))
             gone = True
         except FileNotFoundError:
             pass

@@ -21,8 +21,8 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
   takes effect at the next start of the node;
 * throttled (the stats overlay): `vcgencmd get_throttled`, a fixed argument list, read-only; the reply is the number the firmware
   keeps (bit 0 under-voltage now, 1 capped now, 2 throttled now, 3 soft temperature limit now; bits 16 to 19 the same since boot);
-* clear_update_backups (J-055): delete the copies of the settings that an update keeps in the root-only backups folder
-  (`settings-<version>-<time>.json`, plain files only, that one fixed folder), so a factory reset leaves nothing a rollback
+* clear_update_backups (J-055): delete the copies of the settings that an update keeps in root's own folder
+  /var/lib/nxlx-update (`settings-<version>-<time>.json`, plain files only, that one fixed folder; J-178: outside the panel's state folder), so a factory reset leaves nothing a rollback
   could bring back (old devices, passwords, pairings). No path or name comes from the caller;
 * update: start nxlx-update-usb@V.service or nxlx-update-inbox@V.service (fixed template units, V a checked version: nxlx-update checks the signature,
   refuses older versions and rolls back by itself).
@@ -304,17 +304,17 @@ class SysService:
         return {"ok": True, "started": source, "version": version}
 
     # --- the update backups (J-055) ----------------------------------------------------------------------------------
-    state_dir = paths.STATE_DIR
+    backup_folder = paths.ROOT_STATE_DIR     # root's own folder (J-178), not inside the panel's state folder
     owner_uid = 0               # whose the folder must be (root); a test machine says otherwise
     BACKUP_NAME = re.compile(r"settings-[0-9A-Za-z.+-]{1,40}-[0-9]{1,12}\.json")     # what mctl/update.py backup_settings writes
 
     def clear_update_backups(self):
-        """Delete the settings copies an update keeps (update.Updater.backup_dir: <state>/backups/settings-<version>-<time>.json,
+        """Delete the settings copies an update keeps (update.Updater.backup_dir: /var/lib/nxlx-update/settings-<version>-<time>.json,
         0600, root's). Only that one fixed folder, opened without following a link and checked to be root's; every name is then
         handled relative to that open folder. Only plain files of that name go; a matching name that is anything else (a link,
         a folder) is not removed and is counted as one that stayed. The caller sends no name. A missing folder is nothing to
         do. {"ok", "removed"}: ok is False if anything stayed."""
-        folder = os.path.join(self.state_dir, "backups")
+        folder = self.backup_folder
         with self.lock:
             try:
                 fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))

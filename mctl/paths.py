@@ -65,6 +65,7 @@ PREVIEW = "preview.jpg"                       # written by mpv, so it lives in t
 SCREEN_REPORT = "screen.json"                 # the screen's modes and the one the player chose (mctl/screenmode.py, D90)
 RENDERER_REPORT = "renderer.json"             # which program draws and why (mctl/renderer.py, D95)
 STATE_DIR = "/var/lib/nxlx"                    # the panel's settings; the player may pass through and read what is its group's
+ROOT_STATE_DIR = "/var/lib/nxlx-update"        # root:root 0700 (J-178, D-root-state): the update's settings copies and the clip stick's claim. Never inside STATE_DIR: the panel's account can rename anything there
 NETD_SOCKET = "netd.sock"
 SYSD_SOCKET = "sysd.sock"
 SUPPORTD_SOCKET = "supportd.sock"

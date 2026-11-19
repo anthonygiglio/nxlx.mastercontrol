@@ -207,10 +207,11 @@ def require_writable_root(state=None):
 
 class Updater:
     def __init__(self, root="/", prefix="/opt/nxlx", state_dir="/var/lib/nxlx", etc_dir="/etc/nxlx",
-                 run=subprocess.run, restart=None, health=None, install=None, now=time.time, rootfs_state=None):
+                 root_state_dir=paths.ROOT_STATE_DIR, run=subprocess.run, restart=None, health=None, install=None, now=time.time, rootfs_state=None):
         self.root = root.rstrip("/")
         self.prefix = prefix
         self.state_dir = state_dir
+        self.root_state_dir = root_state_dir
         self.etc_dir = etc_dir
         self.run = run
         self._restart = restart or self._systemd_restart
@@ -239,7 +240,9 @@ class Updater:
         return self.real(self.state_dir + "/settings.json")
 
     def backup_dir(self):
-        return self.real(self.state_dir + "/backups")
+        """Root's own folder (J-178), outside the panel's state folder: the settings copies an update keeps, and the clip
+        stick's claim. The panel's account cannot enter it, so it cannot hide, swap or put back what is in it."""
+        return self.real(self.root_state_dir)
 
     # --- state ----------------------------------------------------------
     def _link_version(self):
@@ -279,68 +282,42 @@ class Updater:
         except OSError:
             return None
 
-    def _open_backups(self, state_fd, create=False):
-        """The settings backups folder as a descriptor: opened without following a link, and it must be a folder of this
-        process's user (root on a box) that nobody else can write. Only a name that is a link or not a folder (ELOOP,
-        ENOTDIR), or a folder with the wrong owner or mode, is renamed out of the way (never followed) and, with
-        `create`, replaced by a folder of our own. Any other failure to open (no descriptors left, an I/O error) touches
-        nothing. Without `create` nothing is ever renamed or made: a read finds the folder or finds no backup."""
+    def _open_backups(self, create=False):
+        """Root's own folder (J-178) as a descriptor: opened without following a link, and it must be a folder of this
+        process's user (root on a box) that nobody else can write. Its parent (/var/lib) is root's, so no one else can
+        plant a name there; a link, a file, a foreign owner or a loose mode is therefore not something to move out of the
+        way but a fault to report: None is returned and nothing is touched. With `create` a missing folder is made, mode
+        0700, and that mode is set on the descriptor of the folder just checked."""
+        path = self.backup_dir()
         made = False
-        for _attempt in range(3):
-            fd = None
+        for _attempt in range(2):
             try:
-                fd = os.open("backups", self._DIR, dir_fd=state_fd)
+                fd = os.open(path, self._DIR)
             except FileNotFoundError:
-                pass
-            except OSError as e:
-                if e.errno not in (errno.ELOOP, errno.ENOTDIR):
-                    return None                      # not a reason to move root's folder
-                if not create:
+                if not create or made:
                     return None
-                if made:                             # swapped for a link or a file right after it was made
-                    raise UpdateError("the settings backups folder was replaced while it was being made")
-                self._set_aside(state_fd)
-            if fd is not None:
-                st = os.fstat(fd)
-                if stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid() and not st.st_mode & 0o022:
-                    if made:
-                        # the folder this call made inherits the setgid bit and group of the panel's folder: mode as
-                        # meant, set on the descriptor of the folder that just passed the check
-                        try:
-                            os.fchmod(fd, 0o700)
-                        except OSError:
-                            os.close(fd)
-                            raise UpdateError("the settings backups folder could not be set up")
-                    return fd
-                os.close(fd)
-                if not create:
+                try:
+                    os.mkdir(path, 0o700)
+                except FileExistsError:
+                    pass
+                except OSError:
                     return None
-                if made:                             # not ours after all: the panel swapped it in
-                    raise UpdateError("the settings backups folder was replaced while it was being made")
-                self._set_aside(state_fd)
-            if not create:
-                return None
-            try:
-                os.mkdir("backups", 0o700, dir_fd=state_fd)
-            except FileExistsError:
+                made = True
                 continue
             except OSError:
-                return None
-            made = True                              # the next round opens it again and checks it, like any other
+                return None                          # a link (ELOOP), not a folder (ENOTDIR), no descriptors left
+            st = os.fstat(fd)
+            if stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid() and not st.st_mode & 0o022:
+                if made:
+                    try:
+                        os.fchmod(fd, 0o700)         # whatever the umask said
+                    except OSError:
+                        os.close(fd)
+                        raise UpdateError("the settings backups folder could not be set up")
+                return fd
+            os.close(fd)
+            return None
         return None
-
-    def _set_aside(self, state_fd):
-        """Move what stands at `backups` away by rename (which follows nothing) so that the name is free. The new name
-        has a random part: a name the panel planted in advance cannot make the rename fail every time."""
-        for _try in range(5):
-            try:
-                os.rename("backups", "backups.rejected-%s" % secrets.token_hex(6), src_dir_fd=state_fd, dst_dir_fd=state_fd)
-                return True
-            except FileNotFoundError:
-                return True
-            except OSError:
-                continue
-        return False
 
     def _read_plain(self, name, dir_fd):
         """The bytes of a plain file inside an open folder, or None: never through a link, never a pipe or a device,
@@ -396,7 +373,7 @@ class Updater:
                     log("settings.json is not a plain file of at most %d MiB (a link, a pipe or too large), so no copy of the "
                         "settings is kept for this update and the settings schema check is skipped" % (self.SETTINGS_MAX >> 20))
                 return None
-            bfd = self._open_backups(state_fd, create=True)
+            bfd = self._open_backups(create=True)
             if bfd is None:
                 raise UpdateError("the settings backups folder is not usable (it is not a folder of root's that only root can write)")
             try:
@@ -462,7 +439,7 @@ class Updater:
         if state_fd is None:
             raise UpdateError("the panel's state folder is not usable")
         try:
-            bfd = self._open_backups(state_fd)
+            bfd = self._open_backups()
             if bfd is None:
                 raise UpdateError("the settings backups folder is not usable, so the settings were not put back")
             try:
@@ -514,7 +491,7 @@ class Updater:
         if state_fd is None:
             return None
         try:
-            bfd = self._open_backups(state_fd)
+            bfd = self._open_backups()
             if bfd is None:
                 return None
             try:
@@ -533,6 +510,154 @@ class Updater:
         finally:
             os.close(state_fd)
         return os.path.join(self.backup_dir(), sorted(found)[-1][1]) if found else None
+
+    # --- one-time move out of the panel's folder (J-178) -------------------------------------------------------------
+    LEGACY_CLAIM = "clip-stick.json"       # was root's claim record in the panel's state folder; now in root's own folder
+    CLAIM_MAX = 4096
+
+    def _read_root_file(self, name, dir_fd, limit):
+        """The bytes of a file in an open folder and its stat, only when it is a plain file of this process's user (root)
+        with one name, that its group and others cannot read or write, of at most `limit` bytes. Never through a link.
+        (None, None) otherwise."""
+        try:
+            fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0),
+                         dir_fd=dir_fd)
+        except OSError:
+            return None, None
+        try:
+            st = os.fstat(fd)
+            if (not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077 or st.st_nlink != 1
+                    or st.st_size > limit):
+                return None, None
+            data = os.read(fd, limit + 1)
+            return (data, st) if len(data) <= limit else (None, None)
+        except OSError:
+            return None, None
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _rename_aside(dir_fd, name, tag):
+        """Move a name in the open folder away by rename (which follows nothing) so that it is no longer there to be used;
+        the new name has a random part, so a name planted in advance cannot make this fail every time."""
+        for _try in range(5):
+            try:
+                os.rename(name, "%s.%s-%s" % (name, tag, secrets.token_hex(6)), src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+                return True
+            except FileNotFoundError:
+                return True
+            except OSError:
+                continue
+        return False
+
+    def migrate_legacy_state(self, log=print):
+        """Move root's two things out of the panel's state folder, once (J-178): the settings copies in `backups` and the
+        clip stick's claim record `clip-stick.json`. The panel's account can rename anything in its own folder, so what
+        stayed there could be hidden before a factory reset and put back after it.
+
+        Everything is done on descriptors (O_NOFOLLOW|O_DIRECTORY, names relative to the open folder). A copy or the record
+        is taken only if it is a plain file of root's with one name that nobody else can read or write (what the updater
+        wrote); anything else, a link, a file of the panel's, is not followed or kept, and a `backups` folder that is a link,
+        not a folder, or not root's is renamed aside, never opened for its contents. Files are copied into root's folder
+        first and removed from the old one after. Returns the number of files moved; problems are logged, never raised."""
+        state_fd = self._open_state()
+        if state_fd is None:
+            return 0
+        moved = 0
+        try:
+            old_backups = old_claim = False
+            try:
+                os.lstat("backups", dir_fd=state_fd)
+                old_backups = True
+            except OSError:
+                pass
+            try:
+                os.lstat(self.LEGACY_CLAIM, dir_fd=state_fd)
+                old_claim = True
+            except OSError:
+                pass
+            if not (old_backups or old_claim):
+                return 0
+            nfd = self._open_backups(create=True)
+            if nfd is None:
+                log("root's folder %s is not usable, so what is left in the panel's folder was not moved" % self.root_state_dir)
+                return 0
+            try:
+                if old_claim:
+                    data, _st = self._read_root_file(self.LEGACY_CLAIM, state_fd, self.CLAIM_MAX)
+                    ok = False
+                    if data is not None:
+                        try:
+                            ok = isinstance(json.loads(data.decode("utf-8")), dict)
+                        except (UnicodeDecodeError, ValueError, RecursionError):
+                            ok = False
+                    try:
+                        os.lstat(self.LEGACY_CLAIM, dir_fd=nfd)
+                        have = True
+                    except OSError:
+                        have = False
+                    if ok and not have:
+                        self._write_new(nfd, self.LEGACY_CLAIM, data, 0o600)
+                        moved += 1
+                        log("the clip stick claim was moved out of the panel's folder")
+                    elif not ok:
+                        log("clip-stick.json in the panel's folder is not a file of root's that only root can use, so it was dropped, not moved")
+                    try:
+                        os.unlink(self.LEGACY_CLAIM, dir_fd=state_fd)
+                    except OSError:
+                        pass
+                if old_backups:
+                    moved += self._migrate_backups(state_fd, nfd, log)
+            finally:
+                os.close(nfd)
+        except OSError as e:
+            log("moving root's files out of the panel's folder stopped: %s" % (e.strerror or e))
+        finally:
+            os.close(state_fd)
+        return moved
+
+    def _migrate_backups(self, state_fd, nfd, log):
+        moved = 0
+        try:
+            ofd = os.open("backups", self._DIR, dir_fd=state_fd)
+        except FileNotFoundError:
+            return 0
+        except OSError:                                          # a link, or not a folder: never followed
+            self._rename_aside(state_fd, "backups", "rejected")
+            log("backups in the panel's folder was not a folder; it was set aside, not followed")
+            return 0
+        trusted = False
+        try:
+            st = os.fstat(ofd)
+            trusted = stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid() and not st.st_mode & 0o022
+            if trusted:
+                for entry in sorted(os.listdir(ofd)):
+                    if not self.BACKUP_NAME.fullmatch(entry):
+                        continue
+                    data, fst = self._read_root_file(entry, ofd, self.SETTINGS_MAX)
+                    if data is None:
+                        continue
+                    try:
+                        os.lstat(entry, dir_fd=nfd)
+                    except FileNotFoundError:
+                        self._write_new(nfd, entry, data, 0o600)
+                        try:
+                            os.utime(entry, ns=(fst.st_atime_ns, fst.st_mtime_ns), dir_fd=nfd, follow_symlinks=False)
+                        except (OSError, NotImplementedError):
+                            pass
+                        moved += 1
+                    try:
+                        os.unlink(entry, dir_fd=ofd)
+                    except OSError:
+                        pass
+        finally:
+            os.close(ofd)
+        try:
+            os.rmdir("backups", dir_fd=state_fd)               # empty: gone
+        except OSError:
+            self._rename_aside(state_fd, "backups", "old" if trusted else "rejected")
+        log("%d settings cop%s moved out of the panel's folder%s" % (moved, "y" if moved == 1 else "ies", "" if trusted else " (the old folder was not root's: its contents were not used)"))
+        return moved
 
     # --- actions --------------------------------------------------------
     def check(self, bundle, sha256=None, allow_unsigned=False, force=False, dir_fd=None):
@@ -679,6 +804,7 @@ class Updater:
         info, tree, scratch = self.check(bundle, sha256, allow_unsigned, force, dir_fd=dir_fd)
         old_version = self._link_version()
         previous_before = self._read_previous()
+        self.migrate_legacy_state(log=log)
         try:
             backup = self.backup_settings(old_version or "none", log=log)
             log("installing %s (was %s)" % (info["version"], old_version or "nothing"))
@@ -718,6 +844,7 @@ class Updater:
             raise UpdateError("the previous release %s is from before the rename of the system names (pvj to nxlx) "
                               "and does not run under them; to go back to it: sudo nxlx-convert --undo" % target)
         log("rolling back %s -> %s" % (st["current"], target))
+        self.migrate_legacy_state()
         backup = self.latest_backup(target)
         if backup is None:
             # Normal after a factory reset, which removes every saved copy (J-055): the program goes back, the settings stay as they are.

@@ -30,8 +30,8 @@ DevicePolicy=closed
 DeviceAllow=/dev/vcio rw
 # D127: the one avahi service file that announces the node to the local network (mctl/FLEET.md). D128: the Pi's boot files, for the AV output choice.
 # "-": no error where avahi is not installed or the boot folder is not there.
-# J-055: the update backups folder, so a factory reset can remove the settings copies an update keeps there.
-ReadWritePaths=/run/nxlx-sysd -/etc/avahi/services -/boot/firmware -/var/lib/nxlx/backups
+# J-055, J-178: root's own folder outside the panel's state folder, so a factory reset can remove the settings copies an update keeps there.
+ReadWritePaths=/run/nxlx-sysd -/etc/avahi/services -/boot/firmware -/var/lib/nxlx-update
 PrivateNetwork=yes
 IPAddressDeny=any
 MemoryDenyWriteExecute=yes

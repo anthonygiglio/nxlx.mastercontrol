@@ -734,7 +734,7 @@ if ! /usr/local/bin/nxlx-ndi-runtime install "$NDI_STANDIN" 2>&1 | tee "$OUT"; t
 grep -q "^installed $NDI_LIB\$" "$OUT" || fail "the command did not say where it placed the library"
 grep -q "^sha256 $(sha256sum "$NDI_STANDIN" | cut -d' ' -f1) " "$OUT" || fail "the sha256 the command printed is not the stand-in's"
 grep -q "the helper nxlx-ndi is installed and was running" "$OUT" || fail "the command did not say that the helper stayed up"
-is /var/lib/nxlx/backups "root:root 700 directory"      # J-055: where an update keeps settings copies, root's
+is /var/lib/nxlx-update "root:root 700 directory"        # J-055, J-178: where an update keeps settings copies, root's own folder outside the panel's
 is /opt/nxlx-ndi "root:root 755 directory"
 is "$NDI_LIB" "root:root 644 regular file"
 cmp "$NDI_STANDIN" "$NDI_LIB" || fail "what was placed is not what was given"
@@ -957,13 +957,14 @@ chown root:root "$LINK_TARGET"; chmod 0640 "$LINK_TARGET"
 LINK_DIR="$(mktemp -d /root/j175dir.XXXXXX)"
 chown root:root "$LINK_DIR"; chmod 0755 "$LINK_DIR"
 ln -sfn "$LINK_TARGET" /var/lib/nxlx/settings.json.bak
-rm -rf /var/lib/nxlx/backups; ln -sfn "$LINK_DIR" /var/lib/nxlx/backups
+rm -rf /var/lib/nxlx/backups; ln -sfn "$LINK_DIR" /var/lib/nxlx/backups     # an older version's place
 rm -rf /var/lib/nxlx/video; ln -sfn "$LINK_DIR" /var/lib/nxlx/video
 logged "$SRC/install/install.sh" --offline
 is "$LINK_TARGET" "root:root 640 regular file"
 is "$LINK_DIR" "root:root 755 directory"
-[ ! -L /var/lib/nxlx/backups ] || fail "the link at /var/lib/nxlx/backups was not removed"
-is /var/lib/nxlx/backups "root:root 700 directory"
+[ ! -e /var/lib/nxlx/backups ] || fail "the link at /var/lib/nxlx/backups was not set aside (J-178)"
+is /var/lib/nxlx-update "root:root 700 directory"
+[ -z "$(ls -A "$LINK_DIR")" ] || fail "the move followed the link at /var/lib/nxlx/backups and changed what it points to"
 [ ! -L /var/lib/nxlx/video ] || fail "the link at /var/lib/nxlx/video was not removed"
 PLAYER_NOW="$(sed -n 's/^User=//p' /etc/systemd/system/nxlx-player.service)"
 is /var/lib/nxlx/video "$PLAYER_NOW:nxlx-svc 2775 directory"
