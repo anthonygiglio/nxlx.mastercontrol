@@ -665,6 +665,23 @@ class ChooserTest(unittest.TestCase):
         self.assertIn("test clips", st["text"])
         self.assertTrue(c.claimed())
 
+    def test_a_claim_whose_record_cannot_be_written_leaves_no_label_for_the_panel(self):
+        real = clipstick.write_file
+
+        def failing(folder, name, data, mode=None):
+            if name == clipstick.CLAIM_FILE:
+                raise OSError(28, "No space left on device")
+            return real(folder, name, data, mode)
+        with mock.patch.object(clipstick, "write_file", failing):
+            with self.assertRaises(OSError):
+                clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
+        self.assertFalse(os.path.exists(os.path.join(self.state, clipstick.LABEL_FILE)))
+        self.assertIsNone(clipstick.claimed_label(self.state))
+
+    def test_forgetting_a_claim_leaves_the_marker_so_an_old_claim_is_never_imported(self):
+        clipstick.forget_claim(self.state, self.root_state)
+        self.assertTrue(os.path.isfile(os.path.join(self.root_state, "migrated")))
+
     def test_the_panel_cannot_see_root_folder_so_without_the_label_file_there_is_no_claim_for_it(self):
         clipstick.write_claim(self.state, "N01-CLIPS", UUID, SECRET, root_dir=self.root_state)
         os.unlink(os.path.join(self.state, clipstick.LABEL_FILE))

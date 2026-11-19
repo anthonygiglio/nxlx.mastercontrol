@@ -331,6 +331,10 @@ class SysService:
                 except OSError as e:
                     return {"ok": False, "error": "the update backups could not be read: %s" % (e.strerror or e)}
                 removed, stayed, first = 0, 0, None
+                try:       # J-178: a factory reset also ends the move out of the panel's folder, so old files it kept are never imported
+                    os.close(os.open(paths.ROOT_STATE_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=fd))
+                except OSError:
+                    pass
                 for name in names:
                     if not self.BACKUP_NAME.fullmatch(name):
                         continue

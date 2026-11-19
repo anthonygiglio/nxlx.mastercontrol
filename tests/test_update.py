@@ -67,6 +67,11 @@ def tar_with(members):
     return out
 
 
+def _ls(folder):
+    """The names in root's folder, without the marker the move out of the panel's folder leaves (J-178)."""
+    return [n for n in os.listdir(folder) if n != "migrated"]
+
+
 class Env:
     """A fake root with the real installer running in --stage mode."""
 
@@ -234,7 +239,7 @@ class ReadOnlyRootTest(unittest.TestCase):
         self.bundle = make_bundle("1.0.0")
 
     def snapshot(self):
-        backups = sorted(os.listdir(self.u.backup_dir())) if os.path.isdir(self.u.backup_dir()) else None
+        backups = sorted(_ls(self.u.backup_dir())) if os.path.isdir(self.u.backup_dir()) else None
         return (self.u.status(), self.env.restarts, backups)
 
     def test_every_action_that_writes_a_release_is_refused_under_the_overlay(self):
@@ -293,7 +298,7 @@ class UpdaterTest(unittest.TestCase):
         self.apply("1.1.0")
         st = self.u.status()
         self.assertEqual((st["current"], st["previous"], st["releases"]), ("1.1.0", "1.0.0", ["1.0.0", "1.1.0"]))
-        self.assertEqual(len(os.listdir(self.u.backup_dir())), 1)  # the first install had no settings to back up
+        self.assertEqual(len(_ls(self.u.backup_dir())), 1)  # the first install had no settings to back up
         self.assertGreater(self.env.restarts, 0)
         self.assertTrue(os.path.isfile(os.path.join(self.env.root, "opt/nxlx/releases/1.1.0/bin/nxlx-web")))
 
@@ -360,7 +365,7 @@ class UpdaterTest(unittest.TestCase):
         self.apply("1.0.0")
         self.env.write_settings(schema=1, marker="old-devices")
         self.apply("1.1.0")
-        for name in os.listdir(self.u.backup_dir()):                  # what the helper's clear_update_backups does
+        for name in _ls(self.u.backup_dir()):                  # what the helper's clear_update_backups does
             os.unlink(os.path.join(self.u.backup_dir(), name))
         self.env.write_settings(schema=2, marker="after-reset")
         said = []
@@ -476,7 +481,7 @@ class UpdaterTest(unittest.TestCase):
         self.u.now = lambda: next(clock)
         for _ in range(8):
             self.u.backup_settings("1.0.0")
-        self.assertEqual(len(os.listdir(self.u.backup_dir())), update.KEEP_BACKUPS)
+        self.assertEqual(len(_ls(self.u.backup_dir())), update.KEEP_BACKUPS)
 
     def test_usb_bundles_newest_first(self):
         base = tempfile.mkdtemp()
@@ -565,7 +570,7 @@ class StateFolderLinksTest(unittest.TestCase):
         os.unlink(os.path.join(self.state, "settings.json"))
         os.symlink(self.victim, os.path.join(self.state, "settings.json"))
         self.assertIsNone(self.u.backup_settings("1.0.0"))
-        self.assertEqual(os.listdir(self.u.backup_dir()) if os.path.isdir(self.u.backup_dir()) else [], [])
+        self.assertEqual(_ls(self.u.backup_dir()) if os.path.isdir(self.u.backup_dir()) else [], [])
         self.victim_untouched()
 
     def test_a_pipe_for_settings_json_does_not_hang_the_update(self):
@@ -595,7 +600,7 @@ class StateFolderLinksTest(unittest.TestCase):
             self.u.backup_settings("1.0.0")
         self.assertIsNone(self.u.latest_backup("1.0.0"))
         self.assertEqual(os.stat(self.u.backup_dir()).st_mode & 0o777, 0o777)
-        self.assertEqual(os.listdir(self.u.backup_dir()), [])
+        self.assertEqual(_ls(self.u.backup_dir()), [])
 
     def test_root_folder_is_outside_the_panels_state_folder(self):
         self.u.backup_settings("1.0.0")
@@ -679,8 +684,8 @@ class StateFolderLinksTest(unittest.TestCase):
         said = []
         self.assertEqual(self.u.migrate_legacy_state(log=said.append), 3)
         root = self.u.backup_dir()
-        self.assertEqual(sorted(os.listdir(root)), ["clip-stick.json", "settings-1.0.0-1000.json", "settings-1.1.0-2000.json"])
-        for n in os.listdir(root):
+        self.assertEqual(sorted(_ls(root)), ["clip-stick.json", "settings-1.0.0-1000.json", "settings-1.1.0-2000.json"])
+        for n in _ls(root):
             self.assertEqual(os.stat(os.path.join(root, n)).st_mode & 0o777, 0o600, n)
         self.assertEqual(os.stat(root).st_mode & 0o777, 0o700)
         self.assertEqual(int(os.stat(os.path.join(root, "settings-1.0.0-1000.json")).st_mtime), 5000)    # the order of the copies is kept
@@ -700,14 +705,14 @@ class StateFolderLinksTest(unittest.TestCase):
         self.assertEqual(self.u.migrate_legacy_state(log=lambda m: None), 0)
         self.assertEqual(os.listdir(target), ["settings-1.0.0-1000.json"])      # not followed, not emptied
         self.assertFalse(os.path.lexists(os.path.join(self.state, "backups")))
-        self.assertEqual(os.listdir(self.u.backup_dir()), [])
+        self.assertEqual(_ls(self.u.backup_dir()), [])
         self.assertIsNone(self.u.latest_backup("1.0.0"))
 
     def test_an_old_folder_anyone_can_write_is_not_trusted_for_its_contents(self):
         old = self.old_state()
         os.chmod(old, 0o777)
         self.assertEqual(self.u.migrate_legacy_state(log=lambda m: None), 0)
-        self.assertEqual(os.listdir(self.u.backup_dir()), [])
+        self.assertEqual(_ls(self.u.backup_dir()), [])
         self.assertFalse(os.path.lexists(old))
         self.assertTrue([n for n in os.listdir(self.state) if n.startswith("backups.rejected-")])
 
@@ -720,7 +725,7 @@ class StateFolderLinksTest(unittest.TestCase):
         os.chmod(loose, 0o644)                                                   # others can read it: not what the updater wrote
         os.link(os.path.join(old, "settings-1.0.0-1000.json"), os.path.join(self.victims, "second-name"))   # two names
         self.assertEqual(self.u.migrate_legacy_state(log=lambda m: None), 0)
-        self.assertEqual(os.listdir(self.u.backup_dir()), [])
+        self.assertEqual(_ls(self.u.backup_dir()), [])
         self.victim_untouched()
 
     def test_a_claim_that_is_a_link_or_readable_by_others_is_dropped_not_moved(self):
@@ -737,7 +742,7 @@ class StateFolderLinksTest(unittest.TestCase):
                     os.chmod(path, 0o600)
                 self.assertEqual(self.u.migrate_legacy_state(log=lambda m: None), 0)
                 self.assertFalse(os.path.lexists(path))
-                self.assertNotIn("clip-stick.json", os.listdir(self.u.backup_dir()))
+                self.assertNotIn("clip-stick.json", _ls(self.u.backup_dir()))
                 self.victim_untouched()
 
     def test_a_claim_already_in_root_folder_is_not_replaced_by_an_old_one(self):
@@ -759,10 +764,37 @@ class StateFolderLinksTest(unittest.TestCase):
         self.assertEqual(os.listdir(self.victims), ["victim"])
         self.assertTrue(said)
 
+    def test_the_move_is_one_time_a_folder_hidden_and_put_back_is_never_imported(self):
+        """J-178 review: the panel hides root's backups before the upgrade, a reset empties root's folder, the panel puts
+        them back: nothing may come back through the migration."""
+        old = self.old_state()
+        hidden = os.path.join(self.state, "hidden-backups")
+        os.rename(old, hidden)
+        self.old_claim()
+        os.rename(os.path.join(self.state, "clip-stick.json"), os.path.join(self.state, "hidden-claim"))
+        self.assertEqual(self.u.migrate_legacy_state(log=lambda m: None), 0)           # first run: nothing to find, marker written
+        self.assertTrue(os.path.isfile(os.path.join(self.u.backup_dir(), "migrated")))
+        os.rename(hidden, old)                                                          # a reset happened meanwhile; it comes back
+        os.rename(os.path.join(self.state, "hidden-claim"), os.path.join(self.state, "clip-stick.json"))
+        said = []
+        self.assertEqual(self.u.migrate_legacy_state(log=said.append), 0)
+        self.assertEqual(_ls(self.u.backup_dir()), [])
+        self.assertIsNone(self.u.latest_backup("1.1.0"))
+        self.assertFalse(os.path.lexists(os.path.join(self.state, "clip-stick.json")))
+        self.assertFalse(os.path.lexists(old))                                          # set aside, not imported
+        self.assertTrue([n for n in os.listdir(self.state) if n.startswith("backups.stale-")])
+        self.assertTrue(any("not imported" in m for m in said))
+
+    def test_rollback_does_not_bring_back_a_copy_the_panel_kept(self):
+        self.u.migrate_legacy_state(log=lambda m: None)
+        self.old_state()
+        self.assertEqual(self.u.migrate_legacy_state(log=lambda m: None), 0)
+        self.assertIsNone(self.u.latest_backup("1.1.0"))
+
     def test_an_update_moves_the_old_copies_before_it_makes_its_own(self):
         self.old_state()
         self.u.apply(make_bundle("1.0.0"), allow_unsigned=True, log=lambda *_: None)
-        names = os.listdir(self.u.backup_dir())
+        names = _ls(self.u.backup_dir())
         self.assertIn("settings-1.1.0-2000.json", names)
         self.assertFalse(os.path.lexists(os.path.join(self.state, "backups")))
 
@@ -858,7 +890,7 @@ class StateFolderLinksTest(unittest.TestCase):
             with self.assertRaises(UpdateError):
                 self.u.backup_settings("1.0.0")
         self.assertEqual(os.stat(self.u.backup_dir()).st_mode & 0o777, 0o777)
-        self.assertEqual(os.listdir(self.u.backup_dir()), [])
+        self.assertEqual(_ls(self.u.backup_dir()), [])
 
     def test_a_link_swapped_in_right_after_the_mkdir_is_an_update_error(self):
         def make():

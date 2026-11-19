@@ -287,13 +287,21 @@ def _root_folder(root_dir):
 
 
 def write_claim(state_dir, label, uuid, token, now=None, *, root_dir):
-    """The secret record goes into root's folder, the label (for the panel) into the state folder."""
+    """The secret record goes into root's folder, the label (for the panel) into the state folder. The label is written
+    first and taken back if the record cannot be written, so the panel never reports "none" for a claim that exists."""
     stamp = _stamp(now)
     _root_folder(root_dir)
-    write_file(root_dir, CLAIM_FILE, (json.dumps({"label": label, "uuid": uuid or "", "token": token, "claimed": stamp},
-                                                  sort_keys=True) + "\n").encode("utf-8"), mode=0o600)
     write_file(state_dir, LABEL_FILE, (json.dumps({"label": label, "claimed": stamp}, sort_keys=True) + "\n").encode("utf-8"),
                mode=0o644)
+    try:
+        write_file(root_dir, CLAIM_FILE, (json.dumps({"label": label, "uuid": uuid or "", "token": token, "claimed": stamp},
+                                                      sort_keys=True) + "\n").encode("utf-8"), mode=0o600)
+    except BaseException:
+        try:
+            os.unlink(os.path.join(state_dir, LABEL_FILE))
+        except OSError:
+            pass
+        raise
 
 
 def claimed_label(state_dir):
@@ -307,6 +315,11 @@ def claimed_label(state_dir):
 
 def forget_claim(state_dir, root_dir):
     gone = False
+    try:       # J-178: forgetting also ends the move out of the panel's folder: an old claim it kept is never imported
+        _root_folder(root_dir)
+        os.close(os.open(os.path.join(root_dir, paths.ROOT_STATE_MARKER), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600))
+    except (OSError, ClipStickError):
+        pass
     for folder, name in ((root_dir, CLAIM_FILE), (state_dir, LABEL_FILE)):
         try:
             os.unlink(os.path.join(folder, name))

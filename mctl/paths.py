@@ -66,6 +66,7 @@ SCREEN_REPORT = "screen.json"                 # the screen's modes and the one t
 RENDERER_REPORT = "renderer.json"             # which program draws and why (mctl/renderer.py, D95)
 STATE_DIR = "/var/lib/nxlx"                    # the panel's settings; the player may pass through and read what is its group's
 ROOT_STATE_DIR = "/var/lib/nxlx-update"        # root:root 0700 (J-178, D-root-state): the update's settings copies and the clip stick's claim. Never inside STATE_DIR: the panel's account can rename anything there
+ROOT_STATE_MARKER = "migrated"                # in ROOT_STATE_DIR, root 0600: the move out of the panel's folder is over, nothing there is imported again (J-178)
 NETD_SOCKET = "netd.sock"
 SYSD_SOCKET = "sysd.sock"
 SUPPORTD_SOCKET = "supportd.sock"

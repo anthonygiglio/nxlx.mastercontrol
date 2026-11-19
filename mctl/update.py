@@ -576,13 +576,34 @@ class Updater:
                 old_claim = True
             except OSError:
                 pass
-            if not (old_backups or old_claim):
-                return 0
             nfd = self._open_backups(create=True)
             if nfd is None:
-                log("root's folder %s is not usable, so what is left in the panel's folder was not moved" % self.root_state_dir)
+                if old_backups or old_claim:
+                    log("root's folder %s is not usable, so what is left in the panel's folder was not moved" % self.root_state_dir)
                 return 0
             try:
+                # One time only: the first run leaves a marker in root's folder, also when it found nothing. From then on
+                # whatever stands under the old names (a folder the panel hid and put back after a factory reset, a claim
+                # it kept) is set aside or removed, never imported: the panel cannot replay old files through this.
+                try:
+                    os.lstat(paths.ROOT_STATE_MARKER, dir_fd=nfd)
+                    done = True
+                except OSError:
+                    done = False
+                if done:
+                    if old_claim:
+                        try:
+                            os.unlink(self.LEGACY_CLAIM, dir_fd=state_fd)
+                        except OSError:
+                            pass
+                    if old_backups:
+                        try:
+                            os.rmdir("backups", dir_fd=state_fd)
+                        except OSError:
+                            self._rename_aside(state_fd, "backups", "stale")
+                    if old_backups or old_claim:
+                        log("the move out of the panel's folder was done before: what is left there under the old names was set aside, not imported")
+                    return 0
                 if old_claim:
                     data, _st = self._read_root_file(self.LEGACY_CLAIM, state_fd, self.CLAIM_MAX)
                     ok = False
@@ -599,7 +620,7 @@ class Updater:
                     if ok and not have:
                         self._write_new(nfd, self.LEGACY_CLAIM, data, 0o600)
                         moved += 1
-                        log("the clip stick claim was moved out of the panel's folder")
+                        log("the clip stick claim was moved out of the panel's folder (a release older than this one reads it in the panel's folder and will not find it: claim the stick again with sudo nxlx-usb claim after such a rollback)")
                     elif not ok:
                         log("clip-stick.json in the panel's folder is not a file of root's that only root can use, so it was dropped, not moved")
                     try:
@@ -608,6 +629,11 @@ class Updater:
                         pass
                 if old_backups:
                     moved += self._migrate_backups(state_fd, nfd, log)
+                try:
+                    mfd = os.open(paths.ROOT_STATE_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=nfd)
+                    os.close(mfd)
+                except FileExistsError:
+                    pass
             finally:
                 os.close(nfd)
         except OSError as e:
