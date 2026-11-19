@@ -616,16 +616,24 @@ class InstallTest(unittest.TestCase):
 class StateFolderLinksTest(unittest.TestCase):
     """J-175: root's chown and chmod in /var/lib/nxlx must not follow a link the panel account planted there.
 
-    The two functions are cut out of install.sh and run on a temp folder with chown and chmod replaced by recorders (a test
-    cannot chown to the panel account), so what is checked is which paths the installer would have handed to them."""
+    The functions are cut out of install.sh and run on a temp folder. chown and chmod are replaced by recorders (a test
+    cannot chown to the panel account); nxlx_fd_own, which does the real work for backups and the media folder, is also
+    run for real against real links, as the current user (it can fchown to its own account)."""
 
-    def run_fix(self, call):
+    def funcs(self):
         with open(os.path.join(REPO, "install", "install.sh")) as f:
             text = f.read()
-        funcs = []
-        for name in ("nxlx_state_fix", "nxlx_media_fix"):
+        out = []
+        for name in ("nxlx_fd_own", "nxlx_state_fix", "nxlx_media_fix"):
             start = text.index(name + "() {")
-            funcs.append(text[start:text.index("\n}\n", start) + 3])
+            body = text[start:text.index("\n}\n", start) + 3]
+            if name == "nxlx_media_fix":
+                body = body.replace("nxlx-svc", self.mygroup)      # the test box has no such group
+            out.append(body)
+        return out
+
+    def run_fix(self, call, fake_fd_own=False):
+        funcs = self.funcs()
         bindir = os.path.join(self.work, "bin")
         if not os.path.isdir(bindir):
             os.mkdir(bindir)
@@ -633,75 +641,117 @@ class StateFolderLinksTest(unittest.TestCase):
             with open(os.path.join(bindir, cmd), "w") as f:
                 f.write('#!/bin/sh\necho "%s $*" >> "%s"\n' % (cmd, os.path.join(self.work, "calls")))
             os.chmod(os.path.join(bindir, cmd), 0o755)
-        script = 'set -euo pipefail\nlog() { echo "$*"; }\nNXLX_USER=gigbox\n' + "".join(funcs) + call + "\n"
+        fake = 'nxlx_fd_own() { echo "fd_own $*" >> "%s"; mkdir -p "$1"; }\n' % os.path.join(self.work, "calls")
+        script = ('set -euo pipefail\nlog() { echo "$*"; }\ndie() { echo "DIE $*" >&2; exit 1; }\nNXLX_USER=%s\n' % self.me
+                  + "".join(funcs) + (fake if fake_fd_own else "") + call + "\n")
         env = dict(os.environ, PATH=bindir + ":" + os.environ["PATH"])
         r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, timeout=30)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         calls = os.path.join(self.work, "calls")
-        if not os.path.exists(calls):
-            return r.stdout, []
-        with open(calls) as f:
-            return r.stdout, f.read().splitlines()
+        lines = []
+        if os.path.exists(calls):
+            with open(calls) as f:
+                lines = f.read().splitlines()
+        return r, lines
 
     def setUp(self):
+        import grp
+        import pwd
         self.work = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.work, True)
+        self.me = pwd.getpwuid(os.getuid()).pw_name
+        self.mygroup = grp.getgrgid(os.getgid()).gr_name
         self.sd = os.path.join(self.work, "state")
         os.mkdir(self.sd)
         self.victim = os.path.join(self.work, "etc-file")
         with open(self.victim, "w") as f:
             f.write("x")
         os.chmod(self.victim, 0o640)
-        self.before = os.stat(self.victim)
+        self.victim_dir = os.path.join(self.work, "etc-dir")
+        os.mkdir(self.victim_dir, 0o755)
+        self.before = {p: os.stat(p) for p in (self.victim, self.victim_dir)}
 
-    def untouched(self, calls):
+    def untouched(self, calls=()):
         for line in calls:
             self.assertNotIn(self.victim, line)
-        after = os.stat(self.victim)
-        self.assertEqual((after.st_uid, after.st_gid, after.st_mode), (self.before.st_uid, self.before.st_gid, self.before.st_mode))
+            self.assertNotIn(self.victim_dir, line)
+        for p, b in self.before.items():
+            a = os.stat(p)
+            self.assertEqual((a.st_uid, a.st_gid, a.st_mode), (b.st_uid, b.st_gid, b.st_mode), p)
 
     def test_links_in_the_settings_names_and_at_backups_are_not_followed(self):
         with open(os.path.join(self.sd, "settings.json"), "w") as f:
             f.write("{}")
         os.symlink(self.victim, os.path.join(self.sd, "settings.json.bak"))
         os.symlink(self.victim, os.path.join(self.sd, "settings.json.tmp"))
-        os.symlink(self.victim, os.path.join(self.sd, "backups"))
-        _, calls = self.run_fix('nxlx_state_fix "%s"' % self.sd)
+        os.link(self.victim, os.path.join(self.sd, "settings.json.hard"))      # a second name of a file: skipped too
+        os.symlink(self.victim_dir, os.path.join(self.sd, "backups"))
+        r, calls = self.run_fix('nxlx_state_fix "%s"' % self.sd, fake_fd_own=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.untouched(calls)
-        # the real settings file is handed over, with -h so even a swap at that instant is not followed
         self.assertIn("chown -h nxlx-web:nxlx-svc " + os.path.join(self.sd, "settings.json"), calls)
         self.assertFalse(any(os.path.join(self.sd, "settings.json.") in c for c in calls), calls)
         self.assertTrue(os.path.islink(os.path.join(self.sd, "settings.json.bak")))   # skipped, left as planted
-        # the link at backups was removed and a real folder made in its place, root's and 0700
         b = os.path.join(self.sd, "backups")
-        self.assertTrue(os.path.isdir(b) and not os.path.islink(b))
-        self.assertIn("chown -h root:root " + b, calls)
-        self.assertIn("chmod 0700 " + b, calls)
+        self.assertTrue(os.path.isdir(b) and not os.path.islink(b))     # the link was removed, a folder is made
+        self.assertIn("fd_own %s %s root root 0700" % (b, self.sd), calls)
+        self.assertFalse(any(c.startswith("chmod") and b in c for c in calls), calls)   # never chmod by path
 
-    def test_every_chown_in_the_state_folder_uses_h(self):
-        _, calls = self.run_fix('nxlx_state_fix "%s"' % self.sd)
+    def test_every_chown_by_path_in_the_state_folder_uses_h(self):
+        r, calls = self.run_fix('nxlx_state_fix "%s"' % self.sd, fake_fd_own=True)
         chowns = [c for c in calls if c.startswith("chown")]
         self.assertTrue(chowns)
         for c in chowns:
             self.assertTrue(c.startswith("chown -h "), c)
 
-    def test_a_link_at_the_media_folder_in_the_state_folder_is_skipped(self):
+    def test_the_helper_refuses_a_link_at_any_name_and_changes_nothing_through_it(self):
+        helper = 'nxlx_fd_own "%s" "%s" %s %s 2775'
+        # a link at the final name
         link = os.path.join(self.sd, "video")
-        os.symlink(self.victim, link)
-        out, calls = self.run_fix('nxlx_media_fix "%s" "%s"' % (link, self.sd))
-        self.assertIn("is a link", out)
-        self.assertEqual(calls, [])
+        os.symlink(self.victim_dir, link)
+        r, _ = self.run_fix(helper % (link, self.sd, self.me, self.mygroup))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("nothing was changed through it", r.stderr)
+        self.untouched()
+        # a link in the middle of a deeper path
+        os.symlink(self.victim_dir, os.path.join(self.sd, "mid"))
+        r, _ = self.run_fix(helper % (os.path.join(self.sd, "mid", "video"), self.sd, self.me, self.mygroup))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.victim_dir, "video")))
+        self.untouched()
+
+    def test_the_helper_makes_and_sets_real_folders_and_clears_a_setgid_bit_it_is_not_given(self):
+        deep = os.path.join(self.sd, "a", "video")
+        r, _ = self.run_fix('nxlx_fd_own "%s" "%s" %s %s 2775' % (deep, self.sd, self.me, self.mygroup))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(os.stat(deep).st_mode & 0o7777, 0o2775)
+        r, _ = self.run_fix('nxlx_fd_own "%s" "%s" %s %s 0700' % (deep, self.sd, self.me, self.mygroup))
+        self.assertEqual(os.stat(deep).st_mode & 0o7777, 0o700)
+
+    def test_a_link_at_the_media_folder_in_the_state_folder_is_removed_and_a_folder_made(self):
+        link = os.path.join(self.sd, "video")
+        os.symlink(self.victim_dir, link)
+        r, calls = self.run_fix('nxlx_media_fix "%s" "%s"' % (link, self.sd))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isdir(link) and not os.path.islink(link))
+        self.assertEqual(os.stat(link).st_mode & 0o7777, 0o2775)
         self.untouched(calls)
-        # a real folder there is handed over as before
-        os.unlink(link)
-        os.mkdir(link)
-        _, calls = self.run_fix('nxlx_media_fix "%s" "%s"' % (link, self.sd))
-        self.assertEqual(len(calls), 2, calls)
-        # and a link the owner chose elsewhere with --media is followed as before
+
+    def test_a_trailing_slash_or_double_slash_spelling_is_one_way_of_writing_the_media_folder(self):
+        with open(os.path.join(REPO, "install", "install.sh")) as f:
+            text = f.read()
+        start = text.index('while [ "${#MEDIA}" -gt 1 ]')
+        snippet = text[start:text.index("\nfor name in", start)]
+        for given, want in (("/var/lib/nxlx/video/", "/var/lib/nxlx/video"), ("/var/lib/nxlx//video", "/var/lib/nxlx/video"),
+                            ("/var/lib/nxlx///video//", "/var/lib/nxlx/video"), ("/media/x", "/media/x")):
+            r = subprocess.run(["bash", "-c", 'MEDIA="$1"\n' + snippet + '\necho "$MEDIA"', "x", given], capture_output=True, text=True)
+            self.assertEqual(r.stdout.strip(), want, given)
+
+    def test_a_link_at_a_media_folder_outside_the_state_folder_is_followed_as_before(self):
         elsewhere = os.path.join(self.work, "media-link")
-        os.symlink(self.sd, elsewhere)
-        _, calls = self.run_fix('nxlx_media_fix "%s" "%s"' % (elsewhere, self.sd))
-        self.assertEqual(len(calls), 4, calls)
+        os.symlink(self.victim_dir, elsewhere)
+        r, calls = self.run_fix('nxlx_media_fix "%s" "%s"' % (elsewhere, self.sd))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(calls), 2, calls)
 
 
 if __name__ == "__main__":

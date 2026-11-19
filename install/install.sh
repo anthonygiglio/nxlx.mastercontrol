@@ -81,6 +81,9 @@ while [ "${#PREFIX}" -gt 1 ] && [ "${PREFIX%/}" != "$PREFIX" ]; do PREFIX="${PRE
 case "$PREFIX" in *//*) die "--prefix must not contain //" ;; esac
 case "$PREFIX" in /*) ;; *) die "--prefix must be an absolute path" ;; esac
 case "$MEDIA" in /*) ;; *) die "--media must be an absolute path" ;; esac
+# The same one spelling for the media folder: the test for "inside /var/lib/nxlx" below reads the text of the path.
+while [ "${#MEDIA}" -gt 1 ] && [ "${MEDIA%/}" != "$MEDIA" ]; do MEDIA="${MEDIA%/}"; done
+while [ "${MEDIA//\/\//}" != "$MEDIA" ]; do MEDIA="${MEDIA//\/\///}"; done
 for name in "$NXLX_USER" "$WEB_USER"; do
 	[[ "$name" =~ ^([a-z_][a-z0-9_-]*)?$ ]] || die "user names may only use a-z, 0-9, _ and -"
 done
@@ -669,41 +672,68 @@ if [ ! -e "$ETC/allowed_signers" ] && [ "$DRY" = 0 ]; then
 KEYS
 	chmod 644 "$ETC/allowed_signers"
 fi
-# /var/lib/nxlx belongs to the web panel account, so that account can plant a link there. The installer runs as root and
-# must never change owner or mode through one (J-175). A link is removed where the installer owns the name (backups) and
-# skipped elsewhere (settings files, the media folder). chown always gets -h, so it never follows the last part of the
-# path; chmod has no -h, so a link is looked for just before it. A swap in the instant between that check and the chmod
-# is not closed here; the modes set are only 0700 and 2750, and the owner changes cannot follow a link.
+# /var/lib/nxlx belongs to the web panel account and has no sticky bit, so that account can plant a link there or swap a
+# name for a link at any moment. The installer runs as root and must never change owner or mode through one (J-175).
+# A path check followed by chown or chmod is a race the panel account can win, so nothing under /var/lib/nxlx is changed
+# by path: nxlx_fd_own walks the path from /var/lib/nxlx one name at a time with O_NOFOLLOW (a link at any name fails the
+# open), makes a missing folder with mkdir on the open folder, and then does fchown and fchmod on the folder it holds.
+# It fails loudly (the install stops) when it meets a link; a link at the final name is removed first where the installer
+# owns the name (backups, the media folder), as PR 308 did for backups. python3 is already required by the installer.
+nxlx_fd_own() {   # nxlx_fd_own PATH BASE USER GROUP OCTAL-MODE
+	python3 -I -c '
+import grp, os, pwd, sys
+path, base, user, group, mode = sys.argv[1:6]
+try:
+    rel = os.path.relpath(path, base)
+    if rel.startswith("..") or rel == ".":
+        raise OSError("%s is not below %s" % (path, base))
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY | os.O_CLOEXEC
+    fd = os.open(base, flags)
+    for name in rel.split("/"):
+        try:
+            nfd = os.open(name, flags, dir_fd=fd)
+        except FileNotFoundError:
+            os.mkdir(name, 0o755, dir_fd=fd)
+            nfd = os.open(name, flags, dir_fd=fd)
+        os.close(fd)
+        fd = nfd
+    os.fchown(fd, pwd.getpwnam(user).pw_uid, grp.getgrnam(group).gr_gid)
+    os.fchmod(fd, int(mode, 8))
+except (OSError, KeyError) as e:
+    sys.exit("nxlx-install: %s: %s (a link or something else in the way; nothing was changed through it)" % (path, e))
+' "$@"
+}
 nxlx_state_fix() {
 	sd=$1
 	mkdir -p "$sd"; chown -h nxlx-web:nxlx-svc "$sd"; chmod 2750 "$sd"
-	# settings.json and its copies (settings.json.bak and so on): plain files only. A link is skipped, left as planted
-	# and unused. find tests the type and chown -h will not follow one swapped in meanwhile.
-	find "$sd" -maxdepth 1 -name 'settings.json*' -type f -exec chown -h nxlx-web:nxlx-svc {} + 2>/dev/null || true
+	# settings.json and its copies (settings.json.bak and so on): plain files with one name only. A link is skipped, left
+	# as planted and unused; so is a file with another hard link (chown would change the other name's file too). find
+	# tests the type and chown -h will not follow a link swapped in meanwhile.
+	find "$sd" -maxdepth 1 -name 'settings.json*' -type f -links 1 -exec chown -h nxlx-web:nxlx-svc {} + 2>/dev/null || true
 	# The settings copies an update keeps (J-055): root's, so the path exists when nxlx-sysd starts (its unit can write only a
 	# path that is there then) and a factory reset can empty it. Already there from an update: left as it is, owner and mode set.
-	# A link planted there is removed (a real folder is left alone), so the chown and chmod below never follow it.
+	# 0700 also clears the setgid bit the parent would give a new folder.
 	if [ -L "$sd/backups" ]; then rm -f "$sd/backups"; fi
-	mkdir -p "$sd/backups"
-	if [ ! -L "$sd/backups" ]; then
-		chown -h root:root "$sd/backups"; chmod 0700 "$sd/backups"; chmod g-s "$sd/backups"   # g-s: the parent is setgid and chmod keeps that bit on a folder
-	fi
+	nxlx_fd_own "$sd/backups" "$sd" root root 0700 || die "could not take /var/lib/nxlx/backups: a link was put in the way"
 }
-# The media folder is in /var/lib/nxlx by default, where the panel account can swap it for a link: skipped then, with a
-# note. A link the owner chose with --media somewhere else is followed as before.
-nxlx_media_fix() {
-	md=$1
+# The media folder. Inside /var/lib/nxlx (the default) it is made and handed over the same way, by nxlx_fd_own; a link at
+# its name is removed. Elsewhere it is the owner's own choice, and a link there is followed as before.
+nxlx_media_fix() {   # nxlx_media_fix MEDIA [STATE-FOLDER]
+	md=$1; sd=${2:-/var/lib/nxlx}
 	case "$md" in
-		"${2:-/var/lib/nxlx}"/*) if [ -L "$md" ]; then log "$md is a link: owner and mode left alone (a link in the panel's folder is never followed)"; return 0; fi ;;
+		"$sd"/*)
+			if [ -L "$md" ]; then rm -f "$md"; fi
+			nxlx_fd_own "$md" "$sd" "$NXLX_USER" nxlx-svc 2775 || die "could not take $md: a link was put in the way" ;;
+		*) mkdir -p "$md"; chown "$NXLX_USER":nxlx-svc "$md"; chmod 2775 "$md" ;;
 	esac
-	chown "$NXLX_USER":nxlx-svc "$md"; chmod 2775 "$md"
 }
-run mkdir -p "$ROOT$MEDIA"
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then
-	nxlx_media_fix "$MEDIA"
 	# settings.json lives in /var/lib/nxlx and only the web panel may write there. The player (group nxlx-svc) may pass
 	# through to the media folder and read, but not create, rename or replace files: 2750, owned by nxlx-web.
 	nxlx_state_fix /var/lib/nxlx
+	nxlx_media_fix "$MEDIA"
+else
+	run mkdir -p "$ROOT$MEDIA"
 fi
 if [ "$DRY" = 0 ]; then
 	printf '{"version": "%s", "prefix": "%s", "user": "%s", "installed": "%s"}\n' \
