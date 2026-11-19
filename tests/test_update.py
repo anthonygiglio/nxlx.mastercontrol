@@ -646,6 +646,88 @@ class StateFolderLinksTest(unittest.TestCase):
         self.assertIsNone(self.u.backup_settings("1.0.0"))
         self.assertEqual(os.listdir(real), ["settings.json"])
 
+    # --- the review of PR 312 ---------------------------------------------------------------------------------------
+    def test_a_failed_restore_does_not_skip_the_restart_or_the_previous_note(self):
+        b = self.u.backup_settings("1.0.0")
+        os.makedirs(os.path.join(self.env.root, "opt/nxlx/releases/1.0.0"), exist_ok=True)
+        os.rename(self.u.backup_dir(), os.path.join(self.state, "hidden"))
+        os.symlink("/nonexistent", self.u.backup_dir())
+        before = self.env.restarts
+        with mock.patch("builtins.print"):
+            self.u._switch_to("1.0.0", b, current="1.1.0")
+        self.assertEqual(self.env.restarts, before + 1)
+        with open(os.path.join(self.env.root, "opt/nxlx/previous")) as f:
+            self.assertIn("1.1.0", f.read())
+        self.assertEqual(self.env.settings()["marker"], "mine")
+
+    def test_a_planted_rejected_name_does_not_block_the_update(self):
+        os.mkdir(os.path.join(self.state, "backups.rejected-1000-%d" % os.getpid()))
+        os.symlink("/nonexistent", self.u.backup_dir())
+        dst = self.u.backup_settings("1.0.0")
+        self.assertTrue(os.path.isfile(dst) and not os.path.islink(dst))
+
+    @unittest.skipIf(os.geteuid() == 0, "root opens a folder of mode 0")
+    def test_an_open_error_that_is_not_a_link_never_moves_the_folder(self):
+        self.u.backup_settings("1.0.0")
+        os.chmod(self.u.backup_dir(), 0)                  # EACCES stands in for EMFILE or EIO
+        self.addCleanup(os.chmod, self.u.backup_dir(), 0o700)
+        self.assertIsNone(self.u.latest_backup("1.0.0"))   # a read path
+        with self.assertRaises(UpdateError):                # a write path: the folder is not usable, and is still there
+            self.u.backup_settings("1.0.1")
+        self.assertEqual(sorted(os.listdir(self.state)), ["backups", "settings.json"])
+
+    def test_a_read_never_sets_a_folder_aside(self):
+        os.mkdir(self.u.backup_dir(), 0o755)
+        os.chmod(self.u.backup_dir(), 0o777)
+        self.assertIsNone(self.u.latest_backup("1.0.0"))
+        self.assertEqual(sorted(os.listdir(self.state)), ["backups", "settings.json"])
+
+    def test_the_schema_read_survives_odd_json(self):
+        for body in ("[" * 200000, '{"schema": 1e999}', '{"schema": [1]}', "[1]"):
+            with open(os.path.join(self.state, "settings.json"), "w") as f:
+                f.write(body)
+            self.assertIsNone(self.u._settings_schema(), body[:12])
+
+    def test_a_folder_at_the_temporary_name_leaves_settings_json_in_place(self):
+        b = self.u.backup_settings("1.0.0")
+        os.makedirs(os.path.join(self.state, ".settings.json.%d.tmp" % os.getpid(), "x"))
+        self.env.write_settings(marker="current")
+        self.u.restore_settings(b)                          # the temporary name is random: a planted one is never in the way
+        self.assertEqual(self.env.settings()["marker"], "mine")
+
+    def test_a_failed_restore_leaves_the_old_settings_json_and_keeps_a_keepsake(self):
+        b = self.u.backup_settings("1.0.0")
+        self.env.write_settings(marker="current")
+        real = os.rename
+
+        def failing(src, dst, **kw):
+            if dst == "settings.json":
+                raise OSError(5, "I/O error")
+            return real(src, dst, **kw)
+        with mock.patch("os.rename", failing):
+            with self.assertRaises(OSError):
+                self.u.restore_settings(b)
+        self.assertEqual(self.env.settings()["marker"], "current")
+        self.assertFalse([n for n in os.listdir(self.state) if n.endswith(".tmp")])
+        self.u.restore_settings(b)
+        kept = [n for n in os.listdir(self.state) if n.startswith("settings.json.rolled-back-")]
+        self.assertEqual(len(kept), 1)
+        with open(os.path.join(self.state, kept[0])) as f:
+            self.assertEqual(json.load(f)["marker"], "current")
+
+    def test_latest_backup_matches_the_version_exactly(self):
+        self.u.backup_settings("1.0.0-rc1")
+        self.assertIsNone(self.u.latest_backup("1.0.0"))
+        self.assertIsNone(self.u.latest_backup("1.0"))
+        self.assertTrue(self.u.latest_backup("1.0.0-rc1"))
+
+    def test_the_backups_folder_made_here_is_0700_whatever_the_parent_gives(self):
+        os.chmod(self.state, 0o2750)
+        self.u.backup_settings("1.0.0")
+        self.assertEqual(os.stat(self.u.backup_dir()).st_mode & 0o7777, 0o700)
+        self.u.now = lambda: 1001
+        self.u.backup_settings("1.0.0")                     # and the second call accepts it
+
 
 if __name__ == "__main__":
     unittest.main()

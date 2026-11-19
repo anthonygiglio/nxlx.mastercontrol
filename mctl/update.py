@@ -16,10 +16,12 @@ since then are set aside, not deleted.
 
 import glob
 import hashlib
+import errno
 import json
 import os
 import pwd
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -264,7 +266,7 @@ class Updater:
     # (dir_fd), files are made with O_EXCL|O_NOFOLLOW, and owners and modes are set on the descriptor, never on a path.
     _DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     BACKUP_NAME = re.compile(r"settings-[0-9A-Za-z.+-]{1,40}-[0-9]{1,12}\.json")     # what backup_settings writes (nxlx-sysd clears the same names)
-    SETTINGS_MAX = 64 << 20          # a settings file larger than this is not what it seems
+    SETTINGS_MAX = 4 << 20           # settings.json is JSON text (pictures are kept in files of their own); more than this is not what it seems
 
     def _open_state(self):
         """The panel's state folder as a descriptor (the caller closes it), or None when there is none. The last name is
@@ -276,22 +278,29 @@ class Updater:
 
     def _open_backups(self, state_fd, create=False):
         """The settings backups folder as a descriptor: opened without following a link, and it must be a folder of this
-        process's user (root on a box) that nobody else can write. A name that is anything else (a link, a folder the
-        panel made) is renamed out of the way, never followed, and a folder of our own is made in its place (only with
-        `create`). None when there is no usable folder."""
+        process's user (root on a box) that nobody else can write. Only a name that is a link or not a folder (ELOOP,
+        ENOTDIR), or a folder with the wrong owner or mode, is renamed out of the way (never followed) and, with
+        `create`, replaced by a folder of our own. Any other failure to open (no descriptors left, an I/O error) touches
+        nothing. Without `create` nothing is ever renamed or made: a read finds the folder or finds no backup."""
         for _attempt in range(3):
+            fd = None
             try:
                 fd = os.open("backups", self._DIR, dir_fd=state_fd)
             except FileNotFoundError:
-                fd = None
-            except OSError:                          # a link (ELOOP) or not a folder (ENOTDIR)
-                fd = None
+                pass
+            except OSError as e:
+                if e.errno not in (errno.ELOOP, errno.ENOTDIR):
+                    return None                      # not a reason to move root's folder
+                if not create:
+                    return None
                 self._set_aside(state_fd)
             if fd is not None:
                 st = os.fstat(fd)
                 if stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid() and not st.st_mode & 0o022:
                     return fd
                 os.close(fd)
+                if not create:
+                    return None
                 self._set_aside(state_fd)
             if not create:
                 return None
@@ -301,14 +310,24 @@ class Updater:
                 continue
             except OSError:
                 return None
+            # a new folder inherits the setgid bit and group of the panel's folder: mode and owner as meant
+            fd = os.open("backups", self._DIR, dir_fd=state_fd)
+            os.fchmod(fd, 0o700)
+            return fd
         return None
 
     def _set_aside(self, state_fd):
-        """Move what stands at `backups` away by rename (which follows nothing) so that the name is free."""
-        try:
-            os.rename("backups", "backups.rejected-%d-%d" % (int(self.now()), os.getpid()), src_dir_fd=state_fd, dst_dir_fd=state_fd)
-        except OSError:
-            pass
+        """Move what stands at `backups` away by rename (which follows nothing) so that the name is free. The new name
+        has a random part: a name the panel planted in advance cannot make the rename fail every time."""
+        for _try in range(5):
+            try:
+                os.rename("backups", "backups.rejected-%s" % secrets.token_hex(6), src_dir_fd=state_fd, dst_dir_fd=state_fd)
+                return True
+            except FileNotFoundError:
+                return True
+            except OSError:
+                continue
+        return False
 
     def _read_plain(self, name, dir_fd):
         """The bytes of a plain file inside an open folder, or None: never through a link, never a pipe or a device,
@@ -346,7 +365,7 @@ class Updater:
             os.close(state_fd)
         try:
             return int(json.loads(data.decode("utf-8")).get("schema", 0)) if data is not None else None
-        except (ValueError, AttributeError, TypeError):
+        except (ValueError, AttributeError, TypeError, OverflowError, RecursionError):
             return None
 
     # --- backups --------------------------------------------------------
@@ -453,13 +472,28 @@ class Updater:
                     owner = (web.pw_uid, web.pw_gid)
                 except KeyError:
                     pass
-            if st is not None:
+            # The new file is written first; only then is the old one kept (a link to it, else a copy) and the new one
+            # renamed over settings.json. A failure before the rename leaves the old settings.json in place.
+            tmp = ".settings.json.%s.tmp" % secrets.token_hex(6)
+            self._write_new(state_fd, tmp, data, 0o600, owner=owner if os.geteuid() == 0 else None)
+            try:
+                if st is not None:
+                    keep = "settings.json.rolled-back-%d" % int(self.now())
+                    try:
+                        os.unlink(keep, dir_fd=state_fd)
+                    except OSError:
+                        pass
+                    try:
+                        os.link("settings.json", keep, src_dir_fd=state_fd, dst_dir_fd=state_fd, follow_symlinks=False)
+                    except OSError:
+                        pass                          # no keepsake; the old one is replaced by the rename below
+                os.rename(tmp, "settings.json", src_dir_fd=state_fd, dst_dir_fd=state_fd)
+            except BaseException:
                 try:
-                    os.rename("settings.json", "settings.json.rolled-back-%d" % int(self.now()), src_dir_fd=state_fd, dst_dir_fd=state_fd)
+                    os.unlink(tmp, dir_fd=state_fd)
                 except OSError:
-                    pass                              # the rename over it below sets the old one aside anyway
-            self._write_new(state_fd, "settings.json", data, 0o600, owner=owner if os.geteuid() == 0 else None,
-                            replace_over="settings.json")
+                    pass
+                raise
         finally:
             os.close(state_fd)
 
@@ -472,10 +506,10 @@ class Updater:
             if bfd is None:
                 return None
             try:
-                prefix = "settings-%s-" % version
+                exact = re.compile(r"settings-%s-[0-9]{1,12}\.json" % re.escape(str(version)))
                 found = []
                 for entry in os.listdir(bfd):
-                    if entry.startswith(prefix) and self.BACKUP_NAME.fullmatch(entry):
+                    if exact.fullmatch(entry):
                         try:
                             st = os.lstat(entry, dir_fd=bfd)
                         except OSError:
@@ -683,7 +717,12 @@ class Updater:
         os.symlink("%s/releases/%s" % (self.prefix, version), tmp)
         os.replace(tmp, self.current_link)
         if backup:
-            self.restore_settings(backup)
+            try:
+                self.restore_settings(backup)
+            except (UpdateError, OSError) as e:
+                # The program is switched already: the restart and the note of the previous release still have to
+                # happen, or unhealthy processes keep running and the rollback history is lost.
+                print("the settings could not be put back (%s); they stay as they are" % e)
         if current:
             with open(self.real(self.prefix + "/previous"), "w") as f:
                 f.write("%s/releases/%s\n" % (self.prefix, current))
