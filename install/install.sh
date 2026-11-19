@@ -669,19 +669,41 @@ if [ ! -e "$ETC/allowed_signers" ] && [ "$DRY" = 0 ]; then
 KEYS
 	chmod 644 "$ETC/allowed_signers"
 fi
-run mkdir -p "$ROOT$MEDIA"
-if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then
-	chown "$NXLX_USER":nxlx-svc "$MEDIA"; chmod 2775 "$MEDIA"
-	# settings.json lives in /var/lib/nxlx and only the web panel may write there. The player (group nxlx-svc) may pass
-	# through to the media folder and read, but not create, rename or replace files: 2750, owned by nxlx-web.
-	mkdir -p /var/lib/nxlx; chown nxlx-web:nxlx-svc /var/lib/nxlx; chmod 2750 /var/lib/nxlx
-	[ -e /var/lib/nxlx/settings.json ] && chown nxlx-web:nxlx-svc /var/lib/nxlx/settings.json* 2>/dev/null
+# /var/lib/nxlx belongs to the web panel account, so that account can plant a link there. The installer runs as root and
+# must never change owner or mode through one (J-175). A link is removed where the installer owns the name (backups) and
+# skipped elsewhere (settings files, the media folder). chown always gets -h, so it never follows the last part of the
+# path; chmod has no -h, so a link is looked for just before it. A swap in the instant between that check and the chmod
+# is not closed here; the modes set are only 0700 and 2750, and the owner changes cannot follow a link.
+nxlx_state_fix() {
+	sd=$1
+	mkdir -p "$sd"; chown -h nxlx-web:nxlx-svc "$sd"; chmod 2750 "$sd"
+	# settings.json and its copies (settings.json.bak and so on): plain files only. A link is skipped, left as planted
+	# and unused. find tests the type and chown -h will not follow one swapped in meanwhile.
+	find "$sd" -maxdepth 1 -name 'settings.json*' -type f -exec chown -h nxlx-web:nxlx-svc {} + 2>/dev/null || true
 	# The settings copies an update keeps (J-055): root's, so the path exists when nxlx-sysd starts (its unit can write only a
 	# path that is there then) and a factory reset can empty it. Already there from an update: left as it is, owner and mode set.
-	# A link planted there must never be followed by the chown and chmod below: it is removed (a real folder is left alone).
-	if [ -L /var/lib/nxlx/backups ]; then rm -f /var/lib/nxlx/backups; fi
-	mkdir -p /var/lib/nxlx/backups; chown root:root /var/lib/nxlx/backups; chmod 0700 /var/lib/nxlx/backups; chmod g-s /var/lib/nxlx/backups   # g-s: the parent is setgid and chmod keeps that bit on a folder
-	true
+	# A link planted there is removed (a real folder is left alone), so the chown and chmod below never follow it.
+	if [ -L "$sd/backups" ]; then rm -f "$sd/backups"; fi
+	mkdir -p "$sd/backups"
+	if [ ! -L "$sd/backups" ]; then
+		chown -h root:root "$sd/backups"; chmod 0700 "$sd/backups"; chmod g-s "$sd/backups"   # g-s: the parent is setgid and chmod keeps that bit on a folder
+	fi
+}
+# The media folder is in /var/lib/nxlx by default, where the panel account can swap it for a link: skipped then, with a
+# note. A link the owner chose with --media somewhere else is followed as before.
+nxlx_media_fix() {
+	md=$1
+	case "$md" in
+		"${2:-/var/lib/nxlx}"/*) if [ -L "$md" ]; then log "$md is a link: owner and mode left alone (a link in the panel's folder is never followed)"; return 0; fi ;;
+	esac
+	chown "$NXLX_USER":nxlx-svc "$md"; chmod 2775 "$md"
+}
+run mkdir -p "$ROOT$MEDIA"
+if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then
+	nxlx_media_fix "$MEDIA"
+	# settings.json lives in /var/lib/nxlx and only the web panel may write there. The player (group nxlx-svc) may pass
+	# through to the media folder and read, but not create, rename or replace files: 2750, owned by nxlx-web.
+	nxlx_state_fix /var/lib/nxlx
 fi
 if [ "$DRY" = 0 ]; then
 	printf '{"version": "%s", "prefix": "%s", "user": "%s", "installed": "%s"}\n' \
