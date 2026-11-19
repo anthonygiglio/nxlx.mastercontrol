@@ -66,6 +66,7 @@ class ReadOnlyRootTest(unittest.TestCase):
         stage = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, stage, True)
         r = self.run_with("overlay / overlay rw 0 0\n", "--stage", stage)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)        # it ran through, not died for another reason
         self.assertNotIn("The system disk is read-only", r.stderr)
         self.assertNotIn("run as root", r.stderr)
 
