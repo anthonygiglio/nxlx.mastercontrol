@@ -711,7 +711,7 @@
       pick.addEventListener('change', function () { chosen[id] = pick.value; warn.hidden = !(lib.faster && flashes(pick.value)); });
       var row = h('span', { class: 'row', id: id + '-row' }, h('span', { class: 'k', text: slot === 1 ? 'Effect' : 'Effect ' + slot }), pick,
         h('button', { class: 'btn small', id: 'srcfxon-' + k + '-' + slot, text: on ? 'Change' : 'On', disabled: !lib.effects.length, onclick: function () {
-          act('POST', '/api/effects/chain', { source: k, slot: slot, id: pick.value }, function () { delete chosen[id]; say('Source ' + k + ': ' + pick.value + ' is on.'); load(); });
+          act('POST', '/api/effects/chain', { source: k, slot: slot, id: pick.value }, function (d) { delete chosen[id]; say(d && d.warning ? d.warning : 'Source ' + k + ': ' + pick.value + ' is on.', !!(d && d.warning)); load(); });
         } }),
         h('button', { class: 'btn small', id: 'srcfxoff-' + k + '-' + slot, text: 'Off', disabled: !on, onclick: function () {
           act('POST', '/api/effects/chain', { source: k, slot: slot, off: true }, function () { say('Source ' + k + ': the effect is off.'); load(); });

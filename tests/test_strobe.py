@@ -937,6 +937,27 @@ class EffectsListFlashTest(RouteBase):
         self.post("/api/strobe/release", {"holder": "tab"})
         self.assertIsNone(self.fx.on)                                    # and the one from before is not put back
 
+    def test_a_steady_strobe_is_not_the_holds_when_the_opt_in_goes_off_on_the_new_renderer(self):
+        held, sent = self.chains()
+        self.faster(True)
+        self.api.chains.put({"source": 1, "slot": 2, "id": "fx-strobe.fs", "controls": {"amount": 1.0}})      # steady, put on by hand
+        self.post("/api/effects", {"id": "fx-strobe.fs"})                                                   # (the effect twin too)
+        self.api.chains.put({"source": 1, "slot": 3, "id": "fx-strobe.fs", "controls": {"amount": 0.0}})      # the hold's loaded copy
+        self.strobe.slot, self.strobe.route, self.strobe.lit = 3, "chain", True                              # a hold lights it
+        self.api.chains.values({"source": 1, "slot": 3, "controls": {"amount": 1.0}}, hold=True)
+        self.post("/api/shaders", {"action": "config", "faster": False})
+        self.assertEqual(sorted(held), [(1, 3)])                        # the steady slot went; the hold's slot stays lit
+        self.assertIsNone(self.fx.on)                                   # the steady effect twin went too: the hold is on the chain
+        self.strobe.lit = False
+
+    def test_importing_or_resetting_settings_that_switch_the_opt_in_off_takes_the_flashing_effect_off(self):
+        self.faster(True)
+        self.post("/api/effects", {"id": "fx-strobe.fs"})
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+        self.faster(False)                                              # what an import of a file without the switch leaves
+        self.api.boxcare._apply()
+        self.assertIsNone(self.fx.on)
+
     def test_a_file_replaced_by_one_that_flashes_goes_off_unless_the_opt_in_is_on(self):
         self.fx.upload("q.fs", TE.fx(DESCRIPTION="Quiet"))
         self.assertEqual(self.post("/api/effects", {"id": "q.fs"})[0], 200)
@@ -959,7 +980,9 @@ class EffectsListFlashTest(RouteBase):
     def test_the_words_do_not_name_who_holds_the_switch(self):
         st, body, _ = self.post("/api/effects", {"id": "fx-strobe.fs"})
         self.assertNotIn("owner", body["error"].lower())
-        self.assertIn("Strobe", body["error"])                           # the filter's name, not its file
+        name = next(r["name"] for r in self.state()["effects"] if r["id"] == "fx-strobe.fs")
+        self.assertNotEqual(name, "fx-strobe.fs")
+        self.assertTrue(body["error"].startswith(name + " flashes"), body["error"])      # the library's name leads, not the file id
         self.assertNotIn("fx-strobe.fs", body["error"])
 
     def test_the_chain_route_is_refused_too(self):

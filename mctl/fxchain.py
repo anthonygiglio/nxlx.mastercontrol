@@ -324,13 +324,14 @@ class Chains:
 
     def drop_flashing(self):
         """The opt-in went off (J-128): every flashing filter that is lit in a chain slot is taken off. Not the Strobe's
-        loaded copy at amount 0 (the hold owns it), nor the Strobe while a hold lights it."""
+        loaded copy at amount 0 (the hold owns it), nor the slot a hold lights now."""
         fx = self.api.effects
-        held = getattr(getattr(self.api, "strobe", None), "lit", False)
+        strobe = getattr(self.api, "strobe", None)
+        mine = (1, getattr(strobe, "slot", None)) if (getattr(strobe, "lit", False) and getattr(strobe, "route", None) == "chain") else None
         with self._lock:
             rows = [(k, r["id"], (r.get("controls") or {}).get("amount", 1.0)) for k, r in self._seen().items() if k[1] != 0]
         for (source, slot), sid, amount in rows:
-            if not amount or (sid in HOLD_ONLY and held):
+            if not amount or (source, slot) == mine:          # at amount 0 nothing is drawn; the slot a hold lights is the hold's
                 continue
             try:
                 fx.flash_gate(sid)

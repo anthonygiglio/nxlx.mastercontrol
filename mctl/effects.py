@@ -1101,8 +1101,9 @@ class Effects(S.Engine):
         on = self.current()
         if on is None:
             return
-        if on["id"] in HOLD_ONLY and getattr(getattr(self.api, "strobe", None), "lit", False):
-            return
+        strobe = getattr(self.api, "strobe", None)
+        if on["id"] in HOLD_ONLY and getattr(strobe, "lit", False) and getattr(strobe, "route", None) == "effect":
+            return                                      # the hold's own strobe (it is the effect); a steady one is not the hold's
         try:
             self.flash_gate(on["id"])
         except ApiError:
