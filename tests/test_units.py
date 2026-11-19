@@ -404,9 +404,11 @@ class InstallerOwnershipTest(unittest.TestCase):
         self.assertLess(stop, change)
 
     def test_the_state_folder_belongs_to_the_web_user_and_is_not_group_writable(self):
-        self.assertIn("chown nxlx-web:nxlx-svc /var/lib/nxlx;", self.sh)
-        self.assertIn("chmod 2750 /var/lib/nxlx", self.sh)
+        # J-175: nxlx_state_fix sets the folder up and is called with /var/lib/nxlx; chown -h never follows a link
+        self.assertIn("nxlx_state_fix /var/lib/nxlx\n", self.sh)
+        self.assertIn('chown -h nxlx-web:nxlx-svc "$sd"; chmod 2750 "$sd"', self.sh)
         self.assertNotIn("chmod 2775 /var/lib/nxlx;", self.sh)
+        self.assertNotIn('chmod 2775 "$sd"', self.sh)
 
 class SysdUnitTest(unittest.TestCase):
     def test_the_system_helper_has_no_capabilities_and_only_unix_sockets(self):

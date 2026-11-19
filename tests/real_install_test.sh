@@ -949,6 +949,26 @@ if [ "$PLAYER_SEEN" = 1 ] && tr '\0' ' ' < "/proc/$(systemctl show -p MainPID --
 	fail "the player still runs with this test's null output"
 fi
 
+step "links planted in /var/lib/nxlx are not followed by the install (J-175)"
+# The panel account owns /var/lib/nxlx, so it can plant links there. Root's install must not change a target's owner or mode.
+LINK_TARGET="$(mktemp /root/j175.XXXXXX)"
+echo x > "$LINK_TARGET"
+chown root:root "$LINK_TARGET"; chmod 0640 "$LINK_TARGET"
+LINK_DIR="$(mktemp -d /root/j175dir.XXXXXX)"
+chown root:root "$LINK_DIR"; chmod 0755 "$LINK_DIR"
+ln -sfn "$LINK_TARGET" /var/lib/nxlx/settings.json.bak
+rm -rf /var/lib/nxlx/backups; ln -sfn "$LINK_DIR" /var/lib/nxlx/backups
+rm -rf /var/lib/nxlx/video; ln -sfn "$LINK_DIR" /var/lib/nxlx/video
+logged "$SRC/install/install.sh" --offline
+is "$LINK_TARGET" "root:root 640 regular file"
+is "$LINK_DIR" "root:root 755 directory"
+[ ! -L /var/lib/nxlx/backups ] || fail "the link at /var/lib/nxlx/backups was not removed"
+is /var/lib/nxlx/backups "root:root 700 directory"
+[ ! -L /var/lib/nxlx/video ] || fail "the link at /var/lib/nxlx/video was not removed"
+PLAYER_NOW="$(sed -n 's/^User=//p' /etc/systemd/system/nxlx-player.service)"
+is /var/lib/nxlx/video "$PLAYER_NOW:nxlx-svc 2775 directory"
+rm -rf "$LINK_TARGET" "$LINK_DIR" /var/lib/nxlx/settings.json.bak
+
 step "final listing"
 listing
 
