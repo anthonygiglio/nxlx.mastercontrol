@@ -14,7 +14,7 @@ What it does, on Debian, Ubuntu and Raspberry Pi OS (Bookworm, Trixie) for Pi 3,
 4. Writes `/etc/nxlx/nxlx.env` (media and USB folders) only if it does not exist, so your edits survive updates, and `/etc/nxlx/install.json`.
 5. Installs, enables and starts `nxlx-player.service`, and links `nxlx-player` and `nxlx-selftest` into `/usr/local/bin`.
 
-Program files are owned by root and not writable by the web user. `/var/lib/nxlx` (settings) belongs to the web user, mode 2750: the player can read its media there but cannot create or replace files, so a player compromised by a hostile file cannot change the settings. `--uninstall` keeps `/etc/nxlx`, media, users and the group unless you add `--purge` (which removes only `/etc/nxlx`).
+Program files are owned by root and not writable by the web user. `/var/lib/nxlx` (settings) belongs to the web user, mode 2750: the player can read its media there but cannot create or replace files, so a player compromised by a hostile file cannot change the settings. Because the web user owns that folder, the installer never follows a link in it: a link at `/var/lib/nxlx/video` or `/var/lib/nxlx/backups` is removed (the clips at its target are untouched). To keep the video library elsewhere, point `--media <folder>` at it instead of using a link; `--media /var/lib/nxlx` itself is refused. `--uninstall` keeps `/etc/nxlx`, media, users and the group unless you add `--purge` (which removes only `/etc/nxlx`).
 
 `--stage DIR` installs into a folder without touching users, apt or systemd; the tests and the future image build use it.
 

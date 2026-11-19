@@ -735,6 +735,16 @@ class StateFolderLinksTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(link) and not os.path.islink(link))
         self.assertEqual(os.stat(link).st_mode & 0o7777, 0o2775)
         self.untouched(calls)
+        self.assertIn("was a link (to %s) and has been removed" % self.victim_dir, r.stdout)
+        self.assertIn("--media", r.stdout)
+
+    def test_media_cannot_be_the_state_folder_itself(self):
+        src = copy_source("9.9.1")
+        self.addCleanup(shutil.rmtree, src, True)
+        for spelling in ("/var/lib/nxlx", "/var/lib/nxlx/", "/var/lib//nxlx//"):
+            r = install(src, self.work, "--media", spelling)
+            self.assertNotEqual(r.returncode, 0, spelling)
+            self.assertIn("--media cannot be /var/lib/nxlx", r.stderr)
 
     def test_a_trailing_slash_or_double_slash_spelling_is_one_way_of_writing_the_media_folder(self):
         with open(os.path.join(REPO, "install", "install.sh")) as f:

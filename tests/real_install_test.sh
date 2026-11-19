@@ -965,6 +965,8 @@ is "$LINK_DIR" "root:root 755 directory"
 [ ! -L /var/lib/nxlx/backups ] || fail "the link at /var/lib/nxlx/backups was not removed"
 is /var/lib/nxlx/backups "root:root 700 directory"
 [ ! -L /var/lib/nxlx/video ] || fail "the link at /var/lib/nxlx/video was not removed"
+PLAYER_NOW="$(sed -n 's/^User=//p' /etc/systemd/system/nxlx-player.service)"
+is /var/lib/nxlx/video "$PLAYER_NOW:nxlx-svc 2775 directory"
 rm -rf "$LINK_TARGET" "$LINK_DIR" /var/lib/nxlx/settings.json.bak
 
 step "final listing"

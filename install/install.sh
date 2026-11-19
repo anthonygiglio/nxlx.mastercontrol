@@ -84,6 +84,7 @@ case "$MEDIA" in /*) ;; *) die "--media must be an absolute path" ;; esac
 # The same one spelling for the media folder: the test for "inside /var/lib/nxlx" below reads the text of the path.
 while [ "${#MEDIA}" -gt 1 ] && [ "${MEDIA%/}" != "$MEDIA" ]; do MEDIA="${MEDIA%/}"; done
 while [ "${MEDIA//\/\//}" != "$MEDIA" ]; do MEDIA="${MEDIA//\/\///}"; done
+[ "$MEDIA" != /var/lib/nxlx ] || die "--media cannot be /var/lib/nxlx itself: that folder holds the settings and belongs to the web panel; use a folder of its own, such as /var/lib/nxlx/video"
 for name in "$NXLX_USER" "$WEB_USER"; do
 	[[ "$name" =~ ^([a-z_][a-z0-9_-]*)?$ ]] || die "user names may only use a-z, 0-9, _ and -"
 done
@@ -714,7 +715,7 @@ nxlx_state_fix() {
 	# path that is there then) and a factory reset can empty it. Already there from an update: left as it is, owner and mode set.
 	# 0700 also clears the setgid bit the parent would give a new folder.
 	if [ -L "$sd/backups" ]; then rm -f "$sd/backups"; fi
-	nxlx_fd_own "$sd/backups" "$sd" root root 0700 || die "could not take /var/lib/nxlx/backups: a link was put in the way"
+	nxlx_fd_own "$sd/backups" "$sd" root root 0700 || die "could not set up $sd/backups safely; see the line above"
 }
 # The media folder. Inside /var/lib/nxlx (the default) it is made and handed over the same way, by nxlx_fd_own; a link at
 # its name is removed. Elsewhere it is the owner's own choice, and a link there is followed as before.
@@ -722,8 +723,11 @@ nxlx_media_fix() {   # nxlx_media_fix MEDIA [STATE-FOLDER]
 	md=$1; sd=${2:-/var/lib/nxlx}
 	case "$md" in
 		"$sd"/*)
-			if [ -L "$md" ]; then rm -f "$md"; fi
-			nxlx_fd_own "$md" "$sd" "$NXLX_USER" nxlx-svc 2775 || die "could not take $md: a link was put in the way" ;;
+			if [ -L "$md" ]; then
+				log "$md was a link (to $(readlink "$md")) and has been removed: a link in the panel's folder is never followed. The clips at its target are untouched. To keep the library somewhere else, run the install again with --media <folder> instead of a link."
+				rm -f "$md"
+			fi
+			nxlx_fd_own "$md" "$sd" "$NXLX_USER" nxlx-svc 2775 || die "could not set up $md safely; see the line above" ;;
 		*) mkdir -p "$md"; chown "$NXLX_USER":nxlx-svc "$md"; chmod 2775 "$md" ;;
 	esac
 }
