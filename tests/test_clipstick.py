@@ -866,5 +866,20 @@ class ApiClipStickTest(ServerBase):
         self.assertFalse([n for n in os.listdir(self.media) if n.startswith(".upload-")])
 
 
+class OwnNodeIdPlainFileTest(unittest.TestCase):
+    """J-177: nxlx-usb@ runs as root and reads node-id in the panel folder: a pipe planted there must not hang it."""
+
+    def test_a_pipe_or_a_link_is_not_a_node_id(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        os.mkfifo(os.path.join(d, clipstick.NODE_ID_FILE))
+        self.assertIsNone(clipstick.own_node_id(d))
+        os.unlink(os.path.join(d, clipstick.NODE_ID_FILE))
+        with open(os.path.join(d, "other"), "w") as f:
+            f.write("N" * 8)
+        os.symlink(os.path.join(d, "other"), os.path.join(d, clipstick.NODE_ID_FILE))
+        self.assertIsNone(clipstick.own_node_id(d))
+
+
 if __name__ == "__main__":
     unittest.main()

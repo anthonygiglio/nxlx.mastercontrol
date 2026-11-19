@@ -68,8 +68,10 @@ def candidate(info):
 def own_node_id(state_dir):
     """This node's id from the state folder, or None. Only read here, never made (the panel makes it, fleet.py)."""
     try:
-        fd = os.open(os.path.join(state_dir, NODE_ID_FILE), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(os.path.join(state_dir, NODE_ID_FILE), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         with os.fdopen(fd, "r", encoding="ascii") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):       # a pipe or a device would hang or lie
+                return None
             text = f.read(64).strip()
     except (OSError, UnicodeDecodeError):
         return None
