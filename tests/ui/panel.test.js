@@ -3885,6 +3885,43 @@ function startServer(env) {          // env: more for the harness's environment 
     await sys('Updates');
     await page.waitForSelector('#updateversion');
     await onPage('Updates');
+    {
+      // J-174: the card with the read-only root off and on. The real answer is used with only read_only_root set, so the
+      // result does not depend on whether the machine running this test has an overlay root (a container's root is one).
+      const statusAs = (readOnly) => async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const real = await (await route.fetch()).json();
+        const text = 'The system disk is read-only (power-loss protection is on), so an update would be lost at the next restart.';
+        return route.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify(Object.assign({}, real, { read_only_root: readOnly, read_only_message: readOnly ? text : '' })) });
+      };
+      const ask = async (readOnly, until) => {
+        const handler = statusAs(readOnly);
+        await page.route('**/api/system/update', handler);
+        try {
+          await sys('Sound');
+          await page.waitForSelector('#audioline, #audiomsg');
+          await sys('Updates');
+          await pollFor(page, until, 8000);
+          return await page.evaluate(() => ({
+            upload: document.getElementById('updateupload') && document.getElementById('updateupload').disabled,
+            warn: document.getElementById('updatereadonly') && document.getElementById('updatereadonly').textContent,
+            installs: Array.from(document.querySelectorAll('.update-entry button')).map((b) => b.disabled) }));
+        } finally {
+          await page.unroute('**/api/system/update', handler);
+        }
+      };
+      const normal = await ask(false, () => !!document.getElementById('updateupload'));
+      assert.deepStrictEqual([normal.upload, normal.warn], [false, null], 'a normal node: Upload an update is enabled, no read-only warning');
+      const locked = await ask(true, () => !!document.getElementById('updatereadonly'));
+      assert.match(locked.warn, /read-only .*lost at the next restart/, 'the read-only sentence is shown');
+      assert.strictEqual(locked.upload, true, 'Upload an update is disabled while the root is read-only');
+      assert(locked.installs.every((d) => d === true), 'every Install button is disabled while the root is read-only');
+      await sys('Sound');
+      await page.waitForSelector('#audioline, #audiomsg');
+      await sys('Updates');
+      await page.waitForSelector('#updateversion');
+    }
     await sys('About and power');
     await page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent));
     await onPage('About and power');

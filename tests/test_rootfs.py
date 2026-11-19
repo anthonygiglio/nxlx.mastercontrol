@@ -40,6 +40,20 @@ class RootfsTest(unittest.TestCase):
         self.assertEqual(rootfs.current_state(mounts("overlay")), "overlay")
         self.assertEqual(rootfs.current_state("/nonexistent"), "normal")
 
+    def test_both_overlay_forms_and_a_container_mount_are_told_apart(self):
+        def table(text):
+            p = os.path.join(tempfile.mkdtemp(), "mounts")
+            with open(p, "w") as f:
+                f.write(text)
+            return p
+        # raspi-config: the device is "overlay" and so is the type
+        self.assertEqual(rootfs.current_state(table("overlay / overlay rw,relatime,lowerdir=/media/root-ro 0 0\n")), "overlay")
+        # overlayroot: the device is "overlayroot", the type overlay
+        self.assertEqual(rootfs.current_state(table("overlayroot / overlay rw,relatime,lowerdir=/media/root-ro 0 0\n")), "overlay")
+        # a normal root with docker's overlay somewhere else is not an overlay root
+        self.assertEqual(rootfs.current_state(table("/dev/sda2 / ext4 rw 0 0\n"
+                                                    "overlay /var/lib/docker/overlay2/x/merged overlay rw 0 0\n")), "normal")
+
     def test_backend_choice(self):
         self.assertEqual(rootfs.detect_backend("pi4", which_only("raspi-config")), "raspi-config")
         self.assertEqual(rootfs.detect_backend("x86", which_only("overlayroot-chroot")), "overlayroot")

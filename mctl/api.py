@@ -25,7 +25,7 @@ import unicodedata
 
 from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presence as presence_mod, presets, profile as tiers_mod, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
-from . import clipstick, locks, paths
+from . import clipstick, locks, paths, rootfs
 from . import policy
 from . import tz as tz_mod
 from . import screenmode
@@ -2480,6 +2480,10 @@ class Api:
             at = 0
         return bool(last and last.get("state") == "running" and time.time() - at < 35 * 60)
 
+    def _read_only_root(self):
+        """True while the read-only root (nxlx-rootfs) is on: an update would be written to RAM and lost at the next restart."""
+        return rootfs.current_state() == "overlay"
+
     def update_status(self, body, device, client):
         """What is installed, what is waiting (on a USB drive or uploaded), and the last update's progress."""
         from . import __version__
@@ -2500,7 +2504,9 @@ class Api:
         last = self._update_result()
         if last and last.get("state") == "done" and last.get("version") not in (None, __version__):
             last = None         # it says "updated to X", but X is not what runs now (a rollback from a terminal)
-        return {"version": __version__, "usb": usb, "inbox": inbox, "last": last}
+        ro = self._read_only_root()
+        return {"version": __version__, "usb": usb, "inbox": inbox, "last": last,
+                "read_only_root": ro, "read_only_message": rootfs.UPDATE_REFUSAL if ro else ""}
 
     def start_update(self, body, device, client):
         """{"source": "usb" | "inbox", "version": "N.N.N", "confirm": "update"}: nxlx-sysd starts a fixed update unit
@@ -2512,6 +2518,8 @@ class Api:
             raise bad("source must be usb or inbox")
         if not isinstance(version, str) or not re.fullmatch(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}", version):
             raise bad("version must look like 1.2.3")
+        if self._read_only_root():
+            raise ApiError(409, rootfs.UPDATE_REFUSAL)
         with self._import_lock:                  # checked and started in one step: an import or reset cannot begin between
             if self._care_busy:
                 raise ApiError(409, "%s is running; update when it has finished" % self._care_busy)
@@ -2531,6 +2539,8 @@ class Api:
             raise ApiError(411, "Content-Length required")
         if length > limit:
             raise ApiError(413, "too large for an update file")
+        if self._read_only_root():              # before a byte is read: a 300 MB bundle would go into RAM
+            raise ApiError(409, rootfs.UPDATE_REFUSAL)
         if self._update_running():
             raise ApiError(409, "an update is running; upload again when it has finished")
         inbox = self._update_inbox()

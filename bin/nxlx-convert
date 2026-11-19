@@ -509,7 +509,7 @@ def make_plan(node, force=False, mode="plan", release=None):
     ro = [(mp, t, o) for mp, t, o in node.mounts() if mp == "/" and (t == "overlay" or "ro" in o.split(","))]
     plan.check(not ro, "the root file system is writable" if not ro else
                "the root file system is read-only (%s): nothing would persist. Turn the read-only root off first "
-               "(sudo pvj-rootfs off) and restart" % ro[0][1])
+               "(sudo nxlx-rootfs disable) and restart" % ro[0][1])
     usb = [mp for mp, _, _ in node.mounts() if mp.startswith(("/media/pvj/", "/media/nxlx/"))]
     plan.check(not usb, "no USB drive is mounted under /media/pvj or /media/nxlx" if not usb else
                "a USB drive is mounted at %s: take it out (or sudo umount it) first" % ", ".join(usb))
