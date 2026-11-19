@@ -908,22 +908,58 @@ class ClipTest(Base):
         self.assertTrue(r.wait(lambda: r("get_property", "idle-active") is True, 10), r.stderr())
 
 
-    def test_a_decoder_warning_names_the_clip(self):
-        """J-135: a decoder's warning is of one clip and mpv's line does not say which, so the log line carries the clip's
-        file name. A clip with damaged picture data makes FFmpeg complain."""
-        bad = os.path.join(self.tmp, "damaged clip.mp4")
+    def damaged(self, name):
+        """A copy of the clip with damaged picture data (away from the headers), so FFmpeg complains, under this name."""
+        bad = os.path.join(self.tmp, name)
         with open(self.clip, "rb") as f:
             data = bytearray(f.read())
-        for at in range(len(data) // 3, len(data) // 3 + 4000, 7):      # inside the picture data, away from the headers
+        for at in range(len(data) // 3, len(data) // 3 + 4000, 7):
             data[at] ^= 0xFF
         with open(bad, "wb") as f:
             f.write(data)
-        self.r.load(bad)
+        return bad
+
+    def named_lines(self, shown, timeout=10):
+        """The log's lines that carry a clip name, once there are some. Read as bytes: they must be valid UTF-8."""
+        def lines():
+            self.r.log.flush()
+            self.r.log.seek(0)
+            text = self.r.log.read()
+            return [x for x in text.splitlines() if " [" in x and "]: " in x and shown in x]
+        self.assertTrue(self.r.wait(lines, timeout), self.r.stderr())
+        return lines()
+
+    def test_a_decoder_warning_names_the_clip(self):
+        """J-135: a decoder's warning is of one clip and mpv's line does not say which, so the log line carries the clip's
+        file name. A clip with damaged picture data makes FFmpeg complain."""
+        self.r.load(self.damaged("damaged clip.mp4"))
         self.assertTrue(self.r.wait(lambda: "[damaged clip.mp4]" in self.r.stderr(), 10), self.r.stderr())
-        lines = [x for x in self.r.stderr().splitlines() if "[damaged clip.mp4]" in x]
-        self.assertTrue(lines, self.r.stderr())
-        for x in lines:
-            self.assertRegex(x, r"video [0-9] (ffmpeg/[a-z0-9_]+|vd|ad|demux|lavf|cplayer) \[damaged clip.mp4\]: ")
+        for x in [x for x in self.r.stderr().splitlines() if "[damaged clip.mp4]" in x]:
+            self.assertRegex(x, r"video [0-9] (ffmpeg(/[a-z0-9_]+)?|vd|ad|demux|lavf|cplayer) \[damaged clip.mp4\]: ")
+
+    def test_a_long_name_with_accents_is_cut_between_characters_and_a_bracket_is_not_kept(self):
+        name = "café [x] " + "é" * 100 + ".mp4"            # 214 bytes, longer than the log keeps
+        self.r.load(self.damaged(name))
+        self.assertTrue(self.r.wait(lambda: "café [x? " in self.r.stderr(), 10), self.r.stderr())   # reading it at all is valid UTF-8
+        for x in self.r.stderr().splitlines():
+            if "café [x? " in x:
+                inside = x.split(" [", 1)[1].split("]: ", 1)[0]
+                self.assertTrue(set(inside[len("café [x? "):]) <= {"é"}, inside)
+                self.assertLessEqual(len(inside.encode()), 159)
+
+    def test_the_cuda_probe_lines_are_not_in_the_log_even_with_automatic_hardware_decoding(self):
+        """J-135: on a machine with no NVIDIA card FFmpeg and libmpv probe for CUDA and say so (a bare "Cannot load
+        libcuda.so.1" on stderr three times at the start, and "Could not dynamically load CUDA" through mpv's log)."""
+        import ctypes.util
+        if ctypes.util.find_library("cuda"):
+            self.skipTest("this machine has CUDA: the probe succeeds and says nothing")
+        r = Renderer("--hwdec=auto-safe")
+        self.addCleanup(r.close)
+        r("set_property", "image-display-duration", "inf")
+        r.load(self.clip)
+        self.assertTrue(r.wait(lambda: (r("get_property", "time-pos") or 0) > 0.3), r.stderr())
+        for words in ("libcuda", "dynamically load CUDA"):
+            self.assertNotIn(words, r.stderr())
 
     def test_a_clip_without_trouble_logs_no_clip_name(self):
         self.r.load(self.clip)

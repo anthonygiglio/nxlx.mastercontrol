@@ -384,15 +384,19 @@ static int plays_a_list(mpv_handle *h)
     return yes;
 }
 
-// Two lines that fill the log on a node and say nothing true about it (J-135). Both are matched whole, by the module that
-// says them and their own words, and only when the log is not verbose: no module is silenced, so every other line of the
-// same modules still reaches the log, and --verbose shows these too.
-//   - "Cannot load libcuda.so.1": FFmpeg probing for NVIDIA's decoder, which a Pi or an Intel PC does not have.
-//   - "pw.conf: can't load config client.conf": libpipewire, tried before ALSA, on a node that runs no PipeWire.
+// Two lines that fill the log on a node and say nothing true about it (J-135): FFmpeg probing for NVIDIA's decoder, which a Pi
+// or an Intel PC does not have. Through mpv's log they come from the module "ffmpeg" (FFmpeg's own log, no sub-name) as
+// "CUDA: Cannot load libcuda.so.1" and "CUDA: Could not dynamically load CUDA". Matched by module and exact words, and
+// only when the log is not verbose: no module is silenced, every other line of the same module still reaches the log.
+// (libpipewire's "pw.conf" line is not here: it goes to stderr without passing mpv, and the unit's PIPEWIRE_DEBUG=0 stops it.)
+static int from_ffmpeg(const mpv_event_log_message *m)
+{
+    return !strcmp(m->prefix, "ffmpeg") || !strncmp(m->prefix, "ffmpeg/", 7);
+}
+
 static int known_noise(const mpv_event_log_message *m)
 {
-    return (!strncmp(m->prefix, "ffmpeg/", 7) && strstr(m->text, "Cannot load libcuda.so.1"))
-           || strstr(m->text, "pw.conf: can't load config");
+    return from_ffmpeg(m) && (strstr(m->text, "CUDA: Cannot load libcuda.so.1") || strstr(m->text, "CUDA: Could not dynamically load CUDA"));
 }
 
 // A warning from a decoder or a demuxer is of one clip, and mpv's line does not say which. These are the modules that
@@ -400,23 +404,44 @@ static int known_noise(const mpv_event_log_message *m)
 // has the SEI or timescale trouble).
 static int speaks_for_a_clip(const mpv_event_log_message *m)
 {
-    return !strncmp(m->prefix, "ffmpeg/", 7) || !strcmp(m->prefix, "vd") || !strcmp(m->prefix, "ad")
+    return from_ffmpeg(m) || !strcmp(m->prefix, "vd") || !strcmp(m->prefix, "ad")
            || !strcmp(m->prefix, "demux") || !strcmp(m->prefix, "lavf") || !strcmp(m->prefix, "cplayer");
 }
 
-// The name of the file the layer has, without its folder, one line and printable (a name is the owner's or a drive's;
-// it must not be able to break a log line). Empty when there is none.
+// A file name made fit for a log line: valid UTF-8 only (an invalid byte, a control character, a C1 control or a ']' becomes
+// '?'), never cut inside a character, at most cap - 1 bytes. A name is the owner's or a drive's; it must not be able to
+// break a log line, and journald keeps a line that is not UTF-8 as a blob.
+static void clean_name(const char *in, char *out, size_t cap)
+{
+    size_t o = 0;
+    const unsigned char *p = (const unsigned char *)in;
+    while (*p && o + 1 < cap) {
+        int n = 1;
+        unsigned c = *p;
+        if (c >= 0xC2 && c <= 0xDF) n = 2;
+        else if (c >= 0xE0 && c <= 0xEF) n = 3;
+        else if (c >= 0xF0 && c <= 0xF4) n = 4;
+        int ok = n == 1 ? c >= 0x20 && c < 0x7f && c != ']' : 1;
+        for (int k = 1; ok && k < n; k++) if ((p[k] & 0xC0) != 0x80) ok = 0;         // also stops at the end of the string
+        if (ok && n == 2 && c == 0xC2 && p[1] < 0xA0) ok = 0;                          // C1 controls
+        if (ok && n == 3 && ((c == 0xE0 && p[1] < 0xA0) || (c == 0xED && p[1] >= 0xA0))) ok = 0;   // overlong, surrogates
+        if (ok && n == 4 && ((c == 0xF0 && p[1] < 0x90) || (c == 0xF4 && p[1] >= 0x90))) ok = 0;
+        if (!ok) { out[o++] = '?'; p++; continue; }
+        if (o + n >= cap) break;                                                       // a whole character or none
+        for (int k = 0; k < n; k++) out[o++] = (char)p[k];
+        p += n;
+    }
+    out[o] = 0;
+}
+
+// The name of the file the layer has been given, kept by the event thread: asked at the start of a file, in the order of the
+// events, so a line queued before the next file starts is of the file that was playing then. Empty when there is none.
 static void clip_name(mpv_handle *h, char *out, size_t cap)
 {
     out[0] = 0;
     char *f = mpv_get_property_string(h, "filename");
     if (!f) return;
-    size_t o = 0;
-    for (const char *p = f; *p && o + 1 < cap; p++) {
-        unsigned char ch = (unsigned char)*p;
-        out[o++] = ch < 0x20 || ch == 0x7f ? '?' : (char)ch;
-    }
-    out[o] = 0;
+    clean_name(f, out, cap);
     mpv_free(f);
 }
 
@@ -425,12 +450,16 @@ static void *event_loop(void *arg)
     Layer *l = arg;
     mpv_handle *h = l->h;
     int i = l->index;
+    char clip[160];
+    clip[0] = 0;
     double restart_at = -1e9;
     long restart_drawn = -1;
     int turns = 0;
     while (!events_stop) {
         mpv_event *ev = mpv_wait_event(h, 0.5);
         if (ev->event_id == MPV_EVENT_SHUTDOWN) break;
+        if (ev->event_id == MPV_EVENT_START_FILE || ev->event_id == MPV_EVENT_FILE_LOADED) clip_name(h, clip, sizeof clip);
+        if (ev->event_id == MPV_EVENT_IDLE) clip[0] = 0;
         if (i >= 0) {
             if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG || ev->event_id == MPV_EVENT_END_FILE || ev->event_id == MPV_EVENT_IDLE) {
                 // libmpv asks for no new frame when its video ends (a Stop): the layer is drawn once more, which gives
@@ -480,10 +509,7 @@ static void *event_loop(void *arg)
             else if (i < LAYERS) snprintf(who, sizeof who, "video %d", i);
             else snprintf(who, sizeof who, "source %d", i);
             if (!app.cfg->verbose && known_noise(m)) continue;
-            char clip[160];
-            clip[0] = 0;
-            if (i >= 0 && speaks_for_a_clip(m)) clip_name(h, clip, sizeof clip);
-            LOG("%s %s%s%s%s: %.*s", who, m->prefix, clip[0] ? " [" : "", clip, clip[0] ? "]" : "", (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
+            LOG("%s %s%s%s%s: %.*s", who, m->prefix, i >= 0 && clip[0] && speaks_for_a_clip(m) ? " [" : "", i >= 0 && speaks_for_a_clip(m) ? clip : "", i >= 0 && clip[0] && speaks_for_a_clip(m) ? "]" : "", (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
         }
     }
     return NULL;
@@ -638,6 +664,11 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         set(l->h, "demuxer-max-bytes", SMALL_CACHE);
         set(l->h, "demuxer-max-back-bytes", SMALL_BACK);
     }
+    // libmpv loads every graphics interop for hardware decoding it finds when it starts, among them NVIDIA's CUDA one, which
+    // prints a bare "Cannot load libcuda.so.1" to stderr three times on a node with no NVIDIA card (J-135). This program
+    // only ever asks for copy variants (D124: the render context has no display to import frames from), and a copy needs no
+    // interop, so none is loaded.
+    set(l->h, "gpu-hwdec-interop", "no");
     if (is_text) {
         // plays nothing: only its on-screen layer, over a clear background
         set(l->h, "ao", "null");
