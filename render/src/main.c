@@ -384,9 +384,11 @@ static int plays_a_list(mpv_handle *h)
     return yes;
 }
 
-// Two lines that fill the log on a node and say nothing true about it (J-135): FFmpeg probing for NVIDIA's decoder, which a Pi
-// or an Intel PC does not have. Through mpv's log they come from the module "ffmpeg" (FFmpeg's own log, no sub-name) as
-// "CUDA: Cannot load libcuda.so.1" and "CUDA: Could not dynamically load CUDA". Matched by module and exact words, and
+// Three lines that fill the log on a node and say nothing true about it (J-135): FFmpeg probing for NVIDIA's decoder and for a
+// Vulkan driver, which a Pi or an Intel PC may not have. Through mpv's log they come from the module "ffmpeg" (FFmpeg's own
+// log, no sub-name) as "AVHWDeviceContext: Cannot load libcuda.so.1", "AVHWDeviceContext: Could not dynamically load CUDA" and
+// "AVHWDeviceContext: Instance creation failure: VK_ERROR_INCOMPATIBLE_DRIVER". The prefix before the colon varies with the
+// FFmpeg version, so the match is on the words after it; any other Vulkan error is kept. Matched by module and exact words, and
 // only when the log is not verbose: no module is silenced, every other line of the same module still reaches the log.
 // (libpipewire's "pw.conf" line is not here: it goes to stderr without passing mpv, and the unit's PIPEWIRE_DEBUG=0 stops it.)
 static int from_ffmpeg(const mpv_event_log_message *m)
@@ -396,7 +398,8 @@ static int from_ffmpeg(const mpv_event_log_message *m)
 
 static int known_noise(const mpv_event_log_message *m)
 {
-    return from_ffmpeg(m) && (strstr(m->text, "CUDA: Cannot load libcuda.so.1") || strstr(m->text, "CUDA: Could not dynamically load CUDA"));
+    return from_ffmpeg(m) && (strstr(m->text, "Cannot load libcuda.so.1") || strstr(m->text, "Could not dynamically load CUDA")
+                              || strstr(m->text, "Instance creation failure: VK_ERROR_INCOMPATIBLE_DRIVER"));
 }
 
 // A warning from a decoder or a demuxer is of one clip, and mpv's line does not say which. These are the modules that

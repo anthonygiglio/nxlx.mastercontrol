@@ -951,7 +951,7 @@ class ClipTest(Base):
         r.log.flush()
         r.log.seek(0)
         whole = r.log.read()                    # the whole file, not the tail that r.stderr() keeps
-        for words in ("libcuda", "dynamically load CUDA"):
+        for words in ("libcuda", "dynamically load CUDA", "VK_ERROR_INCOMPATIBLE_DRIVER"):
             self.assertNotIn(words, whole)
 
     def test_a_clip_without_trouble_logs_no_clip_name(self):
