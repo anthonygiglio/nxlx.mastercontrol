@@ -418,7 +418,7 @@
     var h = c.h, el = document.getElementById('fxlist'), live = c.can('live'), full = c.can('full');
     if (!el) return;
     var rows = shownRows(d), onId = d.on && d.on.id;
-    var shape = JSON.stringify([rows.map(function (s) { return [s.id, s.weight, s.refused, s.refused_pair, s.error]; }), onId, d.available, live, full]);
+    var shape = JSON.stringify([rows.map(function (s) { return [s.id, s.weight, s.refused, s.refused_pair, s.error, s.flashes]; }), onId, d.available, live, full, !!d.faster]);
     if (shape === card.list || busyIn(el)) return;
     card.list = shape;
     el.textContent = '';
@@ -432,13 +432,18 @@
           h('span', { class: 'hint', text: facts }),
           s.description ? h('span', { class: 'hint fxdesc', text: s.description }) : null,
           s.error ? h('span', { class: 'msg err', text: 'This file cannot be used: ' + s.error }) : null,
+          s.flashes && !s.error ? h('span', { class: 'msg err fxflash', text: d.faster
+            ? 'Flashing light can trigger seizures in people who are sensitive to it. Do not use it where someone may be.'
+            : 'This one flashes, so it cannot be put on from this list. Hold the Strobe button to flash it, or switch on "Allow faster than the flash limit" (Shaders page, Advanced).' }) : null,
           s.refused ? h('span', { class: 'msg err', text: 'The GPU of this node refused it: ' + s.refused })
             : (s.refused_pair ? h('span', { class: 'msg err', text: 'The GPU of this node refused it over this shader: ' + s.refused_pair }) : null)),
         h('div', { class: 'row' },
           live && !s.error ? (isOn ? h('button', { class: 'btn', 'data-off': s.id, text: 'Off', 'aria-label': 'Take ' + name + ' off', onclick: function () { send(c, '/api/effects', { off: true }); } })
-            : h('button', { class: 'btn', 'data-put': s.id, text: 'Put on', 'aria-label': 'Put ' + name + ' on', disabled: !d.available, onclick: function (ev) {
+            : h('button', { class: 'btn', 'data-put': s.id, text: 'Put on', 'aria-label': 'Put ' + name + ' on', disabled: !d.available || (s.flashes && !d.faster), onclick: function (ev) {
               ev.target.disabled = true; ev.target.textContent = 'Putting on...';
-              send(c, '/api/effects', { id: s.id }).then(function (r) { if (!r.ok) { card.list = ''; drawList(c, X.data); } });
+              send(c, '/api/effects', { id: s.id }).then(function (r) {
+                if (!r.ok) { card.list = ''; drawList(c, X.data); } else if (r.data && r.data.warning) c.say(r.data.warning, true);
+              });
             } })) : null,
           full && s.source === 'uploaded' ? h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + name, onclick: function (ev) {
             c.confirmRow('Remove ' + name + ' and its presets from the node?', 'Remove', 'Keep it', function () { send(c, '/api/effects/library', { action: 'delete', id: s.id }); }, ev.target);

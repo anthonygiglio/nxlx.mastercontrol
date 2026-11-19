@@ -26,7 +26,8 @@ import tests        # noqa: F401  (the run's own temp folder, ranked locks)
 from mctl import actions, effects as E, midi, osc, policy, shaders as S, strobe as ST
 from mctl.api import ApiError
 from mctl.player import PlayerError
-from tests.test_effects import Base as FxBase
+from tests import test_effects as TE
+from tests.test_effects import Base as FxBase, STROBE as FLASHING_FILTER
 from tests.test_osc import msg
 
 
@@ -56,7 +57,7 @@ class Chains:
                                                       "values": dict(body["values"])}
         return {"ok": True}
 
-    def values(self, body):
+    def values(self, body, hold=False):
         if self.fail_values:
             self.fail_values -= 1
             raise ApiError(503, "the renderer did not answer")
@@ -100,6 +101,9 @@ class Effects:
 
     def _path(self, sid):
         return "/x/" + sid, "bundled"
+
+    def flash_gate(self, sid):
+        return None                             # (the real rule is tested with the real engine)
 
     def current(self):
         return dict(self.on) if self.on else None
@@ -790,6 +794,204 @@ class RouteTest(RouteBase):
         self.assertEqual((on["values"]["rate"], on["controls"]["speed"]), (3.0, 4.0))
 
 
+class EffectsListFlashTest(RouteBase):
+    """J-128 (D134 rule 7 closed): a flashing filter starts from the Effects list, a preset or the chain routes only
+    behind the owner's "Allow faster than the flash limit", with a warning; the hold is the other way in."""
+
+    def pump(self):
+        self.fx.changer._last = -1e9
+        self.fx._switched = -1e9
+        self.fx.changer.pump()
+
+    def faster(self, on):
+        self.api.settings.data["shaders"] = dict(self.api.settings.data.get("shaders") or {}, faster=on)
+
+    def test_the_effects_list_cannot_put_the_strobe_on_without_the_opt_in(self):
+        st, body, _ = self.post("/api/effects", {"id": "fx-strobe.fs"})
+        self.assertEqual(st, 409, body)
+        self.assertIn("flashes", body["error"])
+        self.assertIn("Allow faster than the flash limit", body["error"])
+        self.assertIsNone(self.fx.on)
+
+    def test_a_preset_of_the_strobe_is_refused_the_same_way(self):
+        st, body, _ = self.post("/api/effects/preset", {"id": "fx-strobe.fs", "index": 1})
+        self.assertEqual(st, 409, body)
+        st, body, _ = self.post("/api/effects/preset", {"id": "fx-strobe.fs", "name": "x"})
+        self.assertEqual(st, 409, body)
+        self.assertIsNone(self.fx.on)
+
+    def test_any_file_that_says_it_flashes_is_held_to_the_same_rule(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        st, body, _ = self.post("/api/effects", {"id": "strobe.fs"})
+        self.assertEqual(st, 409, body)
+        st, body, _ = self.post("/api/effects", {"id": "fx-vignette.fs"})                # a quiet filter is untouched
+        self.assertEqual((st, "warning" in body), (200, False), body)
+
+    def test_the_hold_still_works_without_the_opt_in(self):
+        st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
+        self.assertEqual((st, body.get("ok")), (200, True), body)
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+        self.post("/api/strobe/release", {"holder": "tab"})
+
+    def test_with_the_opt_in_it_starts_and_the_answer_carries_a_plain_warning(self):
+        self.faster(True)
+        st, body, _ = self.post("/api/effects", {"id": "fx-strobe.fs"})
+        self.assertEqual(st, 200, body)
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+        self.assertIn("seizures", body["warning"])
+        self.assertNotIn("—", body["warning"])
+
+    def test_the_list_row_says_it_flashes_and_the_state_says_whether_the_opt_in_is_on(self):
+        self.assertFalse(self.state()["faster"])
+        self.assertTrue({s["id"]: s for s in self.state()["effects"]}["fx-strobe.fs"]["flashes"])
+        self.faster(True)
+        self.assertTrue(self.state()["faster"])
+
+    def test_next_and_previous_step_past_a_flashing_file_unless_the_opt_in_is_on(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.assertNotIn("strobe.fs", self.fx.order())
+        self.assertNotIn("fx-strobe.fs", self.fx.order())
+        seen = []
+        for direction in (1, -1):
+            for _ in range(len(self.fx.order()) + 1):
+                st, body, _ = self.post("/api/effects/step", {"dir": direction})
+                self.assertEqual(st, 200, body)
+                self.pump()
+                seen.append(self.state()["on"]["id"])
+        self.assertNotIn("strobe.fs", seen)
+        self.assertNotIn("fx-strobe.fs", seen)
+        self.faster(True)
+        self.assertIn("strobe.fs", self.fx.order())             # behind the opt-in the upload is stepped onto as before
+        self.assertNotIn("fx-strobe.fs", self.fx.order())       # the Strobe itself stays hold-only
+
+    def test_the_one_button_never_puts_a_flashing_file_back(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.faster(True)
+        self.fx.put("strobe.fs")
+        self.fx.off()
+        self.faster(False)
+        self.assertEqual(self.fx.recent, "strobe.fs")
+        st, body, _ = self.post("/api/effects", {"toggle": True})
+        self.assertEqual(st, 200, body)
+        self.pump()
+        self.assertNotEqual(self.state()["on"]["id"], "strobe.fs")
+
+    def chains(self):
+        """The New renderer's chain slots, stood in for: what each slot holds and every amount sent to one."""
+        held, sent, p = {}, [], self.player
+        p.native_chains = lambda: True
+        p.sources = lambda: 4
+        p.chain_slots = lambda source, generator=False: [1, 2, 3] if source == 1 else [0, 1, 2, 3]
+        p.chain_state = lambda: dict(held)
+        p._chain_there = lambda source, slot, path: False
+
+        def put(source, slot, path):
+            held[(source, slot)] = path
+            return "ok", ""
+        p.chain_put = put
+        p.chain_values = lambda source, slot, send, path: (sent.append(send["@amount"]) or True)
+        p.chain_clear = lambda source, slot: bool(held.pop((source, slot), None))
+        return held, sent
+
+    def test_the_chain_route_cannot_light_the_parked_strobe_and_the_hold_still_can(self):
+        held, sent = self.chains()
+        self.api.chains.put({"source": 1, "slot": 3, "id": "fx-strobe.fs", "controls": {"amount": 0.0}})      # as the hold's arm does
+        self.assertIn((1, 3), held)
+        st, body, _ = self.post("/api/effects/chain", {"source": 1, "slot": 3, "controls": {"amount": 1}})
+        self.assertEqual(st, 409, body)
+        self.assertIn("flashes", body["error"])
+        self.assertEqual(sent, [])
+        st, body, _ = self.post("/api/effects/chain", {"source": 1, "slot": 3, "controls": {"amount": 0}})    # at 0 nothing is drawn
+        self.assertEqual(st, 200, body)
+        self.api.chains.values({"source": 1, "slot": 3, "controls": {"amount": 1.0}}, hold=True)               # the hold's own call
+        self.assertEqual(sent[-1], 1.0)
+        self.faster(True)
+        st, body, _ = self.post("/api/effects/chain", {"source": 1, "slot": 3, "controls": {"amount": 1}})
+        self.assertEqual(st, 200, body)
+        self.assertIn("seizures", body["warning"])
+
+    def test_switching_the_opt_in_off_takes_a_lit_flashing_filter_off_but_not_the_parked_strobe_or_a_hold(self):
+        held, sent = self.chains()
+        self.faster(True)
+        self.api.chains.put({"source": 1, "slot": 2, "id": "fx-strobe.fs", "controls": {"amount": 1.0}})
+        self.api.chains.put({"source": 1, "slot": 3, "id": "fx-strobe.fs", "controls": {"amount": 0.0}})       # parked
+        st, body, _ = self.post("/api/shaders", {"action": "config", "faster": False})
+        self.assertEqual(st, 200, body)
+        self.assertEqual(sorted(held), [(1, 3)])                        # the lit one went, the parked one stays
+        self.post("/api/effects", {"off": True})
+        self.faster(True)
+        self.post("/api/effects", {"id": "fx-strobe.fs"})
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+        self.post("/api/shaders", {"action": "config", "faster": False})
+        self.assertIsNone(self.fx.on)                                   # an effect that is on goes off too
+
+    def test_a_hold_is_not_ended_by_the_opt_in_going_off_and_a_flashing_effect_is_not_put_back_after_it(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.faster(True)
+        self.post("/api/effects", {"id": "strobe.fs"})
+        self.assertEqual(self.fx.on["id"], "strobe.fs")
+        self.post("/api/strobe/hold", {"holder": "tab"})                 # the hold takes the screen; strobe.fs is what was on before
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+        self.post("/api/shaders", {"action": "config", "faster": False})
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")               # the hold's own strobe stays lit
+        self.post("/api/strobe/release", {"holder": "tab"})
+        self.assertIsNone(self.fx.on)                                    # and the one from before is not put back
+
+    def test_a_steady_strobe_is_not_the_holds_when_the_opt_in_goes_off_on_the_new_renderer(self):
+        held, sent = self.chains()
+        self.faster(True)
+        self.api.chains.put({"source": 1, "slot": 2, "id": "fx-strobe.fs", "controls": {"amount": 1.0}})      # steady, put on by hand
+        self.post("/api/effects", {"id": "fx-strobe.fs"})                                                   # (the effect twin too)
+        self.api.chains.put({"source": 1, "slot": 3, "id": "fx-strobe.fs", "controls": {"amount": 0.0}})      # the hold's loaded copy
+        self.strobe.slot, self.strobe.route, self.strobe.lit = 3, "chain", True                              # a hold lights it
+        self.api.chains.values({"source": 1, "slot": 3, "controls": {"amount": 1.0}}, hold=True)
+        self.post("/api/shaders", {"action": "config", "faster": False})
+        self.assertEqual(sorted(held), [(1, 3)])                        # the steady slot went; the hold's slot stays lit
+        self.assertIsNone(self.fx.on)                                   # the steady effect twin went too: the hold is on the chain
+        self.strobe.lit = False
+
+    def test_importing_or_resetting_settings_that_switch_the_opt_in_off_takes_the_flashing_effect_off(self):
+        self.faster(True)
+        self.post("/api/effects", {"id": "fx-strobe.fs"})
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+        self.faster(False)                                              # what an import of a file without the switch leaves
+        self.api.boxcare._apply()
+        self.assertIsNone(self.fx.on)
+
+    def test_a_file_replaced_by_one_that_flashes_goes_off_unless_the_opt_in_is_on(self):
+        self.fx.upload("q.fs", TE.fx(DESCRIPTION="Quiet"))
+        self.assertEqual(self.post("/api/effects", {"id": "q.fs"})[0], 200)
+        self.assertEqual(self.fx.on["id"], "q.fs")
+        self.fx.upload("q.fs", FLASHING_FILTER, True)
+        self.assertIsNone(self.fx.on)
+        self.faster(True)
+        self.fx.upload("q.fs", TE.fx(DESCRIPTION="Quiet"), True)
+        self.assertEqual(self.post("/api/effects", {"id": "q.fs"})[0], 200)
+        self.fx.upload("q.fs", FLASHING_FILTER, True)
+        self.assertEqual(self.fx.on["id"], "q.fs")                       # behind the opt-in it stays
+
+    def test_a_wish_queued_for_a_flashing_file_is_checked_again_when_it_runs(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.fx._queue("strobe.fs")
+        self.pump()
+        self.assertIsNone(self.fx.on)
+        self.assertIn("flashes", self.fx.error["message"])
+
+    def test_the_words_do_not_name_who_holds_the_switch(self):
+        st, body, _ = self.post("/api/effects", {"id": "fx-strobe.fs"})
+        self.assertNotIn("owner", body["error"].lower())
+        name = next(r["name"] for r in self.state()["effects"] if r["id"] == "fx-strobe.fs")
+        self.assertNotEqual(name, "fx-strobe.fs")
+        self.assertTrue(body["error"].startswith(name + " flashes"), body["error"])      # the library's name leads, not the file id
+        self.assertNotIn("fx-strobe.fs", body["error"])
+
+    def test_the_chain_route_is_refused_too(self):
+        self.chains()
+        st, body, _ = self.post("/api/effects/chain", {"source": 1, "slot": 2, "id": "fx-strobe.fs"})
+        self.assertEqual(st, 409, body)
+        self.assertIn("flashes", body["error"])
+
+
 class FilterTest(unittest.TestCase):
     def test_the_filter_caps_its_own_rate_and_has_a_flash_that_is_never_more_than_half_the_gap(self):
         path = os.path.join(E.EFFECTS_DIR, "fx-strobe.fs")
@@ -1071,6 +1273,20 @@ class OscHandlerTest(RouteBase):
         self.clock.t += 0.2                                              # and then nothing
         self.strobe.tick()
         self.assertIsNone(self.fx.on)
+
+    def test_an_osc_on_never_lands_on_a_flashing_file_without_the_opt_in(self):
+        self.fx.upload("strobe.fs", FLASHING_FILTER)
+        self.api.settings.data["shaders"] = dict(self.api.settings.data.get("shaders") or {}, faster=True)
+        self.fx.put("strobe.fs")
+        self.fx.off()
+        self.api.settings.data["shaders"]["faster"] = False
+        server = self.make_server()
+        server.handle_packet(msg("/mctl/effect", 1), self.SENDER)
+        self.fx.changer._last = -1e9
+        self.fx._switched = -1e9
+        self.fx.changer.pump()
+        self.assertNotEqual((self.fx.current() or {}).get("id"), "strobe.fs")
+        self.assertNotIn("strobe.fs", self.fx.order())
 
     def test_the_rate_over_osc_is_kept_to_the_cap(self):
         server = self.make_server()
