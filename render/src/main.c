@@ -509,7 +509,8 @@ static void *event_loop(void *arg)
             else if (i < LAYERS) snprintf(who, sizeof who, "video %d", i);
             else snprintf(who, sizeof who, "source %d", i);
             if (!app.cfg->verbose && known_noise(m)) continue;
-            LOG("%s %s%s%s%s: %.*s", who, m->prefix, i >= 0 && clip[0] && speaks_for_a_clip(m) ? " [" : "", i >= 0 && speaks_for_a_clip(m) ? clip : "", i >= 0 && clip[0] && speaks_for_a_clip(m) ? "]" : "", (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
+            int named = i >= 0 && clip[0] && speaks_for_a_clip(m);
+            LOG("%s %s%s%s%s: %.*s", who, m->prefix, named ? " [" : "", named ? clip : "", named ? "]" : "", (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
         }
     }
     return NULL;

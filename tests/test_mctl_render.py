@@ -919,16 +919,6 @@ class ClipTest(Base):
             f.write(data)
         return bad
 
-    def named_lines(self, shown, timeout=10):
-        """The log's lines that carry a clip name, once there are some. Read as bytes: they must be valid UTF-8."""
-        def lines():
-            self.r.log.flush()
-            self.r.log.seek(0)
-            text = self.r.log.read()
-            return [x for x in text.splitlines() if " [" in x and "]: " in x and shown in x]
-        self.assertTrue(self.r.wait(lines, timeout), self.r.stderr())
-        return lines()
-
     def test_a_decoder_warning_names_the_clip(self):
         """J-135: a decoder's warning is of one clip and mpv's line does not say which, so the log line carries the clip's
         file name. A clip with damaged picture data makes FFmpeg complain."""
@@ -958,8 +948,11 @@ class ClipTest(Base):
         r("set_property", "image-display-duration", "inf")
         r.load(self.clip)
         self.assertTrue(r.wait(lambda: (r("get_property", "time-pos") or 0) > 0.3), r.stderr())
+        r.log.flush()
+        r.log.seek(0)
+        whole = r.log.read()                    # the whole file, not the tail that r.stderr() keeps
         for words in ("libcuda", "dynamically load CUDA"):
-            self.assertNotIn(words, r.stderr())
+            self.assertNotIn(words, whole)
 
     def test_a_clip_without_trouble_logs_no_clip_name(self):
         self.r.load(self.clip)
