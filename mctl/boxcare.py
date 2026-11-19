@@ -938,6 +938,12 @@ class BoxCare:
                 fn()
             except Exception as e:
                 problems.append("%s: %s" % (label, getattr(e, "message", None) or e))
+        for part in (getattr(api, "effects", None), getattr(api, "chains", None)):      # a file or a reset may switch "faster" off (J-128)
+            try:
+                if part is not None and hasattr(part, "drop_flashing"):
+                    part.drop_flashing()
+            except Exception as e:
+                problems.append("Flashing filters: %s" % (getattr(e, "message", None) or e))
         return problems
 
     def import_settings(self, raw, confirm, device, client):

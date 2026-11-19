@@ -1064,6 +1064,62 @@ class Effects(S.Engine):
             return None
         return S.SPEED_MAX if self.faster() else 1.0
 
+    FLASH_ASK = ("%s flashes, so it is not put on from here while \"Allow faster than the flash limit\" is off (Shaders page, "
+                 "Advanced).")
+    FLASH_HOLD = " The Strobe's hold button flashes it without that switch."
+    FLASH_WARN = ("%s flashes. Flashing light can trigger seizures in people who are sensitive to it: do not use it where "
+                  "someone may be.")
+
+    def _flash_name(self, sid):
+        """The filter's name as the library shows it, else its file name."""
+        try:
+            return next((s.get("name") or sid for s in S.Engine.library(self) if s["id"] == sid), sid)
+        except Exception:
+            return sid
+
+    def flash_gate(self, sid):
+        """D134 rule 7, closed (J-128): a filter that flashes (the Strobe, or any file that says it flashes) is not
+        started by a request that comes from the Effects list, a preset or the chain routes, unless the owner's
+        "Allow faster than the flash limit" is on. The hold (mctl/strobe.py) does not come through here. Returns None
+        when it may start (not a flashing filter), the warning text when it may start behind the opt-in (the caller
+        passes it on), else raises 409."""
+        path, _ = self._path(sid)
+        flashes = sid in HOLD_ONLY
+        if not flashes:
+            try:
+                flashes = bool(self._parsed(path)[0].get("flashes"))
+            except ShaderError:
+                return None                             # the usual refusal (422) comes from the put itself
+        if not flashes:
+            return None
+        if not self.faster():
+            raise ApiError(409, self.FLASH_ASK % self._flash_name(sid) + (self.FLASH_HOLD if sid in HOLD_ONLY else ""))
+        return self.FLASH_WARN % self._flash_name(sid)
+
+    def drop_flashing(self, why="Allow faster than the flash limit was switched off"):
+        """The opt-in went off (J-128): a flashing filter that is on is taken off, except the Strobe while a hold lights it."""
+        on = self.current()
+        if on is None:
+            return
+        strobe = getattr(self.api, "strobe", None)
+        if on["id"] in HOLD_ONLY and getattr(strobe, "lit", False) and getattr(strobe, "route", None) == "effect":
+            return                                      # the hold's own strobe (it is the effect); a steady one is not the hold's
+        try:
+            self.flash_gate(on["id"])
+        except ApiError:
+            self.off(why)
+
+    def upload(self, name, source, replace=False):
+        out = super().upload(name, source, replace)
+        if replace:                                     # a replaced file that now says it flashes, and is on, goes off unless the opt-in is on
+            on = self.current()
+            if on is not None and on["id"] == name:
+                try:
+                    self.flash_gate(name)
+                except ApiError:
+                    self.off("the file was replaced by one that flashes")
+        return out
+
     def limit(self, parsed, controls):
         top = self.speed_max(parsed)
         if top is None:
@@ -1115,13 +1171,14 @@ class Effects(S.Engine):
     def order(self, pair=None):
         """The filters that can be put on, in the library's order: what Previous and Next step through. Without the
         files the GPU refused, and with `pair` (the generator shader under the effects now) without the ones it
-        refused over that generator."""
+        refused over that generator. Without the filters that flash unless "Allow faster" is on (flash_gate)."""
         out = []
         for s in S.Engine.library(self):
             if not s["error"] and s["id"] not in HOLD_ONLY:
                 try:
                     digest = self._parsed(self._path(s["id"])[0])[1]
                     if digest not in self._refusals and not (pair and self._pair_said(digest, pair)):
+                        self.flash_gate(s["id"])        # a flashing filter is stepped onto only behind the opt-in (J-128)
                         out.append(s["id"])
                 except (ShaderError, ApiError):
                     pass
@@ -1650,6 +1707,7 @@ class Effects(S.Engine):
                     raise ApiError(409, "there is no effect that can be put on")
                 on = self._seen()
                 sid = self._flying = self._resolve(job, on["id"] if on else None, ids)
+                self.flash_gate(sid)                    # a wish queued by id (a preset, the one button) is checked again when it runs (J-128)
                 done = self.put(sid, None, None, job.get("preset"), queued=True, gen=job.get("gen"), clears=job.get("clears", getattr(self.api.player, "clears", 0)))
                 if done is None and job.get("gen") == self._gen:
                     # Not overtaken by an Off or by an effect put on by hand (those are newer wishes and need no
@@ -1984,6 +2042,9 @@ class Effects(S.Engine):
         if sid is None:
             raise ApiError(409, "no effect is on")
         path, _ = self._path(sid)
+        warn = None
+        if not (on and on["id"] == sid and not busy):       # a preset of the effect that is on moves its values; any other puts one on
+            warn = self.flash_gate(sid)
         cfg = self._live().config()
         rows = self.presets(cfg).get(sid, [])
         name = body.get("name")
@@ -2010,7 +2071,10 @@ class Effects(S.Engine):
         else:
             self._ask(ask)
             self._queue(sid, name)
-        return {"ok": True, "id": sid, "preset": name}
+        out = {"ok": True, "id": sid, "preset": name}
+        if warn:
+            out["warning"] = warn
+        return out
 
     def step(self, direction, ask=False):
         """The next filter of the library, or the one before, put on in place of the one that is on (the first or the
@@ -2151,10 +2215,15 @@ class Effects(S.Engine):
         elif body.get("toggle") is True:
             return self.toggle(ask=self._panel(device))
         else:
+            warn = None
+            if isinstance(body.get("id"), str):
+                warn = self.flash_gate(body["id"])
             try:
                 self.put(body.get("id"), body.get("values"), body.get("controls"), body.get("preset"))
             except ShaderError as e:
                 raise ApiError(422, str(e))
+            if warn:
+                return dict(self.state(), warning=warn)
         return self.state()
 
     def api_values(self, body, device, client):

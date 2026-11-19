@@ -5298,6 +5298,11 @@ function startServer(env) {          // env: more for the harness's environment 
       assert(/measured on a Raspberry Pi 4/.test(await page.textContent('#fxworknote')), 'the list says where its words about work come from');
       assert(/from the isf-files pack, by VIDVOX/.test(await page.textContent('#fxlist [data-effect="isf-mirror.fs"]')), 'somebody else\'s filter says whose it is');
       assert(/moves by itself/.test(await page.textContent('#fxlist [data-effect="fx-kaleido.fs"]')), 'a filter that moves by itself says so');
+      // J-128: a filter that flashes cannot be put on from the list while "Allow faster than the flash limit" is off (a plain
+      // line says why; the node refuses it too). Sync predicates only: an async waitForFunction never polls.
+      assert(await page.isDisabled('#fxlist [data-put="fx-strobe.fs"]'), 'the Strobe Put on button is disabled while the opt-in is off');
+      assert(!(await page.isDisabled('#fxlist [data-put="fx-vignette.fs"]')), 'a quiet filter\'s Put on is enabled');
+      assert(/Hold the Strobe button to flash it/.test(await page.textContent('#fxlist [data-effect="fx-strobe.fs"] .fxflash')), 'and the row says why in plain words');
       // the list by name and by weight
       await page.fill('#fxfilter', 'vign');
       await page.waitForFunction(() => document.querySelectorAll('#fxlist [data-effect]').length === 1);
