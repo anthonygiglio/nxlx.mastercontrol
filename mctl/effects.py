@@ -1064,6 +1064,29 @@ class Effects(S.Engine):
             return None
         return S.SPEED_MAX if self.faster() else 1.0
 
+    FLASH_ASK = ("%s flashes. From this list it is not started unless \"Allow faster than the flash limit\" is switched on "
+                 "(Shaders page, Advanced); the Strobe's hold button is the way to flash without it.")
+    FLASH_WARN = ("%s flashes. Flashing light can trigger seizures in people who are sensitive to it: do not use it where "
+                  "someone may be.")
+
+    def flash_gate(self, sid):
+        """D134 rule 7, closed (J-128): a filter that flashes (the Strobe, or any file that says it flashes) is not
+        started by a request that comes from the Effects list, a preset or the chain routes, unless the owner's
+        "Allow faster than the flash limit" is on. The hold (mctl/strobe.py) does not come through here. Returns None
+        when it may start, "" when it may start behind the opt-in (the caller says the warning), else raises 409."""
+        path, _ = self._path(sid)
+        flashes = sid in HOLD_ONLY
+        if not flashes:
+            try:
+                flashes = bool(self._parsed(path)[0].get("flashes"))
+            except ShaderError:
+                return None                             # the usual refusal (422) comes from the put itself
+        if not flashes:
+            return None
+        if not self.faster():
+            raise ApiError(409, self.FLASH_ASK % sid)
+        return self.FLASH_WARN % sid
+
     def limit(self, parsed, controls):
         top = self.speed_max(parsed)
         if top is None:
@@ -1984,6 +2007,9 @@ class Effects(S.Engine):
         if sid is None:
             raise ApiError(409, "no effect is on")
         path, _ = self._path(sid)
+        warn = None
+        if not (on and on["id"] == sid and not busy):       # a preset of the effect that is on moves its values; any other puts one on
+            warn = self.flash_gate(sid)
         cfg = self._live().config()
         rows = self.presets(cfg).get(sid, [])
         name = body.get("name")
@@ -2010,7 +2036,10 @@ class Effects(S.Engine):
         else:
             self._ask(ask)
             self._queue(sid, name)
-        return {"ok": True, "id": sid, "preset": name}
+        out = {"ok": True, "id": sid, "preset": name}
+        if warn:
+            out["warning"] = warn
+        return out
 
     def step(self, direction, ask=False):
         """The next filter of the library, or the one before, put on in place of the one that is on (the first or the
@@ -2151,10 +2180,15 @@ class Effects(S.Engine):
         elif body.get("toggle") is True:
             return self.toggle(ask=self._panel(device))
         else:
+            warn = None
+            if isinstance(body.get("id"), str):
+                warn = self.flash_gate(body["id"])
             try:
                 self.put(body.get("id"), body.get("values"), body.get("controls"), body.get("preset"))
             except ShaderError as e:
                 raise ApiError(422, str(e))
+            if warn:
+                return dict(self.state(), warning=warn)
         return self.state()
 
     def api_values(self, body, device, client):

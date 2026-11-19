@@ -345,7 +345,9 @@ class Chains:
         if "shader" in body:
             return self.put_generator(body.get("source"), body["shader"], body.get("preset"), body.get("values"), body.get("controls"))
         if "id" in body:
-            return self.put(body)
+            warn = self.api.effects.flash_gate(body["id"]) if isinstance(body["id"], str) else None
+            out = self.put(body)
+            return dict(out, warning=warn) if warn else out
         if "values" in body or "controls" in body:
             return self.values(body)
         raise ApiError(400, "send an effect's id, values or controls, or off: true")
