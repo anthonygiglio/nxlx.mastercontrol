@@ -1215,7 +1215,7 @@ class LiveEngine(S.Engine):
     def limit(self, parsed, controls):
         """The flash limit. Every shader of the category "Performance" caps its own flashing at 3 a second (6 with its
         Fast switch) by its TIME. The speed control multiplies TIME, so it would multiply the cap: for these shaders
-        the speed stays at 1 or below, unless a full-access device has switched "faster" on for the box."""
+        the speed stays at 1 or below, unless an Owner or an Operator has switched "faster" on for the box."""
         if controls["speed"] > 1.0 and performance(parsed.get("categories")) and not self.config().get("faster", False):
             return dict(controls, speed=1.0)
         return controls

@@ -1514,8 +1514,8 @@ class Effects(S.Engine):
     def show_wait(self, job):
         """Seconds the worker is to wait before it carries out this job (shaderlive.Changer asks). Off never waits.
         An effect goes on at the earliest SWITCH_GAP after the last switch, so a button held down, a sequencer or a
-        fader mapped to Next cannot switch a filter on and off faster than about three times a second; the owner's
-        "faster" opt-in lifts that."""
+        fader mapped to Next cannot switch a filter on and off faster than about three times a second; the "faster"
+        opt-in (an Owner's or an Operator's, D145) lifts that."""
         if job.get("off") or self.faster():
             return 0.0
         return max(0.0, self._switched + SWITCH_GAP - self._clock())

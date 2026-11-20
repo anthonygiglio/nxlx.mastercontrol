@@ -754,9 +754,13 @@ class ValuesTest(Live):
         vibes.stop()
         self.engine.play("nxlx-silk.fs", controls={"speed": 4.0})    # a calm shader keeps the whole range
         self.assertEqual(speed(), 4.0)
-        # the opt-in, for full access only: with it the range is whole again, and switching it off limits what is on at once
+        # the opt-in, for an Owner or an Operator (D145), not a Guest: with it the range is whole again, and switching it off limits what is on at once
         guest = {"id": "p", "role": "view"}         # the opt-in is the Operator's too since D80
         self.assertEqual(self.api.handle("POST", "/api/shaders", {"action": "config", "faster": True}, guest, "t")[0], 403)
+        operator = {"id": "o", "role": "live"}     # and an Operator may switch it on and off (D145, his answer on J-176)
+        self.assertEqual(self.api.handle("POST", "/api/shaders", {"action": "config", "faster": True}, operator, "t")[0], 200)
+        self.assertTrue(self.engine.config().get("faster"))
+        self.assertEqual(self.api.handle("POST", "/api/shaders", {"action": "config", "faster": False}, operator, "t")[0], 200)
         with self.assertRaises(ApiError):
             self.engine.api_set({"action": "config", "faster": "yes"}, None, "t")
         st = self.engine.api_set({"action": "config", "faster": True}, None, "t")
