@@ -757,6 +757,9 @@ class ValuesTest(Live):
         # the opt-in, for full access only: with it the range is whole again, and switching it off limits what is on at once
         guest = {"id": "p", "role": "view"}         # the opt-in is the Operator's too since D80
         self.assertEqual(self.api.handle("POST", "/api/shaders", {"action": "config", "faster": True}, guest, "t")[0], 403)
+        operator = {"id": "o", "role": "live"}     # and an Operator may switch it on and off (D145, his answer on J-176)
+        self.assertEqual(self.api.handle("POST", "/api/shaders", {"action": "config", "faster": True}, operator, "t")[0], 200)
+        self.assertEqual(self.api.handle("POST", "/api/shaders", {"action": "config", "faster": False}, operator, "t")[0], 200)
         with self.assertRaises(ApiError):
             self.engine.api_set({"action": "config", "faster": "yes"}, None, "t")
         st = self.engine.api_set({"action": "config", "faster": True}, None, "t")
