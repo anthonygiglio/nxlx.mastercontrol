@@ -268,7 +268,7 @@ class Api:
         self.presence = presence_mod.Presence(controllers=policy.CONTROLLERS)    # who is connected now and what each changed (D126), memory only
         auth.on_revoke = lambda ident: self.presence.forget(ident)           # a removed device is gone from it at once
         self.events = None        # EventLog or None (mctl/events.py, D125): what happened on this node
-        self.feedback = None      # FeedbackStore or None (mctl/feedback.py, D146): the faces and words sent from the Room screen
+        self.feedback = None      # FeedbackStore or None (mctl/feedback.py, D147): the faces and words sent from the Room screen
         self.fleet = None         # fleet.Fleet or None (mctl/fleet.py, D127): the other nodes on the network, and this one's announcement
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.handover = None      # handover.Handover or None (mctl/handover.py, D132): the fleet list, acceptances, the deny file
@@ -2407,7 +2407,7 @@ class Api:
             except Exception as e:
                 self.log("nxlx-web: the event log: %s" % e)
 
-    # --- feedback from the room (J-179, D146, mctl/feedback.py) ----------------------------------------
+    # --- feedback from the room (J-179, D147, mctl/feedback.py) ----------------------------------------
     FEEDBACK_ROLES = {"full": "owner", "live": "operator", "view": "guest"}
 
     @staticmethod
@@ -6236,7 +6236,7 @@ class Api:
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),
             ("GET", "/api/room"): ("view", self.room.api_get),
-            ("POST", "/api/feedback"): ("view", self.feedback_send),    # D146: any paired device, a Guest too, locked or not; never through support, never from a controller
+            ("POST", "/api/feedback"): ("view", self.feedback_send),    # D147: any paired device, a Guest too, locked or not; never through support, never from a controller
             ("POST", "/api/room"): ("live", self.room.api_set),
             ("POST", "/api/room/scene"): ("live", self.room.api_scene),
             ("POST", "/api/room/group"): ("live", self.room.api_group),

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Feedback from the people in the room (J-179, D146): a face and, if they want, a few words.
+"""Feedback from the people in the room (J-179, D147): a face and, if they want, a few words.
 
 A note is a face (good, so-so or bad), an optional short text, and what the node knows about that moment: its name and id,
 the screen the tester was on, the time, what was playing on each output, and the tester's role (owner, operator or guest).

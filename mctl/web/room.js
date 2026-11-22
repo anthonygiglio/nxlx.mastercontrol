@@ -26,7 +26,7 @@
   }
   function cap(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
 
-  // ---- Feedback (J-179, D146): for anyone who is signed in, a Guest too, whether guest controls are locked or not ----
+  // ---- Feedback (J-179, D147): for anyone who is signed in, a Guest too, whether guest controls are locked or not ----
   // One button on the Room screen opens a sheet over it (the screen behind stays where it is). Three big faces first; a
   // face alone is a whole note. Then, if they like, a few words (1000 characters at most), then Send. The node adds its
   // name, the time, what is playing and the sender's role; nothing of that is typed here. The only thing sent besides the

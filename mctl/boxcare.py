@@ -641,7 +641,7 @@ class BoxCare:
             ("POST", "/api/system/settings/import"): ("full", self._import_route),
             ("GET", "/api/system/diagnostics"): ("full", self.diagnostics),
             ("GET", "/api/events"): ("full", self.events_route),
-            ("GET", "/api/feedback"): ("full", self.feedback_route),       # D146: the Owner reads and downloads the notes
+            ("GET", "/api/feedback"): ("full", self.feedback_route),       # D147: the Owner reads and downloads the notes
             ("POST", "/api/system/factory-reset"): ("full", self.factory_reset),
         }
 

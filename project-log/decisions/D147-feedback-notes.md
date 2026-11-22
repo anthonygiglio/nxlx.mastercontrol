@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
-## D146. Feedback notes from the Room screen: any signed-in device sends, the Owner reads (2026-11-22)
+## D147. Feedback notes from the Room screen: any signed-in device sends, the Owner reads (2026-11-22)
 
 A **Feedback** button on the Room screen opens a sheet over it: three big faces (good, so-so, bad), then an optional text of up to 1000 characters, then Send; it answers "Thanks, sent" and closes. A face alone is a whole note. It is for alpha testers at a venue, who are casual and not technical, so it must take under 30 seconds (the owner's decision on J-179, slice A). The node adds what the tester never types: its name and id, the screen that was open, the time, what plays on each source (Source 1 from the public status, the others from the Sources list) and the sender's role (owner, operator or guest). A note keeps no device name, no device id, no address and no token.
 

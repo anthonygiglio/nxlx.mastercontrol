@@ -3441,7 +3441,7 @@
     look();
     return card;
   }
-  // The Owner's list of feedback notes (J-179, D146): the newest first, as the node keeps them, and the whole list as a file.
+  // The Owner's list of feedback notes (J-179, D147): the newest first, as the node keeps them, and the whole list as a file.
   var FEEDBACK_FACE = { good: 'Good', 'so-so': 'So-so', bad: 'Bad' };
   function feedbackListCard() {
     var list = h('div', { class: 'list', id: 'feedbacklist' }, h('div', { class: 'hint', text: 'Loading...' }));

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Feedback from the room (J-179, D146): the store (mctl/feedback.py) and its two routes, POST and GET /api/feedback."""
+"""Feedback from the room (J-179, D147): the store (mctl/feedback.py) and its two routes, POST and GET /api/feedback."""
 import json
 import os
 import tempfile
