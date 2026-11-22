@@ -25,6 +25,78 @@
     return draft.scene.rows[gid];
   }
   function cap(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+
+  // ---- Feedback (J-179, D146): for anyone who is signed in, a Guest too, whether guest controls are locked or not ----
+  // One button on the Room screen opens a sheet over it (the screen behind stays where it is). Three big faces first; a
+  // face alone is a whole note. Then, if they like, a few words (1000 characters at most), then Send. The node adds its
+  // name, the time, what is playing and the sender's role; nothing of that is typed here. The only thing sent besides the
+  // face and the words is the name of the screen that is open.
+  var FACES = [['good', '🙂', 'Good'], ['so-so', '😐', 'So-so'], ['bad', '🙁', 'Bad']];
+  var FEEDBACK_MAX = 1000;
+  function feedbackCard(c) {
+    var h = c.h, opener = null;
+    function open() {
+      var face = null, busy = false, done = false, closeTimer = null;
+      var status = h('div', { class: 'feedback-status', id: 'feedbackstatus', role: 'status' });
+      var words = h('textarea', { class: 'text-input feedback-text', id: 'feedbacktext', rows: 4, maxlength: FEEDBACK_MAX,
+        'aria-label': 'Anything to add? You do not have to write anything.', placeholder: 'Anything to add? (You do not have to.)' });
+      var send = h('button', { class: 'btn big on grow', id: 'feedbacksend', text: 'Send', disabled: true });
+      var faces = FACES.map(function (f) {
+        var b = h('button', { class: 'btn big feedback-face', 'data-face': f[0], 'aria-pressed': 'false', 'aria-label': f[2] },
+          h('span', { class: 'feedback-glyph', 'aria-hidden': 'true', text: f[1] }), h('span', { text: f[2] }));
+        b.addEventListener('click', function () {
+          if (busy || done) return;
+          face = f[0];
+          faces.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); x.classList.toggle('on', x === b); });
+          send.disabled = false;
+          status.textContent = '';
+        });
+        return b;
+      });
+      function close() {
+        clearTimeout(closeTimer);
+        document.removeEventListener('keydown', onKey, true);
+        if (el.parentNode) el.parentNode.removeChild(el);
+        if (opener && opener.isConnected) opener.focus();
+      }
+      function onKey(e) { if (e.key === 'Escape' && !busy) { e.stopPropagation(); close(); } }
+      send.addEventListener('click', function () {
+        if (!face || busy || done) return;
+        busy = true; send.disabled = true;
+        status.className = 'feedback-status'; status.textContent = 'Sending...';
+        var screenName = String((c.screen && c.screen()) || '').toLowerCase().replace(/[^a-z0-9_\/-]/g, '').slice(0, 49);
+        var body = { face: face, text: words.value.slice(0, FEEDBACK_MAX) };
+        if (screenName) body.screen = screenName;
+        c.api('POST', '/api/feedback', body).then(function (r) {
+          busy = false;
+          if (!el.isConnected) return;
+          if (r.ok) {
+            done = true;
+            status.className = 'feedback-status thanks';
+            status.textContent = 'Thanks, sent';
+            closeTimer = setTimeout(close, 1400);
+            return;
+          }
+          send.disabled = false;
+          status.className = 'feedback-status err';
+          status.textContent = r.status === 429 ? 'Wait a few seconds, then tap Send again.' : (r.data && r.data.error ? cap(r.data.error) : 'Could not send. Try again.');
+        });
+      });
+      var el = h('div', { class: 'picker feedback-picker', id: 'feedbacksheet', onclick: function (e) { if (e.target === el && !busy) close(); } },
+        h('div', { class: 'sheet feedback-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Feedback' },
+          h('h2', { text: 'How is it going?' }),
+          h('div', { class: 'feedback-faces' }, faces),
+          words,
+          status,
+          h('div', { class: 'row' }, send, h('button', { class: 'btn big', id: 'feedbackcancel', text: 'Not now', onclick: function () { if (!busy) close(); } }))));
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(el);
+      faces[0].focus();
+    }
+    opener = h('button', { class: 'btn big grow', id: 'feedbackopen', text: 'Feedback', onclick: open });
+    return h('div', { class: 'card room-feedback', id: 'roomfeedback' },
+      h('div', { class: 'row wrap' }, h('span', { class: 'hint grow', text: 'Tell us how the night is going. It takes a few seconds.' }), opener));
+  }
   function sourceName(i) { return i.label || i.name; }
   function remember(scenes) { names = {}; scenes.forEach(function (s) { names[s.id] = s.name; }); }
 
@@ -50,7 +122,7 @@
     var root = h('div', { class: 'screen', id: 'roomscreen' },
       h('div', { class: 'top' }, h('h1', { text: 'Room' }), live ? null : h('div', { class: 'pill k', id: 'roomviewonly', text: c.guestOpen && c.guestOpen() ? 'Guest' : 'Watching' })),
       h('div', { id: 'msg', class: 'msg' + (c.state.msgErr ? ' err' : ''), role: 'status', text: c.state.msg }),
-      amb, scenes, groups, c.guestLock ? c.guestLock() : null, letin, setup);
+      amb, scenes, groups, c.guestLock ? c.guestLock() : null, letin, feedbackCard(c), setup);
     var shownLive = null, shownSetup = null, last = null;
 
     // ---- ambience: the Vibes rotation, under the name staff use for it ----

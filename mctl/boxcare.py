@@ -641,6 +641,7 @@ class BoxCare:
             ("POST", "/api/system/settings/import"): ("full", self._import_route),
             ("GET", "/api/system/diagnostics"): ("full", self.diagnostics),
             ("GET", "/api/events"): ("full", self.events_route),
+            ("GET", "/api/feedback"): ("full", self.feedback_route),       # D146: the Owner reads and downloads the notes
             ("POST", "/api/system/factory-reset"): ("full", self.factory_reset),
         }
 
@@ -1209,6 +1210,24 @@ class BoxCare:
                 row["who"] = scrub(e["who"], secrets)
             rows.append(row)
         return dict(log.state(rootfs.current_state() == "overlay"), events=rows)
+
+    def feedback_route(self, body, device, client):
+        """GET /api/feedback (the Owner's): {"notes": [{"t", "face", "role", "text"?, "screen"?, "node", "playing"}] newest first,
+        "cap", "kept", "note"}. The words are scrubbed of every secret the node knows, as the event log's are. A note names no
+        device and no address, so a support session of the Owner's role reads the same as the Owner (as the event log, D125)."""
+        store = getattr(self.api, "feedback", None)
+        if store is None:
+            raise ApiError(503, "feedback is not available on this node")
+        from . import rootfs
+        with self.settings.lock:
+            data = copy.deepcopy(self.settings.data)
+        secrets = self._secrets(data)
+        rows = []
+        for n in store.notes():
+            if n.get("text"):
+                n = dict(n, text=scrub(n["text"], secrets))
+            rows.append(n)
+        return dict(store.state(rootfs.current_state() == "overlay"), notes=rows)
 
     def diagnostics(self, body, device, client):
         """One file to send to whoever is helping: versions, the board, module states, health, the last update, the

@@ -259,6 +259,9 @@ ROWS = {
     ("POST", "/api/system/settings/import"): KINDS["owner"],          # D84: a support session of the Owner's role too
     ("GET", "/api/system/diagnostics"): KINDS["owner"],
     ("GET", "/api/events"): KINDS["owner"],
+    ("GET", "/api/feedback"): KINDS["owner"],                   # D146: the Owner reads the notes (a support session of the Owner's role too, as the events)
+    # D146: anyone paired may send a note, a Guest too and also while guest controls are locked; not a controller, not support
+    ("POST", "/api/feedback"): (401, 200, 200, 200, 200,  403, 403, 403,  403, 403, 403, 403),
     ("GET", "/api/output"): KINDS["owner"],
     ("POST", "/api/output"): at_the_studio("owner"),            # D128: never through the support tunnel
     ("POST", "/api/output/av"): at_the_studio("owner"),
