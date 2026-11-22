@@ -157,7 +157,10 @@
     function send(path, body, said) {
       c.api('POST', path, body).then(function (r) {
         if (!r.ok) c.say(r.data.error || 'Something went wrong', true);
-        else c.say(said);
+        else if (r.data.failed && r.data.failed.length) {      // a volume step some projector did not take: say which, in its own words
+          var many = r.data.failed.length > 1 || r.data.sent > 0;
+          c.say(r.data.failed.map(function (f) { return (many ? f.name + ': ' : '') + f.error; }).join('. '), true);
+        } else c.say(said);
         load(true);
       });
     }
@@ -222,6 +225,7 @@
           kids.push(h('div', { class: 'row wrap' },
             g.mute.picture ? button('Show picture', 'unmute_picture', null, 'big on') : button('Mute picture', 'mute_picture'),
             g.mute.sound ? button('Sound on', 'unmute_sound', null, 'big on') : button('Mute sound', 'mute_sound')));
+          kids.push(h('div', { class: 'row wrap room-volume' }, button('Volume down', 'volume_down'), button('Volume up', 'volume_up')));
         }
       }
       if (g.last) kids.push(result(g.last));

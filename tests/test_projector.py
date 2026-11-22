@@ -47,10 +47,15 @@ class FakeProjector:
     `slow`: power changes pass through warm-up and cooling and stay there until finish() is called (a test's
     stand-in for the minute a real projector takes). `standby_answers` False: INST, NAME and the other
     information queries are "unavailable" in standby, which 2.4 allows. `lowercase`: answers in lower case.
-    `mute_off`: what AVMT ? answers with nothing muted; 4.6 names 30, its table of values also allows 10 and 20."""
+    `mute_off`: what AVMT ? answers with nothing muted; 4.6 names 30, its table of values also allows 10 and 20.
+    `klass`: "1" (the default) answers CLSS "1" and, like any class 1 product, ERR1 to a class 2 command ("%2");
+    "2" answers CLSS "2" and takes SVOL 1 and SVOL 0 (PJLink class 2 specification, SVOL: 1 up one step, 0 down one
+    step; ERR3 in standby) and counts the steps in `volume_steps` (+1 and -1, in order); `svol` forces another answer
+    to SVOL ("ERR1", "ERR2", "ERR4" or "garbage")."""
 
     def __init__(self, password="", inputs=("11", "31", "32"), lamps=(1234,), separate_mute=True, slow=False,
-                 standby_answers=True, lowercase=False, name="Fake projector"):
+                 standby_answers=True, lowercase=False, name="Fake projector", klass="1", svol=None):
+        self.klass, self.svol, self.volume_steps = klass, svol, []
         self.password, self.inputs, self.lamps, self.separate_mute = password, list(inputs), list(lamps), separate_mute
         self.slow, self.standby_answers, self.lowercase, self.name = slow, standby_answers, lowercase, name
         self.maker, self.model, self.info = "NXLX Test Works", "FP-1", "fake, firmware 0.1"
@@ -92,12 +97,12 @@ class FakeProjector:
                             if line.startswith(want):
                                 line = line[32:]
                         first = False
-                        m = re.fullmatch(r"%1([A-Za-z0-9]{4}) (.{1,128})", line)
+                        m = re.fullmatch(r"%([12])([A-Za-z0-9]{4}) (.{1,128})", line)
                         if not m:
                             continue                       # not a command line: no answer (chapter 6)
-                        cmd = m.group(1).upper()
+                        cmd = m.group(2).upper()
                         with outer.guard:
-                            answer = "%%1%s=%s\r" % (cmd, outer.answer(cmd, m.group(2)))
+                            answer = "%%%s%s=%s\r" % (m.group(1), cmd, outer.answer(cmd, m.group(3)) if m.group(1) == "1" else outer.answer2(cmd, m.group(3)))
                         self.wfile.write((answer.lower() if outer.lowercase and cmd in ("POWR", "CLSS", "INF1") else answer).encode("utf-8"))
                 except OSError:
                     pass
@@ -118,6 +123,21 @@ class FakeProjector:
         """The warm-up or the cooling is over."""
         with self.guard:
             self.power = {"3": "1", "2": "0"}.get(self.power, self.power)
+
+    def answer2(self, cmd, val):
+        """A class 2 command ("%2"): only SVOL, and only on a class 2 projector."""
+        if cmd != "SVOL" or self.klass != "2":
+            return "ERR1"                                  # class 1 products do not know class 2 commands
+        if self.svol == "garbage":
+            return "what"
+        if self.svol:
+            return self.svol
+        if val not in ("0", "1"):
+            return "ERR2"
+        if self.power != "1":
+            return "ERR3"
+        self.volume_steps.append(1 if val == "1" else -1)
+        return "OK"
 
     def answer(self, cmd, val):
         on = self.power == "1"
@@ -169,7 +189,7 @@ class FakeProjector:
         if not on and not self.standby_answers:
             return "ERR3"
         return {"INST": " ".join(self.inputs), "NAME": self.name, "INF1": self.maker, "INF2": self.model,
-                "INFO": self.info, "CLSS": "1"}[cmd]
+                "INFO": self.info, "CLSS": self.klass}[cmd]
 
     def close(self):
         self.server.shutdown()
@@ -256,6 +276,56 @@ class PJLinkTest(unittest.TestCase):
                 if pw:
                     self.assertTrue(all(len(r) > 32 for r in fake.received))            # every command carries the digest
                     self.assertNotIn(pw, "".join(fake.received))                        # the password itself never travels
+
+    def test_volume_steps_go_out_as_class_2_and_a_refusal_is_said_plainly(self):
+        with LOOPBACK_OK:
+            fake = FakeProjector(klass="2")
+            self.addCleanup(fake.close)
+            link = projector.PJLink("127.0.0.1", fake.port)
+            with self.assertRaises(projector.ProjectorError) as cm:        # in standby: not ready, in the projector's own words
+                link.volume(True)
+            self.assertEqual(cm.exception.code, "ERR3")
+            link.power(True)
+            fake.received.clear()
+            self.assertEqual((link.volume(True), link.volume(True), link.volume(False)), ("OK", "OK", "OK"))
+            self.assertEqual(list(fake.received), ["%2SVOL 1", "%2SVOL 1", "%2SVOL 0"])      # class 2 header, 1 up one step, 0 down one step
+            self.assertEqual(fake.volume_steps, [1, 1, -1])
+            for answer, code in (("ERR1", "novolume"), ("ERR2", "novolume"), ("ERR4", "ERR4"), ("garbage", "odd")):
+                fake.svol = answer
+                with self.assertRaises(projector.ProjectorError) as cm:
+                    link.volume(True)
+                self.assertEqual(cm.exception.code, code, answer)
+                if code == "novolume":
+                    self.assertEqual(str(cm.exception), "This projector does not take volume from the network")
+
+    def test_a_class_1_projector_answers_ERR1_and_says_so_plainly(self):
+        with LOOPBACK_OK:
+            fake = FakeProjector()
+            self.addCleanup(fake.close)
+            link = projector.PJLink("127.0.0.1", fake.port)
+            link.power(True)
+            for up in (True, False):
+                with self.assertRaises(projector.ProjectorError) as cm:
+                    link.volume(up)
+                self.assertEqual((cm.exception.code, str(cm.exception)), ("novolume", projector.NO_VOLUME))
+            self.assertEqual(fake.volume_steps, [])
+            self.assertEqual([r for r in fake.received if r.startswith("%2")], ["%2SVOL 1", "%2SVOL 0"])
+
+    def test_volume_sends_the_digest_and_never_the_password(self):
+        with LOOPBACK_OK:
+            fake = FakeProjector("secret1", klass="2")
+            self.addCleanup(fake.close)
+            link = projector.PJLink("127.0.0.1", fake.port, "secret1")
+            link.power(True)
+            link.volume(True)
+            self.assertEqual(fake.volume_steps, [1])
+            self.assertTrue(fake.received[-1].endswith("%2SVOL 1") and len(fake.received[-1]) == 32 + len("%2SVOL 1"))
+            self.assertNotIn("secret1", "".join(fake.received))
+
+    def test_epson_control_alone_takes_no_volume_from_here(self):
+        with self.assertRaises(projector.ProjectorError) as cm:
+            projector.EpsonLink("127.0.0.1").volume(True)
+        self.assertEqual((cm.exception.code, str(cm.exception)), ("novolume", projector.NO_VOLUME))
 
     def test_wrong_password_unknown_command_and_nobody_home(self):
         with LOOPBACK_OK:
@@ -1802,6 +1872,115 @@ class ApiTest(ServerBase):
             self.assertIn("Renamed", json.dumps(room))
 
 
+class VolumeApiTest(ServerBase):
+    """Volume steps through POST /api/projector (J-066, alpha: steps only, no level; nothing here has met a real
+    projector, and the Epson X27 and X39 are not shown to take SVOL)."""
+
+    def setUp(self):
+        super().setUp()
+        self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
+        self.call("POST", "/api/modules/projector", {"enabled": True}, token=self.full)
+        self.addCleanup(self.api.projectors.stop, True)
+        p = LOOPBACK_OK
+        p.start()
+        self.addCleanup(p.stop)
+        self.api.projectors.stagger = 0.0
+
+    def post(self, path, body, token=None):
+        return self.call("POST", path, body, token=token or self.full)
+
+    def add(self, fake, name="Main"):
+        self.addCleanup(fake.close)
+        st, body, _ = self.post("/api/projectors", {"add": {"name": name, "host": "127.0.0.1", "port": fake.port}})
+        self.assertEqual(st, 200, body)
+        pid = [p for p in body["projectors"] if p["name"] == name][0]["id"]
+        self.assertTrue(wait_for(lambda: [p for p in self.settings.data["projectors"] if p["id"] == pid][0].get("details")))
+        return pid
+
+    def test_up_and_down_reach_a_class_2_projector_as_steps(self):
+        fake = FakeProjector(klass="2")
+        pid = self.add(fake)
+        self.post("/api/projector", {"id": pid, "action": "on"})
+        fake.received.clear()
+        for action in ("volume_up", "volume_up", "volume_down"):
+            self.assertEqual(self.post("/api/projector", {"id": pid, "action": action}), (200, {"results": {pid: {"ok": True}}}, mock.ANY))
+        self.assertEqual(fake.volume_steps, [1, 1, -1])
+        self.assertEqual([r for r in fake.received if r.startswith("%2")], ["%2SVOL 1", "%2SVOL 1", "%2SVOL 0"])
+        self.assertEqual(self.post("/api/projector", {"id": pid, "action": "volume_up", "background": True})[1], {"started": True})
+        self.assertTrue(wait_for(lambda: fake.volume_steps == [1, 1, -1, 1]))
+        self.assertEqual(self.post("/api/projector", {"id": pid, "action": "volume", "value": 5})[0], 400)       # no level, steps only
+        self.assertEqual(self.post("/api/projector", {"id": pid, "action": "volume_up", "value": 5})[0], 400)
+
+    def test_a_projector_that_is_off_says_so_in_its_own_words(self):
+        fake = FakeProjector(klass="2")
+        pid = self.add(fake)
+        st, body, _ = self.post("/api/projector", {"id": pid, "action": "volume_up"})
+        self.assertEqual(st, 502)
+        self.assertIn("cannot do that right now", body["error"])
+        self.assertEqual(fake.volume_steps, [])
+
+    def test_a_projector_that_said_class_1_is_sent_nothing(self):
+        fake = FakeProjector()
+        pid = self.add(fake)
+        self.post("/api/projector", {"id": pid, "action": "on"})
+        fake.received.clear()
+        st, body, _ = self.post("/api/projector", {"id": pid, "action": "volume_up"})
+        self.assertEqual((st, body["error"]), (502, "This projector does not take volume from the network"))
+        self.assertEqual([r for r in fake.received if r.startswith("%2")], [])
+
+    def test_a_projector_whose_class_is_not_known_is_tried_and_answers_ERR1(self):
+        fake = FakeProjector()
+        pid = self.add(fake)
+        self.post("/api/projector", {"id": pid, "action": "on"})
+        for p in self.settings.data["projectors"]:
+            p["details"] = None
+        fake.received.clear()
+        st, body, _ = self.post("/api/projector", {"id": pid, "action": "volume_down"})
+        self.assertEqual((st, body["error"]), (502, "This projector does not take volume from the network"))
+        self.assertEqual([r for r in fake.received if r.startswith("%2")], ["%2SVOL 0"])
+
+    def test_each_refusal_a_class_2_projector_can_give(self):
+        fake = FakeProjector(klass="2")
+        pid = self.add(fake)
+        self.post("/api/projector", {"id": pid, "action": "on"})
+        for answer, text in (("ERR1", projector.NO_VOLUME), ("ERR2", projector.NO_VOLUME), ("ERR4", "reports a fault"), ("garbage", "unexpected")):
+            fake.svol = answer
+            st, body, _ = self.post("/api/projector", {"id": pid, "action": "volume_up"})
+            self.assertEqual(st, 502, answer)
+            self.assertIn(text, body["error"], answer)
+
+    def test_several_projectors_each_answer_for_themselves(self):
+        two, one = FakeProjector(klass="2"), FakeProjector()
+        a, b = self.add(two, "Left"), self.add(one, "Right")
+        self.post("/api/projector", {"id": "all", "action": "on"})
+        st, body, _ = self.post("/api/projector", {"id": "all", "action": "volume_up"})
+        self.assertEqual(st, 200)
+        self.assertEqual(body["results"][a], {"ok": True})
+        self.assertEqual(body["results"][b], {"ok": False, "error": projector.NO_VOLUME})
+        self.assertEqual(two.volume_steps, [1])
+
+    def test_the_journal_names_the_step_and_who_made_it(self):
+        lines = []
+        self.api.log = lines.append
+        fake = FakeProjector(klass="2")
+        pid = self.add(fake)
+        self.post("/api/projector", {"id": pid, "action": "on"})
+        self.post("/api/projector", {"id": pid, "action": "volume_up"})
+        self.assertTrue(any("volume_up by device" in l for l in lines), lines)
+
+    def test_a_guest_is_refused_and_an_operator_is_not(self):
+        fake = FakeProjector(klass="2")
+        pid = self.add(fake)
+        self.post("/api/projector", {"id": pid, "action": "on"})
+        live = self.post("/api/devices/invite", {"name": "op", "role": "live"})[1]["token"]
+        view = self.post("/api/devices/invite", {"name": "g", "role": "view"})[1]["token"]
+        self.assertEqual(self.post("/api/projector", {"id": pid, "action": "volume_up"}, token=live)[0], 200)
+        self.assertEqual(fake.volume_steps, [1])
+        for action in ("volume_up", "volume_down"):
+            self.assertEqual(self.post("/api/projector", {"id": pid, "action": action}, token=view)[0], 403)
+        self.assertEqual(fake.volume_steps, [1])
+
+
 class ScheduleAndOscTest(unittest.TestCase):
     def test_schedule_accepts_presets_and_projector_power(self):
         s = scheduler.validate({"enabled": True, "entries": [
@@ -2318,6 +2497,14 @@ class EpsonRolesTest(EpsonRolesBase):
             self.later()
             self.assertEqual(self.h("POST", "/api/projector", body, self.guest)[0], 403, body)
         self.assertEqual(self.h("POST", "/api/projectors", {"test": {"id": self.pid}}, self.operator)[0], 403)
+
+    def test_volume_steps_follow_the_roles_of_mute_and_epson_alone_refuses_them(self):
+        for dev in (self.owner, self.operator):
+            st, out = self.h("POST", "/api/projector", {"id": self.pid, "action": "volume_up"}, dev)
+            self.assertEqual((st, out["error"]), (502, "This projector does not take volume from the network"))
+        for action in ("volume_up", "volume_down"):
+            self.later()
+            self.assertEqual(self.h("POST", "/api/projector", {"id": self.pid, "action": action}, self.guest)[0], 403, action)
 
     def test_remote_support_neither_switches_off_nor_changes_the_picture(self):
         dev = self.session()

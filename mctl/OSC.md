@@ -236,6 +236,7 @@ Every address in this table, the ones added with D75 and `/mctl/mapping/...` amo
 | `/mctl/scene` | name (string) or number (2 or 2.0) | The same, by the scene's name or its place in the list. A scene that plays something also takes a blackout off |
 | `/mctl/group/<n>/on`, `/mctl/group/<n>/off` | value (press) | Switch the projectors of the n-th group on or off; `all` in place of the number is every projector |
 | `/mctl/group/<n>/mute`, `/mute_picture`, `/mute_sound` | 0/1 | Mute (1) or unmute (0) picture and sound, the picture, or the sound of that group (an argument is required) |
+| `/mctl/group/<n>/volume_up`, `/volume_down` | value (press) | One speaker volume step up or down on each projector of that group (PJLink class 2; a projector that does not take it is skipped and the answer says so; see [PROJECTORS.md](PROJECTORS.md)) |
 | `/mctl/group/<n>/input` | input code (`31`, as a string or a number) | Switch that group's projectors to that input; the codes are listed in Setup > Projectors |
 
 **Real units, and no centre that sits.** A MIDI knob sends 0 to 127, so the box gives its zoom and position a middle that holds and a curve ([MIDI.md](MIDI.md), "How a level follows a knob"). OSC sends the real value, so `/mctl/size 100` is 100 percent and `/mctl/position/y 0.5` is half a step off centre: nothing is rounded to a centre and nothing waits for pickup. Set the fader's range in the sender.

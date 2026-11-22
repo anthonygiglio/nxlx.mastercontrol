@@ -42,7 +42,8 @@ ALL = "all"
 POWER = ("leave", "on", "off")
 MUTE = ("leave", "mute", "unmute")
 ORDER = ("power", "input", "picture", "sound")       # the order of the steps for one projector
-GROUP_ACTIONS = ("on", "off", "mute", "unmute", "mute_picture", "unmute_picture", "mute_sound", "unmute_sound", "input")
+GROUP_ACTIONS = ("on", "off", "mute", "unmute", "mute_picture", "unmute_picture", "mute_sound", "unmute_sound", "input",
+                 "volume_up", "volume_down")
 ROOM_DEVICE = {"id": "room", "name": "Room", "role": "live"}     # what the box does in a scene runs as a presenter
 GRACE = 25.0                 # seconds more than the monitor's own retry time that an input change may take
 STUCK = 25.0                 # a command that has not come back after this long (a name lookup that hangs) is left behind
@@ -914,5 +915,16 @@ class Room:
                 raise bad("input must be a projector input such as 31")
             if not any(code in ((p.get("details") or {}).get("inputs") or []) for p in members):
                 raise bad("no projector in %s has that input" % name)
+        if action in ("volume_up", "volume_down"):
+            return self._group_volume(gid, name, members, action, device, client)
         self.start_group(gid, group, action, code)
         return {"started": True, "group": gid, "name": name}
+
+    def _group_volume(self, gid, name, members, action, device, client):
+        """One speaker step for every projector of the group, sent now (a step is not a state to settle, so it is not
+        queued like a scene's steps). {"failed": [{"name", "error"}]} says which projector did not take it and why;
+        every projector refusing is still an answer, shown by the screen."""
+        self.api._projector_change(members, action, None, device, client)
+        results = self.api._projector_run(members, action)
+        failed = [{"name": p["name"], "error": results[p["id"]].get("error") or "no answer"} for p in members if not results[p["id"]].get("ok")]
+        return {"started": True, "group": gid, "name": name, "sent": len(members) - len(failed), "failed": failed}

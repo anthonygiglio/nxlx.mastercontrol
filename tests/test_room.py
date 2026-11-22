@@ -247,6 +247,49 @@ class GroupTest(RoomBase):
         self.assertEqual(self.post("/api/room/group", {"number": False, "action": "off"})[0], 404)
         self.assertEqual(self.post("/api/room/group", {"action": "on"})[0], 400)
 
+    def test_a_group_volume_step_goes_to_each_projector_and_names_the_ones_that_cannot(self):
+        a, pa = self.projector("Left", klass="2")
+        b, pb = self.projector("Right")                                  # class 1: no volume from the network
+        c, pc = self.projector("Back", klass="2")
+        main = self.group("Main wall", [pa, pc])
+        mixed = self.group("Mixed", [pa, pb])
+        only = self.group("Right only", [pb])
+        self.assertEqual(self.post("/api/room/group", {"group": "all", "action": "on"})[0], 200)
+        self.assertTrue(wait_for(lambda: self.state()["all"]["state"] == "on"))
+        st, body, _ = self.post("/api/room/group", {"group": main, "action": "volume_up"})
+        self.assertEqual((st, body["sent"], body["failed"]), (200, 2, []))
+        self.assertEqual((a.volume_steps, c.volume_steps, b.volume_steps), ([1], [1], []))
+        st, body, _ = self.post("/api/room/group", {"number": 1, "action": "volume_down"})       # by number, as a controller does
+        self.assertEqual((st, body["failed"]), (200, []))
+        self.assertEqual((a.volume_steps, c.volume_steps), ([1, -1], [1, -1]))
+        st, body, _ = self.post("/api/room/group", {"group": mixed, "action": "volume_up"})
+        self.assertEqual((st, body["sent"], body["failed"]), (200, 1, [{"name": "Right", "error": "This projector does not take volume from the network"}]))
+        self.assertEqual((a.volume_steps, b.volume_steps), ([1, -1, 1], []))
+        self.assertEqual([r for r in b.received if r.startswith("%2")], [])                 # it said class 1: nothing was sent
+        st, body, _ = self.post("/api/room/group", {"group": only, "action": "volume_down"})
+        self.assertEqual((st, body["sent"], [f["error"] for f in body["failed"]]), (200, 0, ["This projector does not take volume from the network"]))
+        a.svol = "ERR1"                                                                       # a class 2 projector that still refuses it
+        body = self.post("/api/room/group", {"group": main, "action": "volume_up"})[1]
+        self.assertEqual((body["sent"], [f["name"] for f in body["failed"]]), (1, ["Left"]))
+        self.assertEqual(self.post("/api/room/group", {"group": main, "action": "volume"})[0], 400)       # steps only
+        self.assertEqual(self.post("/api/room/group", {"group": "ffffffff", "action": "volume_up"})[0], 404)
+
+    def test_group_volume_is_for_the_owner_and_operator_not_a_guest(self):
+        a, pa = self.projector("Left", klass="2")
+        main = self.group("Main wall", [pa])
+        self.post("/api/room/group", {"group": main, "action": "on"})
+        self.assertTrue(wait_for(lambda: a.power == "1"))
+        view = self.post("/api/devices/invite", {"name": "g", "role": "view"})[1]["token"]
+        live = self.post("/api/devices/invite", {"name": "p", "role": "live"})[1]["token"]
+        self.assertEqual(self.post("/api/room/group", {"group": main, "action": "volume_up"}, token=live)[0], 200)
+        self.assertEqual(a.volume_steps, [1])
+        self.settings.data["guest_controls"] = {"locked": False}
+        for action in ("volume_up", "volume_down"):
+            self.assertEqual(self.post("/api/room/group", {"group": main, "action": action}, token=view)[0], 403, action)
+        self.settings.data["guest_controls"] = {"locked": True}
+        self.assertEqual(self.post("/api/room/group", {"group": main, "action": "volume_up"}, token=view)[0], 403)
+        self.assertEqual(a.volume_steps, [1])
+
     def test_roles(self):
         _, pa = self.projector("Left")
         main = self.group("Main wall", [pa])
@@ -798,6 +841,9 @@ class ScheduleOscMidiTest(RoomBase):
         self.assertEqual(t("/mctl/group/2/mute", [1]), ("/api/room/group", {"number": 2, "action": "mute"}))
         self.assertEqual(t("/mctl/group/2/mute_sound", [0.0]), ("/api/room/group", {"number": 2, "action": "unmute_sound"}))
         self.assertEqual(t("/mctl/group/1/input", [31.0]), ("/api/room/group", {"number": 1, "action": "input", "input": "31"}))
+        self.assertEqual(t("/mctl/group/2/volume_up", [1.0]), ("/api/room/group", {"number": 2, "action": "volume_up"}))
+        self.assertEqual(t("/mctl/group/all/volume_down", []), ("/api/room/group", {"group": "all", "action": "volume_down"}))
+        self.assertIsNone(t("/mctl/group/2/volume_up", [0.0]))                                  # the release does nothing
         self.assertEqual(t("/mctl/group/1/input", ["32"]), ("/api/room/group", {"number": 1, "action": "input", "input": "32"}))
         for address, args in (("/mctl/scene/0", [1.0]), ("/mctl/scene/2\n", [1.0]), ("/mctl/scene", []), ("/mctl/scene", [True]),
                               ("/mctl/group/1/explode", [1.0]), ("/mctl/group/1/mute", []), ("/mctl/group/1/input", [float("inf")]),

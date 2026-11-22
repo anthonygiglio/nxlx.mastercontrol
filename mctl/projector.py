@@ -43,6 +43,7 @@ POLL_EVERY = 45.0                # seconds between two status checks of one proj
 POLL_CHANGING = 10.0             # while it warms up or cools down
 STAGGER = 2.0                    # projector n starts n x this later, so they are never all asked at once
 RETRY_FOR, RETRY_EVERY = 90.0, 5.0      # an input change refused as "unavailable" is tried again this long, this often
+NO_VOLUME = "This projector does not take volume from the network"
 ERRORS = {"ERR1": "the projector does not know that command", "ERR2": "the projector refused that value",
           "ERR3": "the projector cannot do that right now", "ERR4": "the projector reports a fault",
           "ERRA": "wrong projector password"}
@@ -250,8 +251,9 @@ class PJLink:
         if self.cancel is not None and self.cancel.is_set():
             raise ProjectorError("stopped", "stopped")
 
-    def command(self, body):
-        """Send "%1" + body (e.g. "POWR 1") and return the answer after "=". Raises ProjectorError."""
+    def command(self, body, cls=1):
+        """Send "%1" + body (e.g. "POWR 1") and return the answer after "=". Raises ProjectorError. `cls` 2 sends
+        "%2" instead (PJLink class 2 commands, such as SVOL)."""
         self._stopped()
         addr = private_address(self.host, self._resolve)       # checked again at every use: a name may change
         deadline = time.monotonic() + 2 * self.timeout
@@ -260,12 +262,12 @@ class PJLink:
         if slot is None:
             raise ProjectorError("the projector is busy with another command", "busy")
         try:
-            return self._command(addr, body, deadline)
+            return self._command(addr, body, deadline, cls)
         finally:
             slot[0].release()
             _drop(key, slot)
 
-    def _command(self, addr, body, deadline):
+    def _command(self, addr, body, deadline, cls=1):
         try:
             self._stopped()
             s = self._connect((addr, self.port), timeout=min(self.timeout, max(0.1, deadline - time.monotonic())))
@@ -284,7 +286,7 @@ class PJLink:
             else:
                 raise ProjectorError("that does not answer like a PJLink projector")
             self._stopped()
-            s.sendall((prefix + "%1" + body + "\r").encode("ascii"))
+            s.sendall((prefix + "%" + str(cls) + body + "\r").encode("ascii"))
             answer = _read_line(s, 300, deadline)
         except (OSError, socket.timeout) as e:
             raise ProjectorError("the projector did not answer: %s" % e, "unreachable")
@@ -292,7 +294,7 @@ class PJLink:
             s.close()
         if answer == "PJLINK ERRA":
             raise ProjectorError(ERRORS["ERRA"], "ERRA")
-        m = re.fullmatch(r"%1([A-Za-z0-9]{4})=(.*)", answer)       # INF1 and INF2 have a digit; the case is free
+        m = re.fullmatch(r"%[12]([A-Za-z0-9]{4})=(.*)" if cls == 2 else r"%1([A-Za-z0-9]{4})=(.*)", answer)       # INF1 and INF2 have a digit; the case is free
         if not m or m.group(1).upper() != body.split()[0]:
             raise ProjectorError("unexpected answer from the projector", "odd")
         value = m.group(2)
@@ -300,9 +302,9 @@ class PJLink:
             raise ProjectorError(ERRORS[value.upper()], value.upper())
         return value
 
-    def _set(self, body):
+    def _set(self, body, cls=1):
         """A set command: the only good answer is OK (2.3 of the standard)."""
-        if self.command(body).upper() != "OK":
+        if (self.command(body) if cls == 1 else self.command(body, cls)).upper() != "OK":
             raise ProjectorError("unexpected answer from the projector", "odd")
         return "OK"
 
@@ -320,6 +322,18 @@ class PJLink:
         except ProjectorError as e:
             if e.code == "ERR2" and what != "both":
                 raise ProjectorError("this projector cannot mute the picture and the sound separately", "ERR2")
+            raise
+
+    def volume(self, up):
+        """One step of speaker volume, up or down (PJLink class 2: SVOL 1 and SVOL 0; there is no level to read).
+        A projector that does not know the command, refuses it or will not accept it says so in plain words
+        (code "novolume"); that it takes volume at all is not proven for any model. Other refusals, such as "not
+        ready" in standby, keep their own words."""
+        try:
+            return self._set("SVOL %d" % (1 if up else 0), 2)
+        except ProjectorError as e:
+            if e.code in ("ERR1", "ERR2", "ERRA"):
+                raise ProjectorError(NO_VOLUME, "novolume")
             raise
 
     def mute_state(self):
@@ -609,6 +623,9 @@ class EpsonLink:
         if what != "both":
             raise ProjectorError("over Epson control this projector mutes the picture and the sound together", "ERR2")
         return self.esc.send("MUTE ON" if on else "MUTE OFF")
+
+    def volume(self, up):
+        raise ProjectorError(NO_VOLUME, "novolume")
 
     def mute_state(self):
         v = {"ON": True, "OFF": False}.get(self.esc.query("MUTE"))
