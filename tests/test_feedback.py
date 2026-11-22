@@ -9,7 +9,7 @@ from unittest import mock
 
 import tests        # the run's own temp folder (tests/__init__.py)
 from mctl import feedback
-from tests.test_boxcare import Base as CareBase, PIN
+from tests.test_boxcare import Base as CareBase, PIN, STREAM_PASSWORD, STREAM_USER
 
 
 class Clock:
@@ -184,6 +184,93 @@ class StoreTest(unittest.TestCase):
         self.assertIn("lost at a restart", s.state(read_only_root=True)["note"])
         self.assertFalse(s.state(read_only_root=True)["kept"])
 
+    def test_the_node_as_a_whole_takes_at_most_so_many_notes_in_a_window(self):
+        s = self.make(box_limits=((600.0, 3), (86400.0, 5)))
+        for i in range(3):
+            self.add(s, "good", "n%d" % i, session="s%d" % i)            # three different sessions, none held by the gap
+        with self.assertRaises(feedback.Busy) as cm:
+            self.add(s, "good", "no", session="s9")
+        self.assertEqual(cm.exception.wait, 601)
+        self.assertEqual(str(cm.exception), "Lots of feedback just now, try again in a few minutes")
+        self.assertEqual(len(s.notes()), 3)
+        self.clock.t += 601                                               # the window is over; the day's share is 5
+        self.add(s, "good", "n3", session="s1")
+        self.clock.t += 601
+        self.add(s, "good", "n4", session="s2")
+        self.clock.t += 601
+        with self.assertRaises(feedback.Busy) as cm:
+            self.add(s, "good", "no", session="s3")
+        self.assertGreater(cm.exception.wait, 80000)
+        self.clock.t += 86400
+        self.add(s, "good", "again", session="s3")
+        self.assertEqual(len(s.notes()), 6)
+
+    def test_a_refused_note_and_a_failed_write_do_not_use_up_the_nodes_share(self):
+        s = self.make(box_limits=((600.0, 2), (86400.0, 200)))
+        with mock.patch("mctl.feedback.os.replace", side_effect=OSError(28, "No space left on device")):
+            for i in range(4):
+                with self.assertRaises(OSError):
+                    self.add(s, "good", session="a%d" % i)
+        self.add(s, "good", session="b1")
+        with self.assertRaises(feedback.TooFast):
+            self.add(s, "good", session="b1")
+        self.add(s, "good", session="b2")                                 # the refused one above was not counted
+        with self.assertRaises(feedback.Busy):
+            self.add(s, "good", session="b3")
+
+    def test_the_defaults_are_thirty_in_ten_minutes_and_two_hundred_a_day(self):
+        self.assertEqual(feedback.BOX_LIMITS, ((600.0, 30), (86400.0, 200)))
+        self.assertEqual(feedback.MAX_BYTES, 2 * 1024 * 1024)
+
+    def test_the_file_is_utf8_not_escaped_and_kept_under_the_size_cap(self):
+        s = self.make(max_bytes=20000, box_limits=((600.0, 1000), (86400.0, 1000)))
+        word = "\U0001F600" * 999                                         # 1000 characters with the digit: 4000 bytes in UTF-8, 12000 escaped
+        for i in range(10):
+            self.clock.t += 10
+            self.add(s, "good", word + str(i))
+        with open(self.path, "rb") as f:
+            raw = f.read()
+        self.assertLessEqual(len(raw), 20000)
+        self.assertNotIn(b"\\ud83d", raw)
+        self.assertIn("\U0001F600".encode("utf-8"), raw)
+        kept = s.notes()
+        self.assertTrue(0 < len(kept) < 10, "the oldest were dropped")
+        self.assertTrue(kept[0]["text"].endswith("9"), "the newest stays")
+        self.assertEqual(len(self.on_disk()["notes"]), len(kept), "the list and the file agree")
+        again = feedback.FeedbackStore(self.path, max_bytes=20000)
+        self.assertEqual(again.notes(), kept)
+
+    def test_a_full_store_of_the_largest_notes_stays_under_two_megabytes(self):
+        s = self.make(gap=0, box_limits=((1.0, 10 ** 6), (2.0, 10 ** 6)))
+        rows = [{"output": "\U0001F600" * 60, "playing": "\U0001F600" * 120} for i in range(feedback.OUTPUTS_MAX)]
+        with mock.patch("mctl.feedback.os.fsync"):
+            for i in range(150):
+                self.clock.t += 5
+                self.add(s, "bad", "\U0001F600" * 1000, playing=rows, session="s%d" % i)
+        self.assertLessEqual(os.path.getsize(self.path), feedback.MAX_BYTES)
+        self.assertGreater(os.path.getsize(self.path), feedback.MAX_BYTES - 40000, "it is the size cap that cut it, not the count")
+        self.assertLess(len(s.notes()), 150)
+
+    def test_a_lone_surrogate_in_the_words_cannot_stop_the_write(self):
+        s = self.make()
+        self.add(s, "good", "a\ud800b")
+        self.assertEqual(s.notes()[0]["text"], "a?b")
+
+    def test_a_pipe_a_folder_or_a_huge_file_at_the_state_file_is_read_as_no_notes(self):
+        d = tempfile.mkdtemp()
+        fifo = os.path.join(d, "fifo")
+        os.mkfifo(fifo)
+        self.assertEqual(feedback.FeedbackStore(fifo).notes(), [], "a pipe does not block the panel")
+        self.assertEqual(feedback.FeedbackStore(d).notes(), [])
+        big = os.path.join(d, "big.json")
+        with open(big, "w") as f:
+            f.write('{"version": 1, "notes": [], "pad": "' + "x" * 3000 + '"}')
+        self.assertEqual(feedback.FeedbackStore(big, max_bytes=1000).notes(), [])
+        small = os.path.join(d, "small.json")
+        with open(small, "w") as f:
+            json.dump({"version": 1, "notes": [{"t": 5, "face": "good", "role": "guest"}]}, f)
+        self.assertEqual(len(feedback.FeedbackStore(small).notes()), 1, "an ordinary file is read as before")
+
 
 class ApiTest(CareBase):
     def setUp(self):
@@ -216,7 +303,7 @@ class ApiTest(CareBase):
             self.assertEqual(self.api.feedback.notes()[0]["role"], role)
         self.assertEqual(self.api.feedback.notes()[0]["screen"], "room/scenes")
 
-    def test_nothing_that_names_a_device_or_a_secret_is_kept(self):
+    def test_nothing_that_names_a_device_is_kept(self):
         self.send({"face": "bad", "text": "slow"}, self.view_dev, client="192.168.0.77")
         with open(self.path) as f:
             raw = f.read()
@@ -299,6 +386,102 @@ class ApiTest(CareBase):
             dev = {"id": who, "name": who, "role": "live"}
             self.clock.t += 10
             self.assertEqual(self.h("POST", "/api/feedback", {"face": "good"}, dev)[0], 403, who)
+
+    def playing(self, status=None, rows=()):
+        """What is on the screen, as the status and the Sources list say it."""
+        return (mock.patch.object(self.api, "_public_player_status", return_value=status or {"running": False}),
+                mock.patch.object(self.api, "_source_rows", return_value=list(rows)))
+
+    def test_playing_context_keeps_no_ndi_name_no_stream_secret_and_no_clip_path(self):
+        ndi = "NXLX-MAC-ANTHONY (Output 1)"
+        url = "rtsp://%s:%s@192.168.1.60:554/live" % (STREAM_USER, STREAM_PASSWORD)
+        a, b = self.playing({"running": True, "ndi": ndi},
+                            [{"source": 1, "name": "intro.mp4"}, {"source": 2, "name": url}, {"source": 3, "name": "loop.mp4"}])
+        with a, b:
+            self.assertEqual(self.send({"face": "good"})[0], 200)
+        with open(self.path, encoding="utf-8") as f:
+            raw = f.read()
+        for word in (ndi, "NXLX-MAC", "ANTHONY", STREAM_PASSWORD, STREAM_USER):
+            self.assertNotIn(word, raw)
+        [note] = self.api.feedback.notes()
+        said = {p["output"]: p["playing"] for p in note["playing"]}
+        self.assertEqual(said["Source 1"], "an NDI source")
+        self.assertEqual(said["Source 3"], "loop.mp4")
+
+    def test_a_stream_address_with_a_password_never_reaches_the_stored_note(self):
+        url = "rtsp://%s:%s@192.168.1.60:554/live" % (STREAM_USER, STREAM_PASSWORD)
+        a, b = self.playing({"running": True, "path": url, "stream": "Camera"}, [])
+        with a, b:
+            self.send({"face": "good"})
+        self.assertEqual(self.api.feedback.notes()[0]["playing"], [{"output": "Source 1", "playing": "the stream Camera"}])
+        a, b = self.playing({"running": True, "path": url}, [])         # not a saved one: only "a stream"
+        with a, b:
+            self.clock.t += 10
+            self.send({"face": "good"})
+        self.assertEqual(self.api.feedback.notes()[0]["playing"], [{"output": "Source 1", "playing": "a stream"}])
+        for n in self.api.feedback.notes():
+            self.assertNotIn(STREAM_PASSWORD, json.dumps(n))
+
+    def test_a_secret_the_node_knows_is_scrubbed_from_the_playing_words_when_kept_and_when_read(self):
+        # a saved stream named with its own password in it, as a person might write it
+        self.api.settings.data["streams"] = [{"id": "bbbb0001", "name": "Cam", "url": "rtsp://%s:%s@192.168.1.60/x" % (STREAM_USER, STREAM_PASSWORD)}]
+        a, b = self.playing({"running": True, "stream": "cam %s" % STREAM_PASSWORD}, [{"source": 2, "name": "x %s.mp4" % PIN}])
+        with a, b:
+            self.send({"face": "good"})
+        stored = json.dumps(self.api.feedback.notes())
+        self.assertNotIn(STREAM_PASSWORD, stored)
+        self.assertNotIn(PIN, stored)
+        # and a note already kept before the scrub existed is scrubbed on the way out
+        self.api.feedback.items[0]["playing"][0]["playing"] = "the stream rtsp://u:%s@h/x" % STREAM_PASSWORD
+        out = self.h("GET", "/api/feedback", {}, self.full_dev)[1]
+        self.assertNotIn(STREAM_PASSWORD, json.dumps(out))
+
+    def test_a_clip_is_kept_by_its_file_name_never_its_path(self):
+        a, b = self.playing({"running": True, "path": "/media/private-folder/clip.mp4"}, [])
+        with a, b:
+            self.send({"face": "good"})
+        self.assertEqual(self.api.feedback.notes()[0]["playing"][0]["playing"], "clip.mp4")
+        with open(self.path, encoding="utf-8") as f:
+            self.assertNotIn("private-folder", f.read())
+
+    def test_the_whole_node_is_limited_and_says_so_in_plain_words(self):
+        for i in range(30):
+            self.clock.t += 6
+            self.assertEqual(self.send({"face": "good"}, self.live_dev)[0], 200, i)
+        self.clock.t += 6
+        st, out = self.send({"face": "good"}, self.live_dev)
+        self.assertEqual(st, 429, out)
+        self.assertIn("Lots of feedback just now, try again in a few minutes", json.dumps(out))
+        self.assertIn("retry_after", out)
+        self.assertEqual(len(self.api.feedback.notes()), 30)
+        self.clock.t += 600
+        self.assertEqual(self.send({"face": "good"}, self.live_dev)[0], 200)
+
+    def test_two_hundred_a_day_is_the_most_the_node_keeps(self):
+        for i in range(200):
+            self.clock.t += 400                 # two in ten minutes at most, and 216 in a day
+            self.assertEqual(self.send({"face": "good"}, self.live_dev)[0], 200, i)
+        self.clock.t += 400
+        st, out = self.send({"face": "good"}, self.live_dev)
+        self.assertEqual(st, 429, out)
+        self.assertIn("Lots of feedback just now", json.dumps(out))
+        self.clock.t += 86400
+        self.assertEqual(self.send({"face": "good"}, self.live_dev)[0], 200)
+
+    def test_a_guest_send_passes_the_guest_limit_open_or_locked_and_the_controls_are_not_used_up(self):
+        for locked in (False, True):
+            self.assertEqual(self.h("POST", "/api/guests", {"locked": locked}, self.full_dev)[0], 200)
+            self.api.guests._notes.clear()
+            for i in range(10):
+                self.clock.t += 10
+                self.assertEqual(self.send({"face": "good"})[0], 200, (locked, i))
+            self.clock.t += 10
+            st, out = self.send({"face": "good"})
+            self.assertEqual(st, 429, out)
+            self.assertIn("too many guest actions", json.dumps(out))
+            self.assertIn("retry_after", out)
+            self.assertEqual(self.api.guests._acts, {}, "notes are counted apart from the controls")
+        self.assertEqual(self.send({"face": "good"}, self.live_dev)[0], 200, "an Operator has no guest limit")
 
 
 if __name__ == "__main__":

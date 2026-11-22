@@ -2424,7 +2424,7 @@ class Api:
         elif st.get("capture"):
             words = "the capture input"
         elif st.get("ndi"):
-            words = "the NDI source " + str(st["ndi"]) if isinstance(st["ndi"], str) else "an NDI source"
+            words = "an NDI source"         # never its name: that carries the sender's machine name
         elif st.get("test_tone"):
             words = "a test tone"
         elif st.get("stream"):
@@ -2451,13 +2451,22 @@ class Api:
                     rows.append({"output": "Source %d" % r["source"], "playing": r.get("name") or "nothing"})
         except Exception:
             pass
+        try:                                # the secrets the node knows (a stream's, a PIN) out of the words, as the text gets
+            from . import boxcare as care_mod
+            with self.settings.lock:
+                data = copy.deepcopy(self.settings.data)
+            secrets = self.boxcare._secrets(data)
+            rows = [dict(r, playing=care_mod.scrub(r["playing"], secrets)) for r in rows]
+        except Exception:
+            rows = [r for r in rows if "://" not in r["playing"] and "@" not in r["playing"]]
         return rows
 
     def feedback_send(self, body, device, client):
         """{"face": "good" | "so-so" | "bad", "text"?: up to 1000 characters (longer is cut), "screen"?: the screen's name}: a note
         from whoever is paired, Guest included, whether guest controls are locked or not. A face alone is a whole note. The
         node adds its name and id, the time, what plays on each output and the sender's role; it keeps no device name, no
-        device id and no address. One a session in five seconds (429 with retry_after)."""
+        device id and no address. One a session in five seconds, a Guest within the guest limit, and the node as a whole at most
+        30 notes in ten minutes and 200 in a day (429 with retry_after)."""
         from . import feedback as fb
         store = self.feedback
         if store is None:
@@ -2468,11 +2477,17 @@ class Api:
         if not isinstance(text, str) or not (screen is None or isinstance(screen, str)):
             raise bad("the words must be text")
         role = self.FEEDBACK_ROLES.get((device or {}).get("role"), "guest")
+        try:
+            self.guests.admit_note(device)                  # a Guest's own limit, as for his other actions (not the lock)
+        except policy.Refused as e:
+            raise ApiError(e.status, e.message, e.retry_after)
         node = {"name": socket.gethostname().split(".")[0].lower(), "id": getattr(self, "node_id", None) or ""}
         try:
             note = store.add((device or {}).get("id"), body["face"], text[:fb.TEXT_MAX], role, screen, node, self._feedback_playing())
         except fb.TooFast as e:
             raise ApiError(429, "wait a few seconds before sending more", e.wait)
+        except fb.Busy as e:
+            raise ApiError(429, fb.BUSY_TEXT, e.wait)
         except OSError as e:
             raise ApiError(500, "could not save: %s" % (e.strerror or e))
         self.log("nxlx-web: feedback received: %s (sender's role: %s)" % (note["face"], role))

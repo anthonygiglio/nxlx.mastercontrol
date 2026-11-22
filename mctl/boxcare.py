@@ -1226,6 +1226,8 @@ class BoxCare:
         for n in store.notes():
             if n.get("text"):
                 n = dict(n, text=scrub(n["text"], secrets))
+            if n.get("playing"):
+                n = dict(n, playing=[dict(p, playing=scrub(p.get("playing", ""), secrets)) for p in n["playing"]])
             rows.append(n)
         return dict(store.state(rootfs.current_state() == "overlay"), notes=rows)
 

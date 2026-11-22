@@ -293,6 +293,7 @@ class GuestControls:
         self._lock = threading.Lock()
         self._acts = {}             # device id -> [times], and "*" for the box
         self._offs = {}             # the same for power-offs carried out
+        self._notes = {}            # the same for feedback notes (D147): its own, so a flood of notes never uses up the controls
         self._confirms = {}         # token -> (device id, request key, expires)
         self._cooled = None         # when a guest last played, blacked out or applied a scene (COOLED)
 
@@ -325,6 +326,19 @@ class GuestControls:
             if locked:
                 self._confirms.clear()          # a power-off that was waiting for its second request is over
         return self.state()
+
+    def admit_note(self, device):
+        """A feedback note from a Guest (D147): the guest limit on actions (GUEST_ACTIONS in GUEST_WINDOW for a device,
+        BOX_ACTIONS for all guests), counted apart from the controls'. Not the lock: a note is no control of the room.
+        Raises Refused (429) when the limit is reached. Any other role passes."""
+        if not is_guest(device):
+            return
+        who, now = device["id"], self._clock()
+        with self._lock:
+            wait = self._room_in(self._notes, who, now, GUEST_WINDOW, GUEST_ACTIONS, BOX_ACTIONS)
+            if wait:
+                raise Refused(429, "too many guest actions at once; wait a moment", retry_after=int(wait) + 1)
+            self._count(self._notes, who, now)
 
     # -- one guest request --
     @staticmethod

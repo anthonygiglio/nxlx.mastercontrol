@@ -14,13 +14,19 @@ opened through a link: a link planted at the name or at the temporary name is re
 not a list, an odd note) is read as far as it is good and never stops the panel. With the read-only root (mctl/rootfs.py)
 nothing on the system disk is kept, so the notes are lost at a restart and the Owner is told so (`state()`).
 
-A session (one paired device) may send one note in five seconds, so a stuck finger cannot fill the store. A refused send
-is answered with the seconds to wait, and nothing is stored."""
+A session (one paired device) may send one note in five seconds, so a stuck finger cannot fill the store. The node as a
+whole takes at most 30 notes in ten minutes and 200 in a day (BOX_LIMITS), so a crowd of devices, or one that keeps
+re-pairing, cannot push the real notes out. A refused send is answered with the seconds to wait, and nothing is stored.
+
+The file is UTF-8 (an emoji is 4 bytes, not the 12 an escaped one takes) and is kept under 2 MB: the oldest notes are
+dropped from the file and the list until it fits. It is read through a file descriptor that is a regular file and no
+larger than the limit; anything else is read as no notes."""
 
 import json
 import math
 import os
 import re
+import stat
 import threading
 import time
 
@@ -29,10 +35,20 @@ TEXT_MAX = 1000
 FACES = ("good", "so-so", "bad")
 ROLES = ("owner", "operator", "guest")
 MIN_GAP = 5.0                       # seconds between two sends of one session
+BOX_LIMITS = ((600.0, 30), (86400.0, 200))      # (seconds, notes): all sessions together, the whole node
+BUSY_TEXT = "Lots of feedback just now, try again in a few minutes"
+MAX_BYTES = 2 * 1024 * 1024         # the file is kept under this: the oldest notes go first
 FILE = "feedback.json"
 SCREEN_MAX, NAME_MAX, LINE_MAX, OUTPUTS_MAX = 24, 60, 120, 16
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]+")     # tab and newline stay in the tester's own words; the rest goes
 _SCREEN = re.compile(r"^[a-z0-9_-]{1,%d}(/[a-z0-9_-]{1,%d})?$" % (SCREEN_MAX, SCREEN_MAX))
+
+
+class Busy(Exception):
+    """The node took its share of notes for now (BOX_LIMITS). `wait` is the whole seconds to wait."""
+    def __init__(self, wait):
+        super().__init__(BUSY_TEXT)
+        self.wait = wait
 
 
 class TooFast(Exception):
@@ -42,18 +58,23 @@ class TooFast(Exception):
         self.wait = wait
 
 
+def _utf8(value):
+    """The text with any lone surrogate (which UTF-8 cannot hold) made a question mark."""
+    return value.encode("utf-8", "replace").decode("utf-8")
+
+
 def plain(value, limit):
     """Plain text: no control characters (a tab or a new line stays), cut to `limit`, trimmed."""
     if not isinstance(value, str):
         return ""
-    return _CONTROL.sub(" ", value).strip()[:limit].strip()
+    return _utf8(_CONTROL.sub(" ", value)).strip()[:limit].strip()
 
 
 def line(value, limit):
     """One plain line: every run of space and control characters made one space."""
     if not isinstance(value, str):
         return ""
-    return re.sub(r"[\s\x00-\x1f\x7f]+", " ", value).strip()[:limit].strip()
+    return _utf8(re.sub(r"[\s\x00-\x1f\x7f]+", " ", value)).strip()[:limit].strip()
 
 
 def clean_time(t):
@@ -102,9 +123,11 @@ def clean_note(x):
 
 
 class FeedbackStore:
-    def __init__(self, path, now=time.time, clock=time.monotonic, log=print, cap=CAP, gap=MIN_GAP):
+    def __init__(self, path, now=time.time, clock=time.monotonic, log=print, cap=CAP, gap=MIN_GAP,
+                 box_limits=BOX_LIMITS, max_bytes=MAX_BYTES):
         self.path, self._now, self._clock, self.log = path, now, clock, log
-        self.cap, self.gap = cap, gap
+        self.cap, self.gap, self.box_limits, self.max_bytes = cap, gap, tuple(box_limits), max_bytes
+        self._stamps = []               # when notes were kept (the monotonic clock), newest last, memory only
         self.lock = threading.Lock()
         self.items = []
         self._last = {}                 # session id -> when it last sent (the monotonic clock), memory only
@@ -115,9 +138,15 @@ class FeedbackStore:
     def _load(self):
         """The file if it is ours, opened with no following of a link. Damage leaves out what is wrong, never stops the panel."""
         try:
-            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            with os.fdopen(fd, "r") as f:
-                data = json.load(f)
+            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            with os.fdopen(fd, "rb") as f:
+                info = os.fstat(f.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > self.max_bytes:
+                    raise ValueError("not a file of ours")      # a pipe, a device or a file far past what is ever written
+                raw = f.read(self.max_bytes + 1)
+            if len(raw) > self.max_bytes:
+                raise ValueError("too large")
+            data = json.loads(raw.decode("utf-8"))
             rows = data.get("notes") if isinstance(data, dict) else None
             if isinstance(rows, list):
                 items = []
@@ -132,14 +161,23 @@ class FeedbackStore:
         except Exception:               # OSError (a link, a missing file), ValueError, RecursionError from a hostile file
             self.items = []
 
-    def _write(self, items):
-        """The whole file, by a rename, from `items`. True when it is on the disk. Lock held."""
-        data = {"version": 1, "notes": items}
+    def _fit(self, items):
+        """`items` without its oldest notes until the file (UTF-8, not escaped) is under max_bytes, and that file's bytes."""
+        sizes = [len(json.dumps(n, ensure_ascii=False).encode("utf-8")) + 2 for n in items]
+        total, first = 64 + sum(sizes), 0
+        while total > self.max_bytes and first < len(items) - 1:       # the newest note always stays
+            total -= sizes[first]
+            first += 1
+        items = items[first:]
+        return items, json.dumps({"version": 1, "notes": items}, ensure_ascii=False).encode("utf-8")
+
+    def _write(self, blob):
+        """The whole file, by a rename, from `blob` (the bytes of _fit). True when it is on the disk. Lock held."""
         tmp = self.path + ".tmp"
         try:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o640)
-            with os.fdopen(fd, "w") as f:
-                json.dump(data, f)
+            with os.fdopen(fd, "wb") as f:
+                f.write(blob)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self.path)
@@ -154,7 +192,7 @@ class FeedbackStore:
     # ---- adding ------------------------------------------------------------------------------------------------
     def add(self, session, face, text, role, screen, node, playing):
         """Keep one note and return it. Raises ValueError for a face that is none of the three, TooFast when this session
-        sent less than `gap` seconds ago, OSError when it could not be written (then nothing is kept and the session may
+        sent less than `gap` seconds ago, Busy when the node has taken its share of notes (BOX_LIMITS), OSError when it could not be written (then nothing is kept and the session may
         try again at once). The text is cut to TEXT_MAX; the rest is made plain by clean_note."""
         if face not in FACES:
             raise ValueError("choose good, so-so or bad")
@@ -167,16 +205,31 @@ class FeedbackStore:
             held = self._last.get(session)
             if held is not None and 0 <= now - held < self.gap:
                 raise TooFast(int(self.gap - (now - held)) + 1)
+            wait = self._box_wait(now)
+            if wait:
+                raise Busy(wait)
             note = clean_note({"t": int(self._now()), "face": face, "text": text, "role": role, "screen": screen,
                                "node": node, "playing": playing})
             if note is None:
                 raise ValueError("not a note")
-            items = (self.items + [note])[-self.cap:]
-            if not self._write(items):
+            items, blob = self._fit((self.items + [note])[-self.cap:])
+            if not self._write(blob):
                 raise OSError("could not save the note")
             self.items = items
             self._last[session] = now
+            self._stamps.append(now)
         return dict(note)
+
+    def _box_wait(self, now):
+        """Whole seconds to wait before the node takes another note, or 0. Counts nothing. Lock held."""
+        horizon = max((w for w, _ in self.box_limits), default=0.0)
+        self._stamps = [t for t in self._stamps if 0 <= now - t < horizon]
+        wait = 0.0
+        for window, most in self.box_limits:
+            inside = [t for t in self._stamps if now - t < window]
+            if len(inside) >= most:
+                wait = max(wait, window - (now - inside[len(inside) - most]))
+        return int(wait) + 1 if wait else 0
 
     # ---- reading -----------------------------------------------------------------------------------------------
     def notes(self):
