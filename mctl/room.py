@@ -916,15 +916,30 @@ class Room:
             if not any(code in ((p.get("details") or {}).get("inputs") or []) for p in members):
                 raise bad("no projector in %s has that input" % name)
         if action in ("volume_up", "volume_down"):
-            return self._group_volume(gid, name, members, action, device, client)
+            background = body.get("background", False)
+            if not isinstance(background, bool):
+                raise bad("background must be true or false")
+            return self._group_volume(gid, name, members, action, device, client, background)
         self.start_group(gid, group, action, code)
         return {"started": True, "group": gid, "name": name}
 
-    def _group_volume(self, gid, name, members, action, device, client):
+    def _group_volume(self, gid, name, members, action, device, client, background=False):
         """One speaker step for every projector of the group, sent now (a step is not a state to settle, so it is not
         queued like a scene's steps). {"failed": [{"name", "error"}]} says which projector did not take it and why;
-        every projector refusing is still an answer, shown by the screen."""
+        every projector refusing is still an answer, shown by the screen. With "background" (OSC sends it, so an
+        unplugged projector never holds the next cue, as with /api/projector) the steps go from a thread of their
+        own, a failure is only logged, and the answer is {"started": true, "group", "name"} at once."""
         self.api._projector_change(members, action, None, device, client)
+        if background:
+            def run():
+                bad_ones = ["%s: %s" % (p["name"], r.get("error") or "no answer") for p, r in
+                            ((p, self.api._projector_run([p], action).get(p["id"], {})) for p in members) if not r.get("ok")] if False else []
+                results = self.api._projector_run(members, action)
+                bad_ones = ["%s: %s" % (p["name"], results[p["id"]].get("error") or "no answer") for p in members if not results[p["id"]].get("ok")]
+                if bad_ones:
+                    self.api.log("nxlx-web: group %s (from %s): %s" % (action, client, "; ".join(bad_ones)))
+            threading.Thread(target=run, name="room-volume", daemon=True).start()
+            return {"started": True, "group": gid, "name": name}
         results = self.api._projector_run(members, action)
         failed = [{"name": p["name"], "error": results[p["id"]].get("error") or "no answer"} for p in members if not results[p["id"]].get("ok")]
         return {"started": True, "group": gid, "name": name, "sent": len(members) - len(failed), "failed": failed}

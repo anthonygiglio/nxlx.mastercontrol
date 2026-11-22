@@ -510,6 +510,8 @@ def _room(a, args):
         if not pressed(args):
             return None
         body["action"] = what
+        if what.startswith("volume"):
+            body["background"] = True           # answered at once like the other group presses; an unplugged projector must not hold the next cue
     elif what == "input":                             # "31", 31 or 31.0 (a controller that only sends floats)
         if _number(v) and v == int(v):
             v = str(int(v))

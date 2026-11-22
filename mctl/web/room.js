@@ -187,8 +187,10 @@
         var button = function (text, action, extra, cls) {
           var body = { group: g.id, action: action };
           if (extra) body.input = extra;
+          var said = title + ': ' + text + ', started';
+          if (action === 'volume_up' || action === 'volume_down') said = title + ': ' + text.toLowerCase() + ' sent';
           return h('button', { class: 'btn grow ' + (cls || 'big'), text: text, 'aria-label': title + ': ' + text, 'data-action': action,
-            onclick: function () { send('/api/room/group', body, title + ': ' + text + ', started'); } });
+            onclick: function () { send('/api/room/group', body, said); } });
         };
         if (all && armed) {
           // The question takes the place of the two buttons, so the second tap of a double tap lands on it: a

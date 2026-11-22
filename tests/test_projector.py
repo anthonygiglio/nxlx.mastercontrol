@@ -290,7 +290,7 @@ class PJLinkTest(unittest.TestCase):
             self.assertEqual((link.volume(True), link.volume(True), link.volume(False)), ("OK", "OK", "OK"))
             self.assertEqual(list(fake.received), ["%2SVOL 1", "%2SVOL 1", "%2SVOL 0"])      # class 2 header, 1 up one step, 0 down one step
             self.assertEqual(fake.volume_steps, [1, 1, -1])
-            for answer, code in (("ERR1", "novolume"), ("ERR2", "novolume"), ("ERR4", "ERR4"), ("garbage", "odd")):
+            for answer, code in (("ERR1", "novolume"), ("ERR2", "novolume"), ("ERRA", "novolume"), ("ERR4", "ERR4"), ("garbage", "odd")):
                 fake.svol = answer
                 with self.assertRaises(projector.ProjectorError) as cm:
                     link.volume(True)
@@ -1949,6 +1949,15 @@ class VolumeApiTest(ServerBase):
             self.assertEqual(st, 502, answer)
             self.assertIn(text, body["error"], answer)
 
+    def test_a_wrong_password_answers_ERRA_and_says_plainly_it_does_not_take_volume(self):
+        fake = FakeProjector(klass="2")
+        pid = self.add(fake)
+        fake.password = "right"                                    # it asks for a password now; the entry has none
+        for p in self.settings.data["projectors"]:
+            p["password"] = "wrong"
+        st, body, _ = self.post("/api/projector", {"id": pid, "action": "volume_up"})
+        self.assertEqual((st, body["error"]), (502, "This projector does not take volume from the network"))
+
     def test_several_projectors_each_answer_for_themselves(self):
         two, one = FakeProjector(klass="2"), FakeProjector()
         a, b = self.add(two, "Left"), self.add(one, "Right")
@@ -2505,6 +2514,15 @@ class EpsonRolesTest(EpsonRolesBase):
         for action in ("volume_up", "volume_down"):
             self.later()
             self.assertEqual(self.h("POST", "/api/projector", {"id": self.pid, "action": action}, self.guest)[0], 403, action)
+
+    def test_remote_support_may_send_volume_steps(self):
+        """D146: a speaker step is not an off and not a picture setting, so remote support may send it. Here the
+        projector is Epson-alone, which takes no volume, so the answer is its plain 502, never the support 403."""
+        dev = self.session()
+        for action in ("volume_up", "volume_down"):
+            st, out = self.h("POST", "/api/projector", {"id": self.pid, "action": action}, dev, TUNNEL)
+            self.assertEqual((st, out["error"]), (502, "This projector does not take volume from the network"), action)
+        self.assertNotIn("refused a projector change", json.dumps(self.settings.data["support_log"]))
 
     def test_remote_support_neither_switches_off_nor_changes_the_picture(self):
         dev = self.session()
