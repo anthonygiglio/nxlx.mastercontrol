@@ -71,11 +71,37 @@ Tested with a fake `blkid`/`mount` (label cleaning, options, collisions, refusal
 `sudo nxlx-rootfs enable` makes the system disk effectively read-only: everything written after boot lives in RAM and is gone at the next reboot, so pulling the plug cannot corrupt the SD card or SSD. `nxlx-rootfs disable` turns it off, `nxlx-rootfs status` reports the state. It uses the tools the system already has: `raspi-config` on Raspberry Pi OS, the `overlayroot` package elsewhere (`sudo apt install overlayroot`). It never reboots for you.
 
 - **Media must not live on the system disk.** Files added while the overlay is active are lost at reboot, so `enable` refuses if `NXLX_MEDIA_DIR` is on the same filesystem as `/` (override with `--force`). Use a second disk or a USB drive.
-- **Settings are read-only too.** Changes to `/etc/nxlx` need `nxlx-rootfs disable`, a reboot, the edit, then `enable` and another reboot.
+- **`/etc/nxlx` is read-only too.** Changes there need `nxlx-rootfs disable`, a reboot, the edit, then `enable` and another reboot. The settings the panel changes at run time are a different matter: see the kept settings disk below.
 - USB drives already mount read-only by default, so they are unaffected.
 - **Updates are refused while it is on.** An update, a rollback and `install/install.sh` would be written to RAM and lost at the next restart, so `nxlx-update`, the panel's Updates card (including the upload) and the installer say so and stop. To update: `sudo nxlx-rootfs disable`, restart, update, then `sudo nxlx-rootfs enable` and restart.
 
 Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the `raspi-config` and `overlayroot` commands (especially `overlayroot-chroot` when disabling from inside an active overlay) and the reboot behaviour. Do that on a spare card first.
+
+### The kept settings disk (J-050, D148)
+
+With the read-only disk on, nothing the panel changes after boot would survive a restart: the PIN, scenes, Owner and staff devices, uploaded graphics, the node's settings, the Wi-Fi. So `nxlx-rootfs enable` now needs a **kept settings disk**: one small ext4 filesystem, outside the read-only root, that holds these folders and is mounted over their normal places at boot, before any service starts:
+
+| On the kept disk | Shows up at | What it is |
+|---|---|---|
+| `state` | `/var/lib/nxlx` | the panel: settings, scenes, devices, graphics, the default media folder |
+| `player` | `/var/lib/nxlx-player` | the player's own state |
+| `netd` | `/var/lib/nxlx-netd` | the network helper's state |
+| `update` | `/var/lib/nxlx-update` | root's update backups and the clip stick's claim (J-178) |
+| `support` | `/var/lib/nxlx-support` | the remote support key |
+| `wifi` | `/etc/NetworkManager/system-connections` | the saved Wi-Fi networks, so a venue's Wi-Fi comes back after a restart |
+
+Everything else (`/opt/nxlx`, the units, `/etc/nxlx`) stays on the protected disk. The kept disk is small and ext4 with a journal, so a pulled plug can at worst need the usual journal replay at the next mount (and one `e2fsck -p`, which the boot step runs if the first mount fails); it can never damage the system.
+
+Set-up, once per node, with the read-only disk off:
+
+1. Make a partition of at least 1 GB (more if the media folder stays in `/var/lib/nxlx`) on a disk that is not the system partition: a spare partition on the card or SSD, or a USB disk. This tool does not repartition anything.
+2. `sudo nxlx-kept prepare /dev/<that partition> --yes` formats it (it erases the partition; an existing filesystem needs `--wipe` too), writes a marker on it and saves its filesystem UUID in `/etc/nxlx/kept.json`. Only a disk with that UUID and marker is ever used: a stick that merely carries the same label is not.
+3. `sudo nxlx-rootfs enable`, then restart. It refuses, in plain words, if there is no kept disk, the disk is not plugged in, is not ext4 or is too small. `sudo nxlx-rootfs enable --without-kept` turns the read-only disk on without it, as before (every setting is lost at each restart).
+4. The first restart copies the six folders to the kept disk, as root, before the services start (so nothing writes meanwhile). The copy never follows a link, leaves out anything that is not a plain file or folder, keeps owners and modes, and is renamed into place only when complete and flushed. A folder that is already on the kept disk is never copied over again.
+
+After that the node behaves as if its disk were writable for these folders only. `sudo nxlx-kept status` and `nxlx-rootfs status` show what is set up and what the last boot did (`/run/nxlx-kept.json`: `active`, `partial`, `missing`, `refused` or `off`, with a line per folder). If the disk is missing at boot the node still starts, on the protected disk's older copy, and says `missing`; nothing is deleted or made up. `nxlx-rootfs disable` leaves the kept disk in use (the settings stay where they are and nothing is copied back).
+
+Not done yet (the second part of J-050): a way to stop using the kept disk and copy the settings back, a card in the panel that shows the state above, the journal on the kept disk, and a partition made by the image. Not tested on a real node: the mounts, a real pulled plug, NetworkManager reading its connections from the covered folder, and systemd's ordering at boot (the tests use a temp folder and a fake mount).
 
 ## Web panel and control API
 

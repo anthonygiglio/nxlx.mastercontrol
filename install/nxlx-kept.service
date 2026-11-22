@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=nxlx.mastercontrol kept settings folder (the node's settings survive restarts while the system disk is read-only)
+Documentation=file:@NXLX_DIR@/mctl/README.md
+# Early: before anything that writes a setting. Only where "nxlx-kept prepare" made /etc/nxlx/kept.json.
+DefaultDependencies=no
+ConditionPathExists=/etc/nxlx/kept.json
+After=local-fs.target systemd-udevd.service systemd-udev-trigger.service
+Before=sysinit.target NetworkManager.service nxlx-player.service nxlx-web.service nxlx-netd.service nxlx-sysd.service nxlx-supportd.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Waits up to 30 s for a slow USB disk, then goes on without it and says so in /run/nxlx-kept.json; the first boot with the
+# disk copies the folders to it (a large media folder can take a while).
+ExecStart=@NXLX_DIR@/bin/nxlx-kept mount
+ExecStop=@NXLX_DIR@/bin/nxlx-kept sync
+TimeoutStartSec=20min
+
+[Install]
+WantedBy=sysinit.target
