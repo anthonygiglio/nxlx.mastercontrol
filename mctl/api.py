@@ -4247,7 +4247,8 @@ class Api:
 
     def projector_action(self, body, device, client):
         """{"id": projector id or "all", "action": one of PROJECTOR_ACTIONS, "background"?: bool}.
-        "mute" and "unmute" are picture and sound together; "input" needs one projector and {"input": "31"}, a
+        "mute" and "unmute" are picture and sound together; "volume_up" and "volume_down" are one speaker step (PJLink
+        class 2; a projector that does not take it says so, and nothing is sent to one that said it is class 1); "input" needs one projector and {"input": "31"}, a
         code from that projector's own list; "identify" reads the projector's details again.
         With "background" the commands are sent from a thread of their own and the answer is {"started": true}; OSC
         uses that, so an unplugged projector never delays the next cue."""
@@ -4310,7 +4311,7 @@ class Api:
 
     PROJECTOR_WAIT = 30.0     # a name lookup is the only unbounded step; nobody waits longer than this
     PROJECTOR_ACTIONS = ("on", "off", "mute", "unmute", "mute_picture", "unmute_picture", "mute_sound", "unmute_sound",
-                         "input", "identify", "state") + PROJECTOR_EPSON
+                         "volume_up", "volume_down", "input", "identify", "state") + PROJECTOR_EPSON
 
     def _projector_picture(self, p, what, value):
         """Brightness (0 to 255; the projector keeps the nearest step it has, so it may read back a little
@@ -4354,6 +4355,11 @@ class Api:
                     results[p["id"]] = dict(self.projectors.set_input(p, action[1]), ok=True)
                 elif action == "identify":
                     self.projectors.identify(p)
+                    results[p["id"]] = {"ok": True}
+                elif action in ("volume_up", "volume_down"):
+                    if str((p.get("details") or {}).get("class") or "") == "1":     # it said class 1 when it was identified: no SVOL to send
+                        raise projector_mod.ProjectorError(projector_mod.NO_VOLUME, "novolume")
+                    link.volume(action == "volume_up")
                     results[p["id"]] = {"ok": True}
                 elif action != "state":
                     verb, _, what = action.partition("_")

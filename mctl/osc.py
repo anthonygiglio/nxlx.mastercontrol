@@ -485,12 +485,12 @@ def pressed(args):
 
 
 _ROOM_SCENE = re.compile(r"/mctl/scene/([1-9][0-9]?)")
-_ROOM_GROUP = re.compile(r"/mctl/group/(all|[1-9][0-9]?)/(on|off|mute|mute_picture|mute_sound|input)")
+_ROOM_GROUP = re.compile(r"/mctl/group/(all|[1-9][0-9]?)/(on|off|mute|mute_picture|mute_sound|input|volume_up|volume_down)")
 
 
 def _room(a, args):
     """The Room module's scenes and group buttons (ROOM.md): /mctl/scene/<n> (press), /mctl/scene with a name or a
-    number, /mctl/group/<n or all>/on, off (press), mute, mute_picture, mute_sound (1 or 0) and input (a code)."""
+    number, /mctl/group/<n or all>/on, off (press), mute, mute_picture, mute_sound (1 or 0), input (a code), and volume_up and volume_down (press)."""
     m = _ROOM_SCENE.fullmatch(a)
     if m:
         return ("/api/room/scene", {"number": int(m.group(1))}) if pressed(args) else None
@@ -506,10 +506,12 @@ def _room(a, args):
         return None
     body = {"group": "all"} if m.group(1) == "all" else {"number": int(m.group(1))}
     what, v = m.group(2), (args[0] if args else None)
-    if what in ("on", "off"):
+    if what in ("on", "off", "volume_up", "volume_down"):
         if not pressed(args):
             return None
         body["action"] = what
+        if what.startswith("volume"):
+            body["background"] = True           # answered at once like the other group presses; an unplugged projector must not hold the next cue
     elif what == "input":                             # "31", 31 or 31.0 (a controller that only sends floats)
         if _number(v) and v == int(v):
             v = str(int(v))

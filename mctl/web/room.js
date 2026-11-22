@@ -157,7 +157,10 @@
     function send(path, body, said) {
       c.api('POST', path, body).then(function (r) {
         if (!r.ok) c.say(r.data.error || 'Something went wrong', true);
-        else c.say(said);
+        else if (r.data.failed && r.data.failed.length) {      // a volume step some projector did not take: say which, in its own words
+          var many = r.data.failed.length > 1 || r.data.sent > 0;
+          c.say(r.data.failed.map(function (f) { return (many ? f.name + ': ' : '') + f.error; }).join('. '), true);
+        } else c.say(said);
         load(true);
       });
     }
@@ -184,8 +187,10 @@
         var button = function (text, action, extra, cls) {
           var body = { group: g.id, action: action };
           if (extra) body.input = extra;
+          var said = title + ': ' + text + ', started';
+          if (action === 'volume_up' || action === 'volume_down') said = title + ': ' + text.toLowerCase() + ' sent';
           return h('button', { class: 'btn grow ' + (cls || 'big'), text: text, 'aria-label': title + ': ' + text, 'data-action': action,
-            onclick: function () { send('/api/room/group', body, title + ': ' + text + ', started'); } });
+            onclick: function () { send('/api/room/group', body, said); } });
         };
         if (all && armed) {
           // The question takes the place of the two buttons, so the second tap of a double tap lands on it: a
@@ -222,6 +227,7 @@
           kids.push(h('div', { class: 'row wrap' },
             g.mute.picture ? button('Show picture', 'unmute_picture', null, 'big on') : button('Mute picture', 'mute_picture'),
             g.mute.sound ? button('Sound on', 'unmute_sound', null, 'big on') : button('Mute sound', 'mute_sound')));
+          kids.push(h('div', { class: 'row wrap room-volume' }, button('Volume down', 'volume_down'), button('Volume up', 'volume_up')));
         }
       }
       if (g.last) kids.push(result(g.last));
