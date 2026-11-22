@@ -102,6 +102,15 @@ button:focus-visible, input:focus-visible, a:focus-visible, select:focus-visible
 .offline { position: fixed; left: 8px; right: 8px; top: 8px; z-index: 14; padding: 8px 12px; border-radius: 6px; background: var(--ac); color: var(--on); font-weight: 600; text-align: center; }
 [hidden] { display: none !important; }
 .picker { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: flex-end; justify-content: center; z-index: 20; }
+.feedback-picker { z-index: 30; }
+.feedback-faces { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.feedback-face { flex-direction: column; min-height: 96px; gap: 4px; font-size: 18px; }
+.feedback-glyph { font-size: 40px; line-height: 1; }
+.feedback-text { min-height: 96px; padding: 10px; font: inherit; resize: vertical; }
+.feedback-status { min-height: 24px; font-weight: 600; }
+.feedback-status.err { color: var(--ac); }
+.feedback-status.thanks { font-size: 20px; }
+.feedback-sheet .row { gap: 8px; }
 .picker .sheet { background: var(--bg); border: 1.5px solid var(--ln); border-radius: 12px 12px 0 0; width: 100%; max-width: 600px; max-height: 80dvh; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
 
 @media (min-width: 900px) { .shell:not(.wsp) > .screen { padding: 24px 28px; } }      /* before pairing */

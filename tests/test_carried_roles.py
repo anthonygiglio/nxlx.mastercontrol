@@ -80,6 +80,8 @@ CARRIED = {
     ("POST", "/api/effects/step"): SAME,
     ("POST", "/api/effects/values"): SAME,
     ("GET", "/api/events"): SAME,
+    ("GET", "/api/feedback"): SAME,
+    ("POST", "/api/feedback"): SAME,
     ("POST", "/api/fade"): SAME,
     ("POST", "/api/fadein"): SAME,
     ("POST", "/api/fadeout"): SAME,

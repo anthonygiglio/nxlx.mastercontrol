@@ -268,6 +268,7 @@ class Api:
         self.presence = presence_mod.Presence(controllers=policy.CONTROLLERS)    # who is connected now and what each changed (D126), memory only
         auth.on_revoke = lambda ident: self.presence.forget(ident)           # a removed device is gone from it at once
         self.events = None        # EventLog or None (mctl/events.py, D125): what happened on this node
+        self.feedback = None      # FeedbackStore or None (mctl/feedback.py, D147): the faces and words sent from the Room screen
         self.fleet = None         # fleet.Fleet or None (mctl/fleet.py, D127): the other nodes on the network, and this one's announcement
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.handover = None      # handover.Handover or None (mctl/handover.py, D132): the fleet list, acceptances, the deny file
@@ -2405,6 +2406,92 @@ class Api:
                 log.add(kind, text, who, urgent)
             except Exception as e:
                 self.log("nxlx-web: the event log: %s" % e)
+
+    # --- feedback from the room (J-179, D147, mctl/feedback.py) ----------------------------------------
+    FEEDBACK_ROLES = {"full": "owner", "live": "operator", "view": "guest"}
+
+    @staticmethod
+    def _playing_words(st):
+        """One short plain sentence for what the screen shows, from the public status (no path, no address, no password)."""
+        if not isinstance(st, dict) or not st.get("running"):
+            return "nothing"
+        if st.get("test_pattern"):
+            words = "the test pattern"
+        elif "shader" in st:
+            words = ("the shader " + str(st["shader"])) if st.get("shader") else "a shader"
+            if st.get("vibes"):
+                words += " (Vibes)"
+        elif st.get("capture"):
+            words = "the capture input"
+        elif st.get("ndi"):
+            words = "an NDI source"         # never its name: that carries the sender's machine name
+        elif st.get("test_tone"):
+            words = "a test tone"
+        elif st.get("stream"):
+            words = "the stream " + str(st["stream"])
+        elif isinstance(st.get("path"), str) and st["path"]:
+            words = "a stream" if "://" in st["path"] else os.path.basename(st["path"])
+        else:
+            return "nothing"
+        if st.get("effect"):
+            words += " with the effect " + str(st["effect"])
+        return words
+
+    def _feedback_playing(self):
+        """What plays on each output now: Source 1 from the public status, the other sources as the Sources list says them.
+        Anything that cannot be read is left out; a note is never refused for it."""
+        rows = []
+        try:
+            rows.append({"output": "Source 1", "playing": self._playing_words(self._public_player_status())})
+        except Exception:
+            pass
+        try:
+            for r in self._source_rows():
+                if r.get("source", 1) > 1:
+                    rows.append({"output": "Source %d" % r["source"], "playing": r.get("name") or "nothing"})
+        except Exception:
+            pass
+        try:                                # the secrets the node knows (a stream's, a PIN) out of the words, as the text gets
+            from . import boxcare as care_mod
+            with self.settings.lock:
+                data = copy.deepcopy(self.settings.data)
+            secrets = self.boxcare._secrets(data)
+            rows = [dict(r, playing=care_mod.scrub(r["playing"], secrets)) for r in rows]
+        except Exception:
+            rows = [r for r in rows if "://" not in r["playing"] and "@" not in r["playing"]]
+        return rows
+
+    def feedback_send(self, body, device, client):
+        """{"face": "good" | "so-so" | "bad", "text"?: up to 1000 characters (longer is cut), "screen"?: the screen's name}: a note
+        from whoever is paired, Guest included, whether guest controls are locked or not. A face alone is a whole note. The
+        node adds its name and id, the time, what plays on each output and the sender's role; it keeps no device name, no
+        device id and no address. One a session in five seconds, a Guest within the guest limit, and the node as a whole at most
+        30 notes in ten minutes and 200 in a day (429 with retry_after)."""
+        from . import feedback as fb
+        store = self.feedback
+        if store is None:
+            raise ApiError(503, "feedback is not available on this node")
+        if not isinstance(body, dict) or not set(body) <= {"face", "text", "screen"} or body.get("face") not in fb.FACES:
+            raise bad("choose a face: good, so-so or bad")
+        text, screen = body.get("text", ""), body.get("screen")
+        if not isinstance(text, str) or not (screen is None or isinstance(screen, str)):
+            raise bad("the words must be text")
+        role = self.FEEDBACK_ROLES.get((device or {}).get("role"), "guest")
+        try:
+            self.guests.admit_note(device)                  # a Guest's own limit, as for his other actions (not the lock)
+        except policy.Refused as e:
+            raise ApiError(e.status, e.message, e.retry_after)
+        node = {"name": socket.gethostname().split(".")[0].lower(), "id": getattr(self, "node_id", None) or ""}
+        try:
+            note = store.add((device or {}).get("id"), body["face"], text[:fb.TEXT_MAX], role, screen, node, self._feedback_playing())
+        except fb.TooFast as e:
+            raise ApiError(429, "wait a few seconds before sending more", e.wait)
+        except fb.Busy as e:
+            raise ApiError(429, fb.BUSY_TEXT, e.wait)
+        except OSError as e:
+            raise ApiError(500, "could not save: %s" % (e.strerror or e))
+        self.log("nxlx-web: feedback received: %s (sender's role: %s)" % (note["face"], role))
+        return {"sent": True}
 
     def events_tick(self):
         """About once a second (server.py, beside render_tick): what only shows in a file or a state is looked at here, the
@@ -6164,6 +6251,7 @@ class Api:
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),
             ("GET", "/api/room"): ("view", self.room.api_get),
+            ("POST", "/api/feedback"): ("view", self.feedback_send),    # D147: any paired device, a Guest too, locked or not; never through support, never from a controller
             ("POST", "/api/room"): ("live", self.room.api_set),
             ("POST", "/api/room/scene"): ("live", self.room.api_scene),
             ("POST", "/api/room/group"): ("live", self.room.api_group),

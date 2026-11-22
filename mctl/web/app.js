@@ -2527,7 +2527,7 @@
   // The Room screen (room.js) builds all of its cards at once. Each belongs to one screen of the Room area, and the
   // set-up card to Setup > Room: the cards are put into a column per screen (roomDesk()), or marked and the ones of
   // another screen hidden, not left out (roomInPage()), so room.js finds every one of them as before.
-  var ROOM_PARTS = { roomambience: 'scenes', roomamboff: 'scenes', roomscenes: 'scenes', roomgroups: 'walls', guestlockcard: 'guests', roomletin: 'guests', roomsetup: 'setup' };
+  var ROOM_PARTS = { roomambience: 'scenes', roomamboff: 'scenes', roomscenes: 'scenes', roomgroups: 'walls', guestlockcard: 'guests', roomletin: 'guests', roomfeedback: 'scenes', roomsetup: 'setup' };
   // The Room area: room.js's one build, its cards in the columns of the area's desk. The title is the shell's; a
   // guest's "View only" stays, above the columns. The element keeps its id, which the stylesheet and room.js know.
   function roomDesk(mine) {
@@ -2570,7 +2570,7 @@
     var rows = [
       { id: 'health', group: 'top', name: 'Health', role: 'view', url: '/api/health',
         blurb: 'Whether the node is well: its power supply, temperature, the player and the helpers it needs, and each projector\'s own warnings.',
-        body: function () { return can('full') ? [healthCard(), eventsCard()] : [healthCard()]; } },
+        body: function () { return can('full') ? [healthCard(), eventsCard(), feedbackListCard()] : [healthCard()]; } },
       { id: 'projectors', group: 'everyday', name: 'Projectors', role: 'live', module: 'projector', url: '/api/projectors',
         blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. On an Epson also freeze, brightness, Eco and the colour mode.',
         confirmOff: function (ask) { ask('The node stops checking the projectors. They stay as they are.'); },
@@ -3432,6 +3432,52 @@
         if (!r.ok) {                                                      // nothing of an older answer is left standing
           last = null; more.hidden = true; note.textContent = '';
           list.textContent = ''; list.appendChild(h('div', { class: 'hint', id: 'eventerr', text: (r.data.error || 'Not available') + '.' }));
+          return;
+        }
+        last = r.data;
+        draw();
+      });
+    }
+    look();
+    return card;
+  }
+  // The Owner's list of feedback notes (J-179, D147): the newest first, as the node keeps them, and the whole list as a file.
+  var FEEDBACK_FACE = { good: 'Good', 'so-so': 'So-so', bad: 'Bad' };
+  function feedbackListCard() {
+    var list = h('div', { class: 'list', id: 'feedbacklist' }, h('div', { class: 'hint', text: 'Loading...' }));
+    var note = h('div', { class: 'hint', id: 'feedbacknote' });
+    var shown = 20, last = null;
+    var more = h('button', { class: 'btn small', id: 'feedbackmore', text: 'Show more', hidden: true, onclick: function () { shown += 50; draw(); } });
+    var save = h('button', { class: 'btn small', id: 'feedbackdownload', text: 'Download as a file', hidden: true, onclick: function () {
+      var blob = new Blob([JSON.stringify(last, null, 2)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = 'nxlx-feedback.json';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+    } });
+    var card = h('div', { class: 'card', id: 'feedbackcard' }, h('h2', { text: 'Feedback from the room' }), list,
+      h('div', { class: 'row' }, more, save, h('button', { class: 'btn small', id: 'feedbackrefresh', text: 'Refresh', onclick: function () { look(); } })), note);
+    function when(t) { var d = new Date(t * 1000); return isNaN(d) ? '' : d.toLocaleString(); }
+    function draw() {
+      list.textContent = '';
+      var rows = (last && last.notes) || [];
+      rows.slice(0, shown).forEach(function (n, i) {
+        var playing = (n.playing || []).map(function (p) { return p.output + ': ' + p.playing; }).join('; ');
+        list.appendChild(h('div', { class: 'item', id: 'feedback-' + i },
+          h('span', {}, h('b', { text: (FEEDBACK_FACE[n.face] || n.face) + ' · ' + n.role }), h('br'),
+            n.text ? h('span', { text: n.text }) : null, n.text ? h('br') : null,
+            h('span', { class: 'state', text: when(n.t) + (n.screen ? ' · ' + n.screen : '') + (playing ? ' · ' + playing : '') }))));
+      });
+      if (!rows.length) list.appendChild(h('div', { class: 'state', id: 'feedbacknone', text: 'No feedback yet.' }));
+      more.hidden = rows.length <= shown;
+      save.hidden = !rows.length;
+      note.textContent = (last && last.note) || '';
+    }
+    function look() {
+      api('GET', '/api/feedback').then(function (r) {
+        if (!r.ok) {
+          last = null; more.hidden = true; save.hidden = true; note.textContent = '';
+          list.textContent = ''; list.appendChild(h('div', { class: 'hint', id: 'feedbackerr', text: (r.data.error || 'Not available') + '.' }));
           return;
         }
         last = r.data;
@@ -7857,7 +7903,7 @@
   // letIn: the guest code part of People and codes, so staff on the Room screen need not leave it to let a guest in.
   function roomCtx() {
     return { h: h, api: api, say: say, can: ctxCan, owner: function () { return can('full'); }, guestOpen: canGuest, guestSend: guestSend, guestLock: canOp() ? guestLockCard : null,
-      moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); },
+      screen: screenKey, moduleOn: moduleOn, state: S, letIn: function () { return letSomeoneIn(false); },
       confirmRow: confirmRow, switchFeature: shaderCtx().switchFeature, poll: poll,
       openShaders: function () { openSys('vibes', S.tab === 'system' ? null : S.tab); },
       openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };

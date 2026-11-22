@@ -1125,6 +1125,8 @@ def build(env=None, player=None):
     from . import events as events_mod, screenmode
     api.events = events_mod.EventLog(os.path.join(state, events_mod.FILE), boot_id=screenmode.boot_id, log=lambda m: print(m, file=sys.stderr))
     api.events.start()          # a boot id that is not the one in the file: the node restarted
+    from . import feedback as feedback_mod
+    api.feedback = feedback_mod.FeedbackStore(os.path.join(state, feedback_mod.FILE), log=lambda m: print(m, file=sys.stderr))
     if hasattr(player, "on_restart"):
         def player_restarted():
             api.event("player", "The player restarted by itself (it stopped or crashed).")
