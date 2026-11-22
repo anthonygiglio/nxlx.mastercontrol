@@ -79,7 +79,7 @@
           }
           send.disabled = false;
           status.className = 'feedback-status err';
-          status.textContent = r.status === 429 ? 'Wait a few seconds, then tap Send again.' : (r.data && r.data.error ? cap(r.data.error) : 'Could not send. Try again.');
+          status.textContent = r.data && r.data.error ? cap(r.data.error) : (r.status === 429 ? 'Wait a few seconds, then tap Send again.' : 'Could not send. Try again.');
         });
       });
       var el = h('div', { class: 'picker feedback-picker', id: 'feedbacksheet', onclick: function (e) { if (e.target === el && !busy) close(); } },
