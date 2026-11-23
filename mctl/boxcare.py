@@ -66,7 +66,7 @@ NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_
 # The box's own and no secret: in the diagnostics file, never in an export, and a file that holds it is not imported
 # (it is noted and the box's own stays). "screen" (D90): the mode is chosen for the screen on this box, and an import
 # would set it with nobody in the room to keep it or let it go back.
-BOX_OWN = ("screen", "renderer", "sound", "link", "fleet", "timezone")    # "renderer" (D95): chosen for this box and its screen, like the mode; "sound"
+BOX_OWN = ("screen", "renderer", "sound", "link", "fleet", "timezone", "heartbeat")    # "renderer" (D95): chosen for this box and its screen, like the mode; "sound"
                                              # (D96): this box's own capture device, so no file can switch a microphone on
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
@@ -596,6 +596,9 @@ def public_settings(data, support_configured=None):
     for name in BOX_OWN:
         if isinstance(data.get(name), dict):
             out[name] = copy.deepcopy(data[name])
+    if isinstance(out.get("heartbeat"), dict):     # J-057: the address is the key to the owner's check; a diagnostics file leaves the box
+        from . import heartbeat as heartbeat_mod
+        out["heartbeat"]["url"] = heartbeat_mod.mask(out["heartbeat"].get("url") or "")
     known = {n for n, _ in SECTIONS} | set(NEVER) | set(BOX_OWN) | {"schema"}
     out["not_shown"] = sorted(k for k in data if k not in known) + ["auth (the PIN)"]
     return out

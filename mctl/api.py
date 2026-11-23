@@ -310,6 +310,8 @@ class Api:
         self.health = health_mod.Health(self, getattr(player, "rundir", paths.WEB_DIR))     # checks start in server.build
         from . import sync as sync_mod
         self.sync = sync_mod.SyncManager(self, settings)            # started by server.build
+        from . import heartbeat as heartbeat_mod
+        self.heartbeat = heartbeat_mod.Heartbeat(settings, player_running=self._player_running, log=lambda line: self.log(line))   # started by server.build (J-057)
         from . import support as support_mod
         self.support = support_mod.SupportManager(settings, auth, None,      # the helper client is set by server.build
                                                   networks_in_use=self._support_clash_networks)
@@ -742,6 +744,56 @@ class Api:
             raise bad("zone must be the name of a time zone, like America/Regina")
         warning = self._zone_apply(zone, "owner")
         return dict(self.get_timezone({}, device, client), **({"warning": warning} if warning else {}))
+
+    # --- the daily heartbeat (J-057, D149, mctl/heartbeat.py) ----------------------------------
+    HEARTBEAT_REMOTE = "the heartbeat address is set from the studio, not through remote support"
+
+    def _player_running(self):
+        try:
+            return bool(self.player.status().get("running"))
+        except Exception:
+            return True                 # not knowing is not "down": a service must not be told of a failure that was not seen
+
+    def get_heartbeat(self, body, device, client):
+        """The Owner's heartbeat setting and the last ping, the address only masked. A support session of the Owner's role may read it."""
+        return self.heartbeat.status()
+
+    def set_heartbeat(self, body, device, client):
+        """{"on"?, "url"?, "minutes"?, "fail"?}: what is sent is merged into what is kept and checked as a whole. An empty url forgets it.
+        The Owner's, and never through remote support."""
+        from . import heartbeat as heartbeat_mod
+        if self.through_support(device, client):
+            self.support.refused(device, "heartbeat")
+            raise ApiError(403, self.HEARTBEAT_REMOTE)
+        if not isinstance(body, dict) or not body or set(body) - set(heartbeat_mod.DEFAULT):
+            raise bad("send any of on, url, minutes and fail")
+        new = dict(self.heartbeat.config())
+        new.update(body)
+        if "url" in body and body["url"] == "":
+            new["on"] = False if "on" not in body else new["on"]      # forgetting the address switches it off, unless the same request says on (and then fails below)
+        try:
+            new = heartbeat_mod.form(new)
+        except heartbeat_mod.HeartbeatError as e:
+            raise bad(str(e))
+        try:
+            self.heartbeat.save(new)
+        except OSError as e:
+            raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
+        self.log("nxlx-web: heartbeat %s, every %d minutes, by device %s (%s) from %s" % (
+            "on" if new["on"] else "off", new["minutes"], (device or {}).get("id"), (device or {}).get("role"), client))
+        return self.heartbeat.status()
+
+    def heartbeat_test(self, body, device, client):
+        """One ping now to the saved address, and the answer in plain words. The Owner's, and never through remote support."""
+        if self.through_support(device, client):
+            self.support.refused(device, "heartbeat test")
+            raise ApiError(403, self.HEARTBEAT_REMOTE)
+        if not self.heartbeat.config()["url"]:
+            raise bad("save the check's ping address first")
+        result = self.heartbeat.test()
+        if result is None:
+            raise ApiError(409, "a test ping is already running")
+        return dict(self.heartbeat.status(), result={"ok": result["ok"], "text": result["text"]})
 
     def _recovery_used(self, dev, client):
         """After a pairing (D81): a recovery code was burnt (one journal line, never the code), or the PIN shown for a
@@ -6096,6 +6148,9 @@ class Api:
             ("POST", "/api/system/clock"): ("full", self.set_clock),
             ("GET", "/api/timezone"): ("full", self.get_timezone),         # J-129: the Owner's; never set through the support tunnel
             ("POST", "/api/timezone"): ("full", self.set_timezone),
+            ("GET", "/api/heartbeat"): ("full", self.get_heartbeat),           # J-057: the Owner's; never set or tested through the support tunnel
+            ("POST", "/api/heartbeat"): ("full", self.set_heartbeat),
+            ("POST", "/api/heartbeat/test"): ("full", self.heartbeat_test),
             ("GET", "/api/system/update"): ("full", self.update_status),
             ("POST", "/api/system/update"): ("full", self.start_update),
             ("POST", "/api/mix"): ("live", self.set_mix),
