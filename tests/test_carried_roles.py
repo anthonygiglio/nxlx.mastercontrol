@@ -233,6 +233,7 @@ CARRIED = {
     ("GET", "/api/system/update"): SAME,
     ("POST", "/api/system/update"): SAME,
     ("POST", "/api/system/update/upload"): SAME,
+    ("POST", "/api/system/update/rollback"): SAME,
     ("GET", "/api/tempo"): SAME,
     ("POST", "/api/tempo"): SAME,
     ("POST", "/api/tempo/link"): SAME,

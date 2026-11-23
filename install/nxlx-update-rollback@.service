@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=nxlx.mastercontrol rollback to the previous release, asked for in the panel (started from the panel through nxlx-sysd)
+
+[Service]
+# Started on request only (no [Install]), as nxlx-update-rollback@VERSION.service: the instance is the previous release the
+# person was shown and confirmed in the panel (nxlx-sysd checks it is N.N.N). nxlx-update does the same as `sudo nxlx-update
+# rollback` from a terminal, and refuses where that refuses (a read-only system disk, no previous release, a release from before
+# the rename, another update running, a previous release that is not the one confirmed). Its progress goes to the small JSON
+# file the panel reads, the same file the update units write.
+Type=oneshot
+User=root
+RuntimeDirectory=nxlx-update
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=@NXLX_DIR@/bin/nxlx-update rollback --version %i --result /run/nxlx-update/result.json
+# Stopped before the end (the time limit below): say so, so the panel does not show "Going back" for ever.
+ExecStopPost=-@NXLX_DIR@/bin/nxlx-update finish --result /run/nxlx-update/result.json
+TimeoutStartSec=10min

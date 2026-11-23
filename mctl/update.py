@@ -41,6 +41,7 @@ DEFAULT_RESULT = paths.UPDATE_RESULT     # what the panel's Updates card reads (
 _VERSION = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 
 
+NO_PREVIOUS = "there is no previous release to go back to"
 SCRATCH_PREFIX = ".update-"
 SCRATCH_NAME = re.compile(r"\.update-[a-z0-9_]{8}")     # what tempfile.mkdtemp(prefix=SCRATCH_PREFIX) makes
 
@@ -856,19 +857,50 @@ class Updater:
     def _settings_note(self):
         return "; the settings could not be put back (%s) and stay as they are" % self.settings_problem if self.settings_problem else ""
 
-    def rollback(self, log=print):
-        self.require_writable_root()
-        self.settings_problem = None
-        st = self.status()
+    def _rollback_problem(self, st):
+        """Why there is nothing to go back to, in plain words, or None. The panel asks the same question before it shows the
+        button, and rollback() asks it again as root: one place for the words."""
         target = st["previous"]
-        if not target or not os.path.isdir(self.real("%s/releases/%s" % (self.prefix, target))):
-            raise UpdateError("there is no previous release to go back to")
+        if not target or not _VERSION.match(target) or not os.path.isdir(self.real("%s/releases/%s" % (self.prefix, target))):
+            return NO_PREVIOUS
         # The release before the rename of the system names runs only under the old names (pvj-* units, accounts and
         # folders): switching "current" to it would leave every unit without its program. The converter's undo goes
         # back to it, and puts the old names back with it.
         if not os.path.isfile(self.real("%s/releases/%s/bin/nxlx-web" % (self.prefix, target))):
-            raise UpdateError("the previous release %s is from before the rename of the system names (pvj to nxlx) "
-                              "and does not run under them; to go back to it: sudo nxlx-convert --undo" % target)
+            return ("the previous release %s is from before the rename of the system names (pvj to nxlx) "
+                    "and does not run under them; to go back to it: sudo nxlx-convert --undo" % target)
+        return None
+
+    def _release_view(self, version):
+        if not version:
+            return None
+        try:
+            date = int(os.stat(self.real("%s/releases/%s" % (self.prefix, version))).st_mtime)     # when it was put on the node
+        except OSError:
+            date = None
+        return {"version": version, "date": date}
+
+    def rollback_view(self):
+        """What the panel shows before a rollback (read only, no root needed): the release that runs, the one before it
+        with the day it was installed, and `refusal`, the reason there is nothing to go back to (None when there is).
+        The read-only system disk is not asked here: the panel has that answer already."""
+        st = self.status()
+        problem = self._rollback_problem(st)
+        prev = None if problem == NO_PREVIOUS else self._release_view(st["previous"])
+        return {"current": self._release_view(st["current"]), "previous": prev, "refusal": problem}
+
+    def rollback(self, log=print, expect=None):
+        """Go back to the previous release. `expect` is the version the person was shown and confirmed (the panel): if the
+        previous release is another one by now (an update ran in between), nothing is done."""
+        self.require_writable_root()
+        self.settings_problem = None
+        st = self.status()
+        problem = self._rollback_problem(st)
+        if problem:
+            raise UpdateError(problem)
+        target = st["previous"]
+        if expect is not None and expect != target:
+            raise UpdateError("the release before this one is %s now, not %s as was shown; look at the Updates card again" % (target, expect))
         log("rolling back %s -> %s" % (st["current"], target))
         self.migrate_legacy_state()
         backup = self.latest_backup(target)
@@ -1021,7 +1053,9 @@ def main(argv=None):
         p.add_argument("--version", help="only this version (what the person confirmed in the panel)")
     p = sub.add_parser("finish", help="mark an unfinished panel update as failed (the unit's ExecStopPost)")
     p.add_argument("--result", required=True)
-    sub.add_parser("rollback")
+    p = sub.add_parser("rollback", help="go back to the previous release")
+    p.add_argument("--result", help="write the progress and outcome as JSON here (for the panel)")
+    p.add_argument("--version", help="only if the previous release is this one (what the person confirmed in the panel)")
     args = ap.parse_args(argv)
     if args.cmd != "status" and os.geteuid() != 0:
         print("nxlx-update: run as root (sudo)", file=sys.stderr)
@@ -1038,6 +1072,8 @@ def main(argv=None):
         if not result:
             return
         data = {"state": state, "message": message, "version": version, "at": int(time.time())}
+        if args.cmd == "rollback":
+            data["action"] = "rollback"       # the panel says "rollback", not "update", and the event log too
         tmp = result + ".tmp"
         try:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
@@ -1115,7 +1151,11 @@ def main(argv=None):
                     u.clear_inbox(inbox)
                     os.close(inbox)
         elif args.cmd == "rollback":
-            version = u.rollback()
+            if args.version is not None and not _VERSION.match(args.version):
+                raise UpdateError("not a version: %s" % args.version)
+            report("running", "going back to the previous release")
+            # from a terminal (no --version) it is the call it always was; from the panel it names the release that was shown
+            version = u.rollback() if args.version is None else u.rollback(log=log, expect=args.version)
             note = (getattr(u, "_settings_note", None) or (lambda: ""))()
             report("done", "rolled back to %s%s" % (version, note), version)
     except UpdateError as e:

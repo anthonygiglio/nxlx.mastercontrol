@@ -142,6 +142,7 @@ NDISC_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/nxlx-ndi-discovery
 JOURNAL_CONF="$ROOT/etc/systemd/journald.conf.d/50-nxlx-persistent-log.conf"
 UPD_USB_UNIT="$ROOT/etc/systemd/system/nxlx-update-usb@.service"
 UPD_INBOX_UNIT="$ROOT/etc/systemd/system/nxlx-update-inbox@.service"
+UPD_ROLLBACK_UNIT="$ROOT/etc/systemd/system/nxlx-update-rollback@.service"
 WG_LOAD="$ROOT/etc/modules-load.d/nxlx-wireguard.conf"
 USB_RULE="$ROOT/etc/udev/rules.d/99-nxlx-usb.rules"
 TMPFILES="$ROOT/etc/tmpfiles.d/nxlx.conf"
@@ -167,7 +168,7 @@ uninstall() {
 	# A box that was set up for NDI: the mark first, then the rest; the two folders only if nothing else is in them.
 	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/nxlx-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
 	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_MARK")" "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
-	run rm -f "$SUP_UNIT" "$SOUND_UNIT" "$LINK_UNIT" "$RASTER_UNIT" "$RASTER_SOCKET_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
+	run rm -f "$SUP_UNIT" "$SOUND_UNIT" "$LINK_UNIT" "$RASTER_UNIT" "$RASTER_SOCKET_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$UPD_ROLLBACK_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/nxlx-player" "$BIN_LINKS/nxlx-selftest" "$BIN_LINKS/nxlx-usb" "$BIN_LINKS/nxlx-rootfs" "$BIN_LINKS/nxlx-pin" "$BIN_LINKS/nxlx-update" "$BIN_LINKS/nxlx-convert"
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
@@ -766,6 +767,7 @@ if [ "$DRY" = 0 ]; then
 	# Updates from the panel: started on request by nxlx-sysd, never enabled.
 	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-update-usb@.service" > "$UPD_USB_UNIT"
 	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-update-inbox@.service" > "$UPD_INBOX_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-update-rollback@.service" > "$UPD_ROLLBACK_UNIT"      # the Rollback button (J-057)
 	run rm -f "$ROOT/etc/systemd/system/nxlx-update-usb.service" "$ROOT/etc/systemd/system/nxlx-update-inbox.service"  # the names before they took a version
 	# The support helper may not load kernel modules itself (its sandbox), so WireGuard's is loaded at boot.
 	mkdir -p "$(dirname "$WG_LOAD")"
