@@ -191,12 +191,29 @@ def clean_note(x):
     return out
 
 
+FOREIGN_MAX = 8192      # bytes of a note of an unknown role that is kept untouched
+
+
+def _foreign(x):
+    """A note written by a release that knows another role (a later one): well formed apart from the role, and small. It is
+    carried through every rewrite unchanged, so going back to this release from a later one loses nothing."""
+    if not isinstance(x, dict) or clean_time(x.get("t")) is None or x.get("face") not in FACES:
+        return False
+    role = x.get("role")
+    if not isinstance(role, str) or role in ROLES or not 0 < len(role) <= 32:
+        return False
+    return len(json.dumps(x, ensure_ascii=False)) <= FOREIGN_MAX
+
+
 class FeedbackStore:
     def __init__(self, path, now=time.time, clock=time.monotonic, log=print, cap=CAP, gap=MIN_GAP,
                  box_limits=BOX_LIMITS, max_bytes=MAX_BYTES):
         self.path, self._now, self._clock, self.log = path, now, clock, log
         self.cap, self.gap, self.box_limits, self.max_bytes = cap, gap, tuple(box_limits), max_bytes
-        self._stamps = []               # when notes were kept (the monotonic clock), newest last, memory only
+        self._stamps = []               # when signed-in notes were kept (the monotonic clock), newest last, memory only
+        self._vstamps = []              # the same for notes from senders with no login: their own budget, so they never use up the others'
+        self.visitor_limits = tuple((w, max(1, n // 2)) for w, n in self.box_limits)    # half of each window of BOX_LIMITS
+        self.visitor_cap = max(1, cap // 2)         # visitor notes kept at most (half of the list); the oldest visitor note goes first
         self.lock = threading.Lock()
         self.items = []
         self._last = {}                 # session id -> when it last sent (the monotonic clock), memory only
@@ -223,6 +240,8 @@ class FeedbackStore:
                 for x in rows:
                     try:
                         n = clean_note(x)
+                        if n is None and _foreign(x):
+                            n = x               # a note of a role this release does not know: kept as it is, never shown
                     except Exception:
                         n = None
                     if n:
@@ -276,29 +295,38 @@ class FeedbackStore:
             held = self._last.get(session) if session is not None else None
             if held is not None and 0 <= now - held < self.gap:
                 raise TooFast(int(self.gap - (now - held)) + 1)
-            wait = self._box_wait(now)
+            visitor = role == "visitor"
+            wait = self._box_wait(now, visitor)
             if wait:
                 raise Busy(wait)
             note = clean_note({"t": int(self._now()), "face": face, "text": text, "role": role, "screen": screen,
                                "node": node, "playing": playing})
             if note is None:
                 raise ValueError("not a note")
-            items, blob = self._fit((self.items + [note])[-self.cap:])
+            kept = self.items + [note]
+            if visitor:             # visitors hold at most half of the list: the oldest visitor note goes, never a signed-in one
+                at = [i for i, n in enumerate(kept) if n.get("role") == "visitor"]
+                for i in reversed(at[:max(0, len(at) - self.visitor_cap)]):
+                    del kept[i]
+            items, blob = self._fit(kept[-self.cap:])
             if not self._write(blob):
                 raise OSError("could not save the note")
             self.items = items
             if session is not None:
                 self._last[session] = now
-            self._stamps.append(now)
+            (self._vstamps if visitor else self._stamps).append(now)
         return dict(note)
 
-    def _box_wait(self, now):
-        """Whole seconds to wait before the node takes another note, or 0. Counts nothing. Lock held."""
-        horizon = max((w for w, _ in self.box_limits), default=0.0)
-        self._stamps = [t for t in self._stamps if 0 <= now - t < horizon]
+    def _box_wait(self, now, visitor=False):
+        """Whole seconds to wait before the node takes another note, or 0. Counts nothing. Lock held. Notes from senders
+        with no login are counted apart, against half of each window, so they can never use up what signed-in devices have."""
+        limits = self.visitor_limits if visitor else self.box_limits
+        stamps = self._vstamps if visitor else self._stamps
+        horizon = max((w for w, _ in limits), default=0.0)
+        stamps[:] = [t for t in stamps if 0 <= now - t < horizon]
         wait = 0.0
-        for window, most in self.box_limits:
-            inside = [t for t in self._stamps if now - t < window]
+        for window, most in limits:
+            inside = [t for t in stamps if now - t < window]
             if len(inside) >= most:
                 wait = max(wait, window - (now - inside[len(inside) - most]))
         return int(wait) + 1 if wait else 0
@@ -307,7 +335,7 @@ class FeedbackStore:
     def notes(self):
         """Every kept note, newest first (copies)."""
         with self.lock:
-            rows = [dict(n) for n in self.items]
+            rows = [dict(n) for n in self.items if n.get("role") in ROLES]       # a note of a role this release does not know stays in the file, out of the list
         rows.reverse()
         return rows
 

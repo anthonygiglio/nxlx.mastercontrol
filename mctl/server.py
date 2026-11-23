@@ -51,6 +51,8 @@ COOKIE = "mctl_token"
 SECURE_COOKIE = "__Host-mctl_token"      # over TLS only (D79): the prefix forces Secure, Path=/ and no Domain; a second name,
                                         # because browsers leave a Secure cookie alone when plain http tries to replace it
 CSRF_HEADER = "X-MCTL-Request"
+NO_ADDRESS_LOG = frozenset([("GET", "/feedback"), ("HEAD", "/feedback"), ("GET", "/feedback.html"), ("HEAD", "/feedback.html"),
+                            ("POST", "/api/feedback/visitor")])     # the access log line of these names no address (D147 addendum)
 # The names before the rename, read for one release and never written (D138, the owner's decision A: nobody is signed
 # out by the rename). Remove these three and their uses in the release after the cutover.
 OLD_CSRF_HEADER = "X-PVJ-Request"
@@ -173,7 +175,14 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
         def log_message(self, fmt, *args):
             if len(args) >= 2 and "/api/strobe/renew" in str(args[0]) and str(args[1]) == "200":
                 return                  # a held strobe renews five times a second: not worth a line in the journal each
-            sys.stderr.write("%s %s\n" % (self.client_address[0], fmt % args))
+            who = self.client_address[0]
+            parts = str(args[0]).split(" ") if args else []
+            try:
+                if len(parts) > 1 and (parts[0], urlsplit(parts[1]).path) in NO_ADDRESS_LOG:
+                    who = "-"           # D147 addendum: the QR sticker's page and its send are logged without the sender's address
+            except ValueError:
+                pass
+            sys.stderr.write("%s %s\n" % (who, fmt % args))
 
         # --- plumbing ---------------------------------------------------
         def _send(self, status, body, content_type, extra=None, cache="no-store"):
@@ -401,6 +410,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             no cookie asked. It is the one file feedback.html, with its switch's state written into it (data-open) from the
             Owner's setting, so a node with the switch off says so in plain words and the page offers nothing. It reads
             nothing else of the node and sets no cookie."""
+            if api.support.is_remote(self.client_address[0]):      # a note is from someone in the room, not through the support tunnel
+                return self._json(403, {"error": "this cannot be done through remote support; ask someone at the studio"})
             name = static.get("/feedback.html")
             if name is None:
                 return self._json(404, {"error": "not found"})

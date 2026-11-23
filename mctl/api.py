@@ -2509,7 +2509,7 @@ class Api:
         no screen name. While the Owner's switch is off the answer is 403 and nothing is looked at. Held to its address
         (one note in 10 seconds, 10 in an hour: feedback.AddressLimit) and by the node-wide limits of the store. The node adds
         its name and id, the time and what plays on each output; the role kept is "visitor". The address is used for the limit
-        in memory and kept nowhere. The server has already asked for the X-MCTL-Request header, the JSON type, the same
+        in memory and kept nowhere: not in the note, and not in the access log, which names no address for this route or its page (server.NO_ADDRESS_LOG). The server has already asked for the X-MCTL-Request header, the JSON type, the same
         origin and a body of at most feedback.VISITOR_BODY_MAX bytes."""
         from . import feedback as fb
         store = self.feedback
@@ -2563,6 +2563,49 @@ class Api:
         self.log("nxlx-web: feedback without a login switched %s by device %s" % ("on" if on else "off", (device or {}).get("id")))
         return {"visitors": on}
 
+    def _own_host(self, name):
+        """Is `name` (a host name or address without brackets or port) this node's own: its host name, that name with .local, a
+        name its certificate covers or one the owner allowed in NXLX_ALLOWED_HOSTS, or an address of one of its interfaces
+        (not loopback, not the support tunnel's)? Loopback, 0.0.0.0, :: and every other name are not, so a sticker never
+        points at the device that printed it."""
+        if not name:
+            return False
+        try:
+            ip = ipaddress.ip_address(name.split("%")[0])
+        except ValueError:
+            ip = None
+        if ip is not None:
+            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+                ip = ip.ipv4_mapped
+            if ip.is_loopback or ip.is_unspecified:
+                return False
+            own = set()
+            try:
+                for e in self._ip_json():
+                    if e.get("ifname") in ("lo", "wg-nxlx"):
+                        continue
+                    for a in e.get("addr_info", []):
+                        try:
+                            own.add(ipaddress.ip_address(str(a.get("local")).split("%")[0]))
+                        except ValueError:
+                            pass
+            except Exception:
+                pass
+            info = getattr(self.https, "info", None) if self.https is not None else None
+            for a in ((info or {}).get("ips") or []):
+                try:
+                    own.add(ipaddress.ip_address(str(a)))
+                except ValueError:
+                    pass
+            return ip in own
+        short = socket.gethostname().split(".")[0].lower()
+        names = {short, short + ".local"}
+        names.update(n.strip().lower() for n in os.environ.get("NXLX_ALLOWED_HOSTS", "").split(",") if n.strip())
+        info = getattr(self.https, "info", None) if self.https is not None else None
+        names.update(str(n).lower() for n in ((info or {}).get("dns") or []))
+        names.discard("localhost")
+        return name in names
+
     def feedback_sticker(self, body, device, client):
         """GET /api/feedback/sticker (the Owner's): {"url", "svg", "on"}: the address of this node's feedback page and its QR
         code, to print. The address is the one the Owner opened the panel by (a name or an address of this node, never
@@ -2570,14 +2613,15 @@ class Api:
         holds the address and nothing else: no token, no code, no way in. Made here, from the encoder in mctl/qr.py."""
         from . import qr as qr_mod
         host = getattr(self.request, "host", None)
+        refuse = "Open the panel by the node's own address to print the sticker"
         if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]{1,100}", host):
-            raise bad("open the panel by the node's address or name to make the sticker")
+            raise bad(refuse)
         try:
             name = (urlsplit("//" + host).hostname or "").lower()
         except ValueError:
-            raise bad("open the panel by the node's address or name to make the sticker")
-        if name in ("localhost", "127.0.0.1", "::1") or name.startswith("127."):
-            raise bad("open the panel by the node's address or name, not localhost, so the sticker points at the node")
+            raise bad(refuse)
+        if not self._own_host(name):
+            raise bad(refuse)
         box = self.https
         origin = None
         if getattr(self.request, "secure", False):

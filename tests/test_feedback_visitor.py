@@ -268,24 +268,68 @@ class VisitorSendTest(VisitorBase):
         self.assertIn("try again later", out["error"])
         self.assertGreater(out["retry_after"], 60)
 
-    def test_the_node_wide_limits_apply_and_do_not_use_up_the_senders_turn(self):
+    def test_the_visitors_share_of_the_node_limits_applies_and_does_not_use_up_the_senders_turn(self):
         self.on()
-        for i in range(30):
+        for i in range(15):                                 # half of the 30 in ten minutes
             self.clock.t += 1
             self.assertEqual(self.send({"face": "good"}, client="10.9.%d.%d" % (i // 200, i % 200 + 1))[0], 200, i)
         self.clock.t += 1
         st, out = self.send({"face": "good"}, client="10.8.0.1")
         self.assertEqual(st, 429, out)
         self.assertIn("Lots of feedback just now", out["error"])
-        self.assertEqual(len(self.api.feedback.notes()), 30)
-        self.assertEqual(self.api.feedback.visitors.size(), 30, "the refused sender was given back his turn")
+        self.assertEqual(len(self.api.feedback.notes()), 15)
+        self.assertEqual(self.api.feedback.visitors.size(), 15, "the refused sender was given back his turn")
         self.clock.t += 600
         self.assertEqual(self.send({"face": "good"}, client="10.8.0.1")[0], 200)
+
+    def test_three_addresses_filling_the_visitors_share_do_not_block_the_owner(self):
+        """The review's scenario: three addresses at 10 an hour fill 30 in ten minutes; staff must still get through."""
+        self.on()
+        sent = 0
+        for round_ in range(10):
+            for k in range(3):
+                self.clock.t += 1
+                st, _ = self.send({"face": "bad"}, client="192.168.7.%d" % (60 + k))
+                sent += st == 200
+            self.clock.t += 10
+        self.assertEqual(sent, 15, "the visitors stop at their half of the window")
+        for i in range(30):                                 # the whole signed-in share is still there
+            self.clock.t += 6
+            self.assertEqual(self.h("POST", "/api/feedback", {"face": "good"}, self.live_dev)[0], 200, i)
+
+    def test_twenty_addresses_cannot_take_more_than_half_the_day(self):
+        self.on()
+        sent = 0
+        for i in range(260):
+            self.clock.t += 300                             # two in ten minutes at most: only the day's half is in play
+            sent += self.send({"face": "good"}, client="10.20.%d.%d" % (i // 250, i % 250 + 1))[0] == 200
+        self.assertEqual(sent, 100)
+        for i in range(100):                                # and signed-in feedback still has its 200 a day
+            self.clock.t += 300
+            self.assertEqual(self.h("POST", "/api/feedback", {"face": "good"}, self.live_dev)[0], 200, i)
+
+    def test_visitors_hold_at_most_half_of_the_list_and_never_push_out_a_signed_in_note(self):
+        store = self.api.feedback
+        store.cap, store.visitor_cap = 10, 5
+        store.box_limits = store.visitor_limits = ()
+        self.on()
+        for i in range(4):
+            self.clock.t += 6
+            self.assertEqual(self.h("POST", "/api/feedback", {"face": "good", "text": "staff %d" % i}, self.live_dev)[0], 200)
+        for i in range(12):
+            self.clock.t += 11
+            self.assertEqual(self.send({"face": "so-so", "text": "visitor %d" % i}, client="192.168.9.%d" % (i + 1))[0], 200)
+        rows = store.notes()
+        self.assertEqual(len([n for n in rows if n["role"] == "visitor"]), 5)
+        self.assertEqual(sorted(n["text"] for n in rows if n["role"] == "operator"), ["staff %d" % i for i in range(4)], "no signed-in note went")
+        self.assertEqual([n["text"] for n in rows if n["role"] == "visitor"], ["visitor %d" % i for i in (11, 10, 9, 8, 7)], "the oldest visitor notes went")
+        with open(self.path, encoding="utf-8") as f:
+            self.assertEqual(len(json.load(f)["notes"]), 9)
 
     def test_the_visitors_table_stays_bounded_whatever_the_addresses(self):
         self.on()
         self.api.feedback.visitors.most = 16
-        self.api.feedback.box_limits = ()                   # the node's own cap is tested above; here only the table
+        self.api.feedback.box_limits = self.api.feedback.visitor_limits = ()      # the node's own cap is tested above; here only the table
         for i in range(300):
             self.clock.t += 0.01
             self.send({"face": "good"}, client="10.%d.%d.%d" % (i // 65000, (i // 250) % 250, i % 250 + 1))
@@ -309,6 +353,19 @@ class VisitorSendTest(VisitorBase):
 
 
 class StickerTest(VisitorBase):
+    ROWS = [{"ifname": "lo", "addr_info": [{"family": "inet", "local": "127.0.0.1"}]},
+            {"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.0.169"}, {"family": "inet6", "local": "fd00::1234"}]},
+            {"ifname": "wg-nxlx", "addr_info": [{"family": "inet", "local": "10.77.0.1"}]}]
+    REFUSED = "Open the panel by the node's own address to print the sticker"
+
+    def setUp(self):
+        super().setUp()
+        for p in (mock.patch("mctl.api.socket.gethostname", return_value="nxlx-node-01"),
+                  mock.patch.object(self.api, "_ip_json", return_value=self.ROWS),
+                  mock.patch.dict(os.environ, {"NXLX_ALLOWED_HOSTS": ""})):
+            p.start()
+            self.addCleanup(p.stop)
+
     def sticker(self, host, secure=False, dev=False):
         self.api.request.host, self.api.request.secure = host, secure
         try:
@@ -319,24 +376,40 @@ class StickerTest(VisitorBase):
     def test_the_url_is_the_node_the_panel_was_opened_by(self):
         st, out = self.sticker("nxlx-node-01.local")
         self.assertEqual((st, out["url"], out["on"]), (200, "http://nxlx-node-01.local/feedback", False))
-        self.assertTrue(out["svg"].lstrip().startswith("<svg") or "<svg" in out["svg"][:200])
+        self.assertIn("<svg", out["svg"][:200])
         self.assertEqual(self.sticker("192.168.0.169:8080")[1]["url"], "http://192.168.0.169:8080/feedback")
+        self.assertEqual(self.sticker("nxlx-node-01")[1]["url"], "http://nxlx-node-01/feedback")
+        self.assertEqual(self.sticker("[fd00::1234]:8080")[1]["url"], "http://[fd00::1234]:8080/feedback")
         self.assertEqual(self.sticker("nxlx-node-01.local", secure=True)[1]["url"], "https://nxlx-node-01.local/feedback")
         self.on()
         self.assertTrue(self.sticker("192.168.0.169")[1]["on"])
 
     def test_https_is_preferred_when_the_certificate_names_the_host(self):
         class Box:
+            info = {"dns": ["nxlx-node-01.local", "studio.example"], "ips": ["192.168.0.50"]}
+
             def trusted_origin(self, host):
                 return "https://nxlx-node-01.local:8443" if host == "nxlx-node-01.local" else None
         self.api.https = Box()
         self.assertEqual(self.sticker("nxlx-node-01.local")[1]["url"], "https://nxlx-node-01.local:8443/feedback")
         self.assertEqual(self.sticker("192.168.0.169")[1]["url"], "http://192.168.0.169/feedback", "a host the certificate does not name stays http")
+        self.assertEqual(self.sticker("studio.example")[1]["url"], "http://studio.example/feedback", "a name the certificate covers is the node's own")
+        self.assertEqual(self.sticker("192.168.0.50")[1]["url"], "http://192.168.0.50/feedback", "so is an address it covers")
 
-    def test_a_panel_opened_as_localhost_or_with_a_odd_host_makes_no_sticker(self):
-        for host in ("localhost", "localhost:8080", "127.0.0.1", "127.0.0.1:8080", "[::1]:8080", None, "", "a b", "x" * 200):
+    def test_the_allowed_host_names_of_the_owner_are_the_nodes_own(self):
+        with mock.patch.dict(os.environ, {"NXLX_ALLOWED_HOSTS": "studio.example, localhost"}):
+            self.assertEqual(self.sticker("studio.example")[1]["url"], "http://studio.example/feedback")
+            self.assertEqual(self.sticker("localhost")[0], 400, "never localhost, even if it was listed")
+
+    def test_anything_that_is_not_the_nodes_own_makes_no_sticker(self):
+        for host in ("localhost", "localhost:8080", "localhost.", "LOCALHOST", "127.0.0.1", "127.0.0.1:8080", "127.1.2.3", "[::1]:8080", "[::1]",
+                     "[::ffff:127.0.0.1]", "[::ffff:127.0.0.1]:80", "0.0.0.0", "0.0.0.0:80", "[::]", "[::]:80", "10.77.0.1", "192.168.0.170",
+                     "evil.example", "nxlx-node-02.local", "nxlx-node-01.local.", "nxlx-node-01.evil.example", None, "", "a b", "x" * 200):
             st, out = self.sticker(host)
-            self.assertEqual(st, 400, host)
+            self.assertEqual((st, out.get("error")), (400, self.REFUSED), host)
+
+    def test_a_mapped_form_of_the_nodes_own_address_is_the_nodes_own(self):
+        self.assertEqual(self.sticker("[::ffff:192.168.0.169]")[0], 200)
 
     def test_the_code_holds_the_address_and_nothing_else(self):
         st, out = self.sticker("nxlx-node-01.local")
@@ -442,6 +515,56 @@ class PageTest(VisitorBase):
         st, body, _ = self.raw("POST", "/api/feedback/visitor", {"face": "good"}, headers={"Authorization": "Bearer " + token})
         self.assertEqual(st, 403)
         self.assertEqual(self.api.feedback.notes(), [])
+
+
+class LogAndTunnelTest(VisitorBase):
+    def test_the_visitors_send_and_the_page_write_no_address_to_the_log(self):
+        import io
+        self.on()
+        buf = io.StringIO()
+        with mock.patch("sys.stderr", buf):
+            self.assertEqual(self.raw("POST", "/api/feedback/visitor", {"face": "good", "text": "hi"})[0], 200)
+            self.assertEqual(self.raw("POST", "/api/feedback/visitor", {"face": "good"})[0], 429)       # a refusal is logged without the address too
+            self.assertEqual(self.raw("GET", "/feedback")[0], 200)
+            self.assertEqual(self.raw("HEAD", "/feedback.html")[0], 200)
+        text = buf.getvalue()
+        self.assertIn("/api/feedback/visitor", text)
+        self.assertIn("/feedback", text)
+        self.assertNotIn("127.0.0.1", text)
+        buf = io.StringIO()
+        with mock.patch("sys.stderr", buf):                 # every other line keeps naming the address, as before
+            self.raw("GET", "/api/status")
+        self.assertIn("127.0.0.1", buf.getvalue())
+
+    def test_the_page_and_the_send_are_refused_through_the_support_tunnel(self):
+        self.on()
+        with mock.patch.object(self.api.support, "is_remote", return_value=True):
+            self.assertEqual(self.raw("GET", "/feedback")[0], 403)
+            self.assertEqual(self.raw("GET", "/feedback.html")[0], 403)
+            self.assertEqual(self.raw("POST", "/api/feedback/visitor", {"face": "good"})[0], 403)
+        self.assertEqual(self.api.feedback.notes(), [])
+        self.assertEqual(self.raw("GET", "/feedback")[0], 200)
+
+
+class RollbackTest(unittest.TestCase):
+    def test_a_note_of_a_role_this_release_does_not_know_is_carried_through_untouched(self):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "feedback.json")
+        later = {"t": 5, "face": "good", "role": "robot", "text": "from a later release", "extra": {"a": [1, 2]}}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"version": 2, "notes": [later, {"t": 6, "face": "bad", "role": "guest", "text": "mine"},
+                                              {"t": 7, "face": "good", "role": "robot", "playing": "junk"}, "junk", {"t": 8, "face": "x", "role": "robot"},
+                                              {"t": 9, "face": "good", "role": "r" * 100}, {"t": 10, "face": "good", "role": "huge", "text": "z" * 9000}]}, f)
+        s = feedback.FeedbackStore(path, now=lambda: 1790000000, clock=Clock(), log=lambda m: None)
+        self.assertEqual([n["role"] for n in s.notes()], ["guest"], "the Owner's list shows only what this release knows")
+        s.add("s1", "so-so", "new", "operator", None, {"name": "n", "id": "i"}, [])
+        with open(path, encoding="utf-8") as f:
+            kept = json.load(f)["notes"]
+        self.assertIn(later, kept, "the note of the unknown role is written back exactly as it was")
+        self.assertIn({"t": 7, "face": "good", "role": "robot", "playing": "junk"}, kept)
+        self.assertEqual([n["role"] for n in kept if n["role"] not in ("robot",)], ["guest", "operator"])
+        self.assertFalse(any(n.get("role") in ("huge",) or n == "junk" for n in kept), "a note too big or not a note is not carried")
+        self.assertEqual([n["role"] for n in s.notes()], ["operator", "guest"])
 
 
 class QrTest(unittest.TestCase):
