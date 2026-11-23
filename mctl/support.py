@@ -70,6 +70,8 @@ REMOTE_DENY = {
     ("POST", "/api/pin/unlock"): "lifting the guessing lockout is done at the studio",
     ("POST", "/api/pin/show"): "the PIN pairs an Owner's device",
     ("POST", "/api/feedback"): "a note is from someone in the room; a helper reads them (GET, the Owner's role) and sends none",
+    ("POST", "/api/feedback/visitor"): "a note is from someone in the room, and the address that limits a sender would be the tunnel's",
+    ("POST", "/api/feedback/open"): "whether people without a login may send feedback is for the Owner in the room to decide",
     ("GET", "/api/qr.svg"): "the QR code carries a way to pair",
     # nobody remote can switch the box back on (a restart is allowed: it ends the session and the box comes back)
     ("POST", "/api/system/poweroff"): "nobody remote can switch the node back on",

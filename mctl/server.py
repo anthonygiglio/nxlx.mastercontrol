@@ -33,7 +33,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import icon, paths, policy
+from . import feedback as feedback_mod, icon, paths, policy
 from . import autostart as autostart_mod, dmx as dmx_mod, hardware, midi as midi_mod, pinscreen as pinscreen_mod, sysd as sysd_mod, netd as netd_mod, osc as osc_mod, scheduler as scheduler_mod, themes as themes_mod
 from .api import Api, ApiError
 from .auth import Auth
@@ -320,12 +320,12 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     return False
             return True
 
-        def _body(self):
+        def _body(self, limit=MAX_BODY):
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:
                 return None, (411, "Content-Length required")
-            if length < 0 or length > MAX_BODY:
+            if length < 0 or length > limit:
                 return None, (413, "body too large")
             if not (self.headers.get("Content-Type") or "").startswith("application/json"):
                 return None, (415, "send application/json")
@@ -396,6 +396,20 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             except ApiError as e:
                 self._json(e.status, {"error": e.message})
 
+        def _feedback_page(self):
+            """GET /feedback (D147 addendum): the page the QR sticker opens, for anyone who can reach the node, with no login and
+            no cookie asked. It is the one file feedback.html, with its switch's state written into it (data-open) from the
+            Owner's setting, so a node with the switch off says so in plain words and the page offers nothing. It reads
+            nothing else of the node and sets no cookie."""
+            name = static.get("/feedback.html")
+            if name is None:
+                return self._json(404, {"error": "not found"})
+            with open(os.path.join(web_dir, name), "rb") as f:
+                body = f.read()
+            if api.visitors_on():
+                body = body.replace(b'data-open="0"', b'data-open="1"', 1)
+            self._send(200, styled_html(body, api.theme_style()), TYPES[".html"])
+
         def _host_ok(self):
             if host_allowed(self.headers.get("Host"), host_names):
                 return True
@@ -407,6 +421,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             if not self._host_ok():
                 return
             path = urlsplit(self.path).path
+            if path in ("/feedback", "/feedback.html"):
+                return self._feedback_page()
             if path == "/api/preview.jpg":
                 return self._preview()
             if path == "/api/qr.svg":
@@ -570,7 +586,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._graphics_upload()
             if path == "/api/system/settings/import":
                 return self._settings_import()
-            body, err = self._body()
+            # the one route with no login (D147 addendum) reads at most 4 KB: a face and a thousand characters
+            body, err = self._body(feedback_mod.VISITOR_BODY_MAX if path == "/api/feedback/visitor" else MAX_BODY)
             if err:
                 return self._json(err[0], {"error": err[1]})
             if path.startswith("/api/https/"):

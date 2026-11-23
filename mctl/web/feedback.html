@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- The page the QR sticker opens (J-179, D147 addendum). No login. The node writes data-open="1" into the body when the
+     Owner's switch is on (server.py, _feedback_page); as the file stands the switch is off and the page says so. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex, nofollow">
+<title>Feedback</title>
+<link rel="icon" type="image/png" href="/favicon.ico">
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body class="visitor" data-open="0">
+<main class="screen visitor-page">
+  <h1>How is the night going?</h1>
+  <div class="card visitor-closed" id="visitoroff" role="status">
+    <p>Feedback from people without a login is switched off on this node.</p>
+    <p>Ask whoever runs the room.</p>
+  </div>
+  <div class="card visitor-open" id="visitorform">
+    <div class="feedback-faces">
+      <button type="button" class="btn big feedback-face" data-face="good" aria-pressed="false" aria-label="Good"><span class="feedback-glyph" aria-hidden="true">&#x1F642;</span><span>Good</span></button>
+      <button type="button" class="btn big feedback-face" data-face="so-so" aria-pressed="false" aria-label="So-so"><span class="feedback-glyph" aria-hidden="true">&#x1F610;</span><span>So-so</span></button>
+      <button type="button" class="btn big feedback-face" data-face="bad" aria-pressed="false" aria-label="Bad"><span class="feedback-glyph" aria-hidden="true">&#x1F641;</span><span>Bad</span></button>
+    </div>
+    <textarea class="text-input feedback-text" id="visitortext" rows="4" maxlength="1000" aria-label="Anything to add? You do not have to write anything." placeholder="Anything to add? (You do not have to.)"></textarea>
+    <div class="feedback-status" id="visitorstatus" role="status" aria-live="polite"></div>
+    <button type="button" class="btn big on" id="visitorsend" disabled>Send</button>
+  </div>
+  <noscript><div class="card"><p>This page needs JavaScript to send feedback.</p></div></noscript>
+</main>
+<script src="/feedback.js"></script>
+</body>
+</html>

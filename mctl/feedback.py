@@ -22,6 +22,8 @@ The file is UTF-8 (an emoji is 4 bytes, not the 12 an escaped one takes) and is 
 dropped from the file and the list until it fits. It is read through a file descriptor that is a regular file and no
 larger than the limit; anything else is read as no notes."""
 
+import collections
+import ipaddress
 import json
 import math
 import os
@@ -33,10 +35,14 @@ import time
 CAP = 500
 TEXT_MAX = 1000
 FACES = ("good", "so-so", "bad")
-ROLES = ("owner", "operator", "guest")
+ROLES = ("owner", "operator", "guest", "visitor")     # "visitor" (D147 addendum): someone with no login who scanned the QR sticker
 MIN_GAP = 5.0                       # seconds between two sends of one session
 BOX_LIMITS = ((600.0, 30), (86400.0, 200))      # (seconds, notes): all sessions together, the whole node
 BUSY_TEXT = "Lots of feedback just now, try again in a few minutes"
+VISITOR_GAP = 10.0                  # seconds between two sends from one address (a visitor, no login)
+VISITOR_HOURLY = 10                 # notes from one address in an hour
+VISITOR_ADDRESSES = 512             # addresses the limiter remembers at once, never more
+VISITOR_BODY_MAX = 4096             # bytes of a visitor's request: a face and 1000 characters fit with room to spare
 MAX_BYTES = 2 * 1024 * 1024         # the file is kept under this: the oldest notes go first
 FILE = "feedback.json"
 SCREEN_MAX, NAME_MAX, LINE_MAX, OUTPUTS_MAX = 24, 60, 120, 16
@@ -53,9 +59,72 @@ class Busy(Exception):
 
 class TooFast(Exception):
     """A send came before the gap was over. `wait` is the whole seconds to wait."""
-    def __init__(self, wait):
-        super().__init__("wait a few seconds before sending more")
+    def __init__(self, wait, text="wait a few seconds before sending more"):
+        super().__init__(text)
         self.wait = wait
+
+
+def address_key(client):
+    """What stands for a sender's address in the limiter: the IPv4 address, or the first 64 bits of an IPv6 one (a phone
+    gets a whole /64 and may change within it, so the address alone would be no limit). None for anything unreadable.
+    An IPv4 address carried in IPv6 form counts as the IPv4 one. The key is memory only and is never written."""
+    try:
+        ip = ipaddress.ip_address(str(client).split("%")[0])
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network("%s/64" % ip, strict=False).network_address) + "/64"
+    return str(ip)
+
+
+class AddressLimit:
+    """The limit for a sender with no login (the QR sticker): one note from an address in VISITOR_GAP seconds and
+    VISITOR_HOURLY in an hour, whatever the address does. The table is bounded: an address with nothing left in the
+    last hour is dropped at every call, and when the table still holds VISITOR_ADDRESSES the one asked longest ago goes,
+    so a sender that makes up addresses cannot grow it (the node-wide limit of the store still caps the notes). Memory
+    only: no address is written anywhere, and a restart forgets them."""
+
+    def __init__(self, clock=time.monotonic, gap=VISITOR_GAP, hourly=VISITOR_HOURLY, most=VISITOR_ADDRESSES):
+        self._clock, self.gap, self.hourly, self.most = clock, gap, hourly, most
+        self._seen = collections.OrderedDict()      # key -> [times of kept notes, oldest first]; least recently asked first
+        self._lock = threading.Lock()
+
+    def admit(self, client):
+        """Count one note from `client`, or raise TooFast with the whole seconds to wait (nothing is counted then).
+        An address that cannot be read is refused: the node would have no way to hold it to anything."""
+        key = address_key(client)
+        if key is None:
+            raise TooFast(60, "this address cannot be told apart; ask the person who runs the room")
+        now = self._clock()
+        with self._lock:
+            for k in [k for k, ts in self._seen.items() if not ts or now - ts[-1] >= 3600.0]:
+                del self._seen[k]
+            ts = [t for t in self._seen.get(key, ()) if 0 <= now - t < 3600.0]
+            if ts and now - ts[-1] < self.gap:
+                raise TooFast(int(self.gap - (now - ts[-1])) + 1)
+            if len(ts) >= self.hourly:
+                raise TooFast(int(3600.0 - (now - ts[0])) + 1, "you have sent a few already; try again later")
+            ts.append(now)
+            self._seen[key] = ts
+            self._seen.move_to_end(key)
+            while len(self._seen) > self.most:
+                self._seen.popitem(last=False)
+
+    def release(self, client):
+        """Take back the note `admit` counted for `client` (the node did not keep it): a refused send starts no wait."""
+        key = address_key(client)
+        with self._lock:
+            ts = self._seen.get(key)
+            if ts:
+                ts.pop()
+                if not ts:
+                    del self._seen[key]
+
+    def size(self):
+        with self._lock:
+            return len(self._seen)
 
 
 def _utf8(value):
@@ -131,6 +200,7 @@ class FeedbackStore:
         self.lock = threading.Lock()
         self.items = []
         self._last = {}                 # session id -> when it last sent (the monotonic clock), memory only
+        self.visitors = AddressLimit(clock=clock)       # the senders with no login, by address (memory only)
         self._ok = True
         self._load()
 
@@ -191,7 +261,8 @@ class FeedbackStore:
 
     # ---- adding ------------------------------------------------------------------------------------------------
     def add(self, session, face, text, role, screen, node, playing):
-        """Keep one note and return it. Raises ValueError for a face that is none of the three, TooFast when this session
+        """Keep one note and return it. `session` None is a sender with no login: no per-session gap here (the caller holds
+        it to its address, AddressLimit), the node-wide limits still apply. Raises ValueError for a face that is none of the three, TooFast when this session
         sent less than `gap` seconds ago, Busy when the node has taken its share of notes (BOX_LIMITS), OSError when it could not be written (then nothing is kept and the session may
         try again at once). The text is cut to TEXT_MAX; the rest is made plain by clean_note."""
         if face not in FACES:
@@ -202,7 +273,7 @@ class FeedbackStore:
         with self.lock:
             for k in [k for k, t in self._last.items() if now - t >= self.gap]:      # a session that went quiet leaves no entry
                 del self._last[k]
-            held = self._last.get(session)
+            held = self._last.get(session) if session is not None else None
             if held is not None and 0 <= now - held < self.gap:
                 raise TooFast(int(self.gap - (now - held)) + 1)
             wait = self._box_wait(now)
@@ -216,7 +287,8 @@ class FeedbackStore:
             if not self._write(blob):
                 raise OSError("could not save the note")
             self.items = items
-            self._last[session] = now
+            if session is not None:
+                self._last[session] = now
             self._stamps.append(now)
         return dict(note)
 

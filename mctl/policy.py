@@ -87,6 +87,7 @@ LEGACY_LIVE = frozenset(
         "/api/pair", "/api/session", "/api/logout", "/api/support/login", "/api/play", "/api/control",
         "/api/blackout", "/api/fadeout", "/api/fadein", "/api/fade", "/api/mapper/nudge", "/api/testpattern", "/api/testtone", "/api/media/info",
         "/api/mix", "/api/access/code", "/api/access/cancel", "/api/access/screen", "/api/overlay",
+        "/api/feedback/visitor",    # D147 addendum, added on purpose: the one route with no login at all for feedback; its handler answers 403 to any request that carries a device (a controller or a paired one), so only a phone with no pairing reaches it
         "/api/graphics",        # D129 (8 November 2026), added on purpose: OSC pushes a line of text (/mctl/graphic/N/send) behind the owner's OSC switch and the three locks
         "/api/strobe", "/api/strobe/hold", "/api/strobe/renew", "/api/strobe/release",      # the Strobe (strobe.py), added on purpose: MIDI and OSC hold it, and a controller that goes lets go (the dead-man rule is the node's)
         "/api/support/stop", "/api/shaders/play", "/api/shaders/values", "/api/shaders/step", "/api/shaders/preset",

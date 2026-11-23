@@ -262,6 +262,10 @@ ROWS = {
     ("GET", "/api/feedback"): KINDS["owner"],                   # D147: the Owner reads the notes (a support session of the Owner's role too, as the events)
     # D147: anyone paired may send a note, a Guest too and also while guest controls are locked; not a controller, not support
     ("POST", "/api/feedback"): (401, 200, 200, 200, 200,  403, 403, 403,  403, 403, 403, 403),
+    # D147 addendum, the QR sticker: the page's send needs no login (and is never taken through support); the Owner's switch and sticker
+    ("POST", "/api/feedback/visitor"): STUDIO("open"),
+    ("POST", "/api/feedback/open"): STUDIO("owner"),
+    ("GET", "/api/feedback/sticker"): KINDS["owner"],
     ("GET", "/api/output"): KINDS["owner"],
     ("POST", "/api/output"): at_the_studio("owner"),            # D128: never through the support tunnel
     ("POST", "/api/output/av"): at_the_studio("owner"),
