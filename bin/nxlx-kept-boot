@@ -12,6 +12,9 @@ import os
 import sys
 
 
+STATUS = "/run/nxlx-kept.json"        # = mctl/paths.py KEPT_STATUS (this copy has no package to import it from; tests/test_units.py checks they agree)
+
+
 def main(argv):
     here = os.path.dirname(os.path.realpath(__file__))
     try:
@@ -29,9 +32,9 @@ def main(argv):
             pass
         return 1
     if argv == ["mount"]:
-        return module.Kept().boot()
+        return module.Kept(status=STATUS).boot()
     if argv == ["sync"]:
-        return module.Kept().sync()
+        return module.Kept(status=STATUS).sync()
     print("usage: nxlx-kept-boot mount|sync", file=sys.stderr)
     return 2
 

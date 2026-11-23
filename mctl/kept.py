@@ -71,7 +71,10 @@ import time
 CONFIG = "/etc/nxlx/kept.json"
 SECRET = "/etc/nxlx/kept.secret"   # root 0600: the same secret as on the disk; a disk without it is not this node's
 MOUNT = "/var/lib/nxlx-kept"
-STATUS = "/run/nxlx-kept.json"
+try:
+    from .paths import KEPT_STATUS as STATUS
+except ImportError:      # the release-independent boot copy (/usr/local/lib/nxlx) has no mctl package: bin/nxlx-kept-boot says where
+    STATUS = None
 META = ".nxlx-kept"            # on the disk, root 0700: "volume" holds the filesystem UUID, "secret" the secret of prepare
 SECRET_LIMIT = 256             # bytes read of either secret file
 SETTINGS_LIMIT = 16 * 1024 * 1024
@@ -354,7 +357,7 @@ class Kept:
     mkfs and the like; `proc_mounts` is the table of mounts."""
 
     def __init__(self, root="", runner=subprocess.run, proc_mounts=None, sleep=time.sleep, log=print,
-                 wait_seconds=30, items=ITEMS):
+                 wait_seconds=30, items=ITEMS, status=None):
         self.root = root
         self.runner = runner
         self.proc_mounts = proc_mounts or _join(root, "/proc/mounts")
@@ -365,7 +368,7 @@ class Kept:
         self.config_path = _join(root, CONFIG)
         self.secret_path = _join(root, SECRET)
         self.mount_dir = _join(root, MOUNT)
-        self.status_path = _join(root, STATUS)
+        self.status_path = _join(root, status or STATUS)
 
     # ---- configuration ----------------------------------------------------------------------------------------
 
