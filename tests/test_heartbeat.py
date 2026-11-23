@@ -8,8 +8,10 @@ on loopback; nothing here reaches the internet."""
 import http.server
 import json
 import os
+import shutil
 import socket
 import ssl
+import subprocess
 import tempfile
 import threading
 import time
@@ -23,6 +25,7 @@ from mctl import boxcare, heartbeat as hb, support
 from mctl.settings import Settings
 from tests.test_boxcare import Base as BoxcareBase
 from tests.test_server import ServerBase
+from tests.test_support import LAN
 
 KEY = "3f2a9c1e-77d4-4b1a-9a0e-SECRETKEY1234"
 URL = "https://hc-ping.com/" + KEY
@@ -66,12 +69,31 @@ class UrlCheck(unittest.TestCase):
         shown = hb.mask(URL)
         self.assertNotIn(KEY, shown)
         self.assertNotIn("SECRET", shown)
-        self.assertTrue(shown.startswith("https://hc-ping.com/"))
-        self.assertTrue(shown.endswith("1234"))
+        self.assertEqual(shown, "https://hc-ping.com/\u202634")           # two characters of the last part, no more
         self.assertNotIn("status=up", hb.mask("https://s.example.com/push/abcdefgh?status=up&token=zzz"))
         self.assertNotIn("zzz", hb.mask("https://s.example.com/push/abcdefgh?status=up&token=zzz"))
         self.assertEqual(hb.mask(""), "")
-        self.assertEqual(hb.mask("https://hc-ping.com/ab"), "https://hc-ping.com/…")      # too short to show any of it
+
+    def test_a_short_key_shows_at_most_half_of_it(self):
+        self.assertEqual(hb.mask("https://hc-ping.com/ab"), "https://hc-ping.com/\u2026b")
+        self.assertEqual(hb.mask("https://hc-ping.com/abc"), "https://hc-ping.com/\u2026c")
+        self.assertEqual(hb.mask("https://hc-ping.com/abcd"), "https://hc-ping.com/\u2026cd")
+        self.assertEqual(hb.mask("https://hc-ping.com/a"), "https://hc-ping.com/\u2026")
+        for n in range(1, 40):
+            key = "k" * n
+            shown = hb.mask("https://hc-ping.com/" + key).rsplit("\u2026", 1)[1]
+            self.assertLessEqual(len(shown), min(2, n // 2), n)
+
+    def test_only_the_last_path_part_counts_and_a_trailing_slash_is_ignored(self):
+        self.assertEqual(hb.mask("https://hc-ping.com/ping/abcdef/"), "https://hc-ping.com/\u2026ef")
+        self.assertNotIn("ping", hb.mask("https://hc-ping.com/ping/abcdef").split("\u2026", 2)[-1])
+
+    def test_a_token_in_a_subdomain_is_not_shown(self):
+        shown = hb.mask("https://TOKEN12345.hc-ping.com/abcdef")
+        self.assertNotIn("TOKEN", shown.upper())
+        self.assertEqual(shown, "https://\u2026.hc-ping.com/\u2026ef")
+        self.assertEqual(hb.mask("https://a.b.status.example.co.uk/abcdef"), "https://\u2026.example.co.uk/\u2026ef")
+        self.assertEqual(hb.mask("https://10.0.0.5/ping/abcdef"), "https://(an IP address)/\u2026ef")
 
     def test_fail_goes_on_the_path_before_a_query(self):
         self.assertEqual(hb.with_fail("https://hc-ping.com/abc"), "https://hc-ping.com/abc/fail")
@@ -99,13 +121,14 @@ class Settled(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, True))
         self.settings = Settings(os.path.join(self.tmp, "settings.json"))
         self.settings.load()
-        self.now = [1_000_000.0]
+        self.now = [1_000_000.0]            # the monotonic clock (scheduling, ages)
+        self.wall = [1_700_000_000.0]       # the wall clock (the time shown)
         self.lines = []
         self.running = [True]
         self.requests = []
         self.answer = lambda req, timeout: Reply(204)
         self.beat = hb.Heartbeat(self.settings, player_running=lambda: self.running[0], log=self.lines.append, opener=self.open,
-                                 clock=lambda: self.now[0])
+                                 clock=lambda: self.now[0], wall=lambda: self.wall[0])
 
     def open(self, req, timeout):
         self.requests.append((req, timeout))
@@ -175,16 +198,16 @@ class Ping(Settled):
         self.answer = lambda req, timeout: Reply(200)
         self.assertTrue(self.beat.ping()["ok"])
 
-    def test_a_reply_that_cannot_be_read_is_a_failure_not_a_crash(self):
+    def test_a_reply_that_cannot_be_closed_is_not_a_crash(self):
         self.keep()
 
         class Broken(Reply):
-            def read(self, n=-1):
+            def close(self):
                 raise OSError("reset")
         self.answer = lambda req, timeout: Broken(200)
-        self.assertFalse(self.beat.ping()["ok"])
+        self.assertTrue(self.beat.ping()["ok"])
 
-    def test_the_reply_is_closed_and_only_a_little_of_it_is_read(self):
+    def test_the_reply_is_closed(self):
         self.keep()
         reply = Reply(200, b"x" * 100000)
         self.answer = lambda req, timeout: reply
@@ -199,17 +222,45 @@ class Ping(Settled):
         self.assertFalse(self.beat.ping()["ok"])
         self.assertEqual(self.requests, [])
 
-    def test_fail_is_told_only_when_asked_for_and_the_player_is_down(self):
-        self.keep()
+    def sent(self):
+        return [r[0].full_url for r in self.requests]
+
+    def test_fail_needs_the_player_down_on_two_pings_in_a_row(self):
+        self.keep(fail=True)
         self.running[0] = False
         self.beat.ping()
-        self.assertEqual(self.requests[-1][0].full_url, URL)                  # option off: the same ping whatever the player does
-        self.keep(fail=True)
+        self.assertEqual(self.sent(), [URL])                  # one sample: a restart or a slow answer is no alarm
         self.beat.ping()
-        self.assertEqual(self.requests[-1][0].full_url, URL + "/fail")
+        self.assertEqual(self.sent()[-1], URL + "/fail")
+        self.beat.ping()
+        self.assertEqual(self.sent()[-1], URL + "/fail")
         self.running[0] = True
         self.beat.ping()
-        self.assertEqual(self.requests[-1][0].full_url, URL)
+        self.assertEqual(self.sent()[-1], URL)
+        self.running[0] = False
+        self.beat.ping()                                      # up in between: the count starts again
+        self.assertEqual(self.sent()[-1], URL)
+        self.running[0] = True
+        self.beat.ping()
+        self.running[0] = False
+        self.beat.ping()
+        self.assertEqual(self.sent()[-1], URL)
+
+    def test_fail_is_never_told_with_the_option_off(self):
+        self.keep()
+        self.running[0] = False
+        for _ in range(4):
+            self.beat.ping()
+        self.assertEqual(set(self.sent()), {URL})
+
+    def test_a_test_ping_never_says_fail_and_does_not_count_as_a_sample(self):
+        self.keep(fail=True)
+        self.running[0] = False
+        self.beat.ping("auto")
+        self.beat.ping("test")
+        self.assertEqual(self.sent(), [URL, URL])
+        self.beat.ping("auto")                                # the second automatic sample, whatever the test did between
+        self.assertEqual(self.sent()[-1], URL + "/fail")
 
     def test_a_player_check_that_breaks_is_not_a_failure_report(self):
         self.keep(fail=True)
@@ -217,8 +268,9 @@ class Ping(Settled):
         def boom():
             raise RuntimeError("x")
         self.beat._player_running = boom
-        self.beat.ping()
-        self.assertEqual(self.requests[-1][0].full_url, URL)
+        for _ in range(3):
+            self.beat.ping()
+        self.assertEqual(set(self.sent()), {URL})
 
     def test_a_change_is_logged_once_and_never_with_the_address(self):
         self.keep()
@@ -233,6 +285,23 @@ class Ping(Settled):
         self.assertIn("working again", self.lines[1])
         self.assertNotIn(KEY, " ".join(self.lines))
         self.assertNotIn("hc-ping", " ".join(self.lines))
+
+    def test_a_test_ping_does_not_change_what_the_log_says_about_the_automatic_ones(self):
+        self.keep()
+        self.answer = lambda req, timeout: (_ for _ in ()).throw(socket.timeout())
+        self.beat.ping("auto")                               # logged: failed
+        self.answer = lambda req, timeout: Reply(200)
+        self.beat.ping("test")                               # a good test: the automatic state is still failing
+        self.assertEqual(len(self.lines), 1)
+        self.beat.ping("auto")                               # logged: working again, which is still true to say
+        self.assertEqual(len(self.lines), 2)
+        self.assertIn("working again", self.lines[1])
+        self.answer = lambda req, timeout: (_ for _ in ()).throw(socket.timeout())
+        self.beat.ping("test")                               # a failed test while all is well says nothing
+        self.beat.ping("auto")
+        self.assertEqual(len(self.lines), 3)
+        self.assertIn("failed", self.lines[2])
+        self.assertEqual(self.beat.status()["last"]["how"], "auto")
 
     def test_the_test_ping_is_one_at_a_time_and_holds_no_lock_while_it_waits(self):
         self.keep()
@@ -317,20 +386,95 @@ class Timing(Settled):
         self.assertFalse(self.beat._thread.is_alive())
         self.assertEqual(len(self.requests), 1)
 
+    def test_a_wall_clock_set_backwards_stops_nothing(self):
+        self.keep(minutes=5)
+        self.now[0] += hb.FIRST_PING_AFTER + 1
+        self.assertTrue(self.beat.tick())
+        self.wall[0] -= 86400 * 400                              # the clock is set back more than a year
+        self.now[0] += 5 * 60 + 1
+        self.assertTrue(self.beat.tick())
+        self.assertEqual(len(self.requests), 2)
+        st = self.beat.status()
+        self.assertEqual(st["last"]["ago"], 0)                   # an age is read off the monotonic clock: never negative or huge
+        self.assertLess(st["last"]["at"], 1_700_000_000)         # and the time shown is the wall clock's, as set
+
+    def test_the_default_clock_is_monotonic(self):
+        beat = hb.Heartbeat(self.settings)
+        self.assertIs(beat._clock, time.monotonic)
+        self.assertIs(beat._wall, time.time)
+
     def test_saving_a_setting_failing_to_write_is_an_oserror_for_the_route_to_answer(self):
         with mock.patch.object(self.settings, "save", side_effect=OSError(28, "No space left on device")):
             with self.assertRaises(OSError):
                 self.keep()
 
 
+class Deadline(Settled):
+    def test_a_ping_is_over_at_its_deadline_whatever_the_opener_is_doing(self):
+        self.keep()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        self.answer = lambda req, timeout: (release.wait(10), Reply(200))[1]
+        began = time.time()
+        r = self.beat.ping("auto", 10, 0.3)
+        self.assertLess(time.time() - began, 2)
+        self.assertFalse(r["ok"])
+        self.assertIn("No answer", r["text"])
+
+    def test_the_per_step_timeout_is_never_more_than_the_total(self):
+        self.keep()
+        self.beat.ping("auto", 10, 3)
+        self.assertEqual(self.requests[0][1], 3)
+
+    def test_the_test_ping_frees_its_lock_by_its_deadline(self):
+        self.keep()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        self.answer = lambda req, timeout: (release.wait(10), Reply(200))[1]
+        with mock.patch.object(hb, "TEST_TOTAL", 0.3):
+            began = time.time()
+            r = self.beat.test()
+        self.assertLess(time.time() - began, 2)
+        self.assertFalse(r["ok"])
+        self.assertTrue(self.beat._testing.acquire(blocking=False))        # not held after the deadline
+        self.beat._testing.release()
+
+    def test_only_one_stuck_request_is_ever_left_behind(self):
+        self.keep()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        self.answer = lambda req, timeout: (release.wait(10), Reply(200))[1]
+        self.beat.ping("auto", 10, 0.2)
+        before = len(self.requests)
+        r = self.beat.ping("auto", 10, 0.2)
+        self.assertEqual(len(self.requests), before)                       # nothing new was started
+        self.assertIn("earlier ping", r["text"])
+        release.set()
+        deadline = time.time() + 5
+        while self.beat._worker.is_alive() and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(self.beat.ping()["ok"])                            # and it is over once the first one ends
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     seen = []
     mode = "ok"
+    code = 302
 
     def do_GET(self):
         Handler.seen.append({"path": self.path, "headers": dict(self.headers), "method": "GET"})
+        if Handler.mode == "drip":
+            self.send_response(200)
+            try:
+                for _ in range(60):             # one header byte every 0.1 s: each wait is short, the whole is long
+                    self.wfile.write(b"X-Slow: ")
+                    self.wfile.flush()
+                    time.sleep(0.1)
+            except OSError:
+                pass
+            return
         if Handler.mode == "redirect":
-            self.send_response(302)
+            self.send_response(Handler.code)
             self.send_header("Location", "http://127.0.0.1:1/elsewhere")
             self.end_headers()
         elif Handler.mode == "hang":
@@ -375,11 +519,27 @@ class RealRequest(unittest.TestCase):
 
     def test_a_redirect_is_not_followed(self):
         Handler.mode = "redirect"
-        with self.assertRaises(urllib.error.HTTPError) as c:
-            hb.default_open(self.req(), 3)
-        self.assertEqual(c.exception.code, 302)
-        self.assertEqual(len(Handler.seen), 1)
-        self.assertIn("redirected", hb.words(c.exception))
+        for code in (301, 302, 303, 307, 308):
+            Handler.code, Handler.seen[:] = code, []
+            with self.assertRaises(urllib.error.HTTPError) as c:
+                hb.default_open(self.req(), 3)
+            self.assertEqual(c.exception.code, code)
+            self.assertEqual(len(Handler.seen), 1, code)             # the Location was not asked
+            self.assertIn("redirected", hb.words(c.exception))
+            c.exception.close()
+
+    def test_a_server_that_drips_is_given_up_on_at_the_total_deadline(self):
+        """Each wait is under the socket timeout, so only the total deadline ends it."""
+        Handler.mode = "drip"
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, True))
+        settings = Settings(os.path.join(tmp, "settings.json"))
+        settings.load()
+        beat = hb.Heartbeat(settings)
+        began = time.time()
+        with self.assertRaises(TimeoutError):
+            beat._fetch(self.req(), 0.4, 0.8)
+        self.assertLess(time.time() - began, 2.0)
 
     def test_a_silent_server_is_given_up_on(self):
         Handler.mode = "hang"
@@ -397,6 +557,37 @@ class RealRequest(unittest.TestCase):
         with self.assertRaises(Exception) as c:
             hb.default_open(urllib.request.Request("http://127.0.0.1:%d/x" % port), 2)
         self.assertEqual(hb.words(c.exception), "The service could not be reached.")
+
+
+@unittest.skipUnless(shutil.which("openssl"), "needs openssl to make a test certificate")
+class Certificate(unittest.TestCase):
+    """The node checks the service's certificate: a self-signed one on loopback is refused and no request is made."""
+
+    def test_a_self_signed_certificate_is_refused_and_nothing_is_asked(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp, True))
+        key, crt = os.path.join(tmp, "k.pem"), os.path.join(tmp, "c.pem")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", crt, "-days", "1",
+                        "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], check=True, capture_output=True, timeout=60)
+        Handler.seen, Handler.mode = [], "ok"
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(crt, key)
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        settings = Settings(os.path.join(tmp, "settings.json"))
+        settings.load()
+        lines = []
+        beat = hb.Heartbeat(settings, log=lines.append)        # the real opener
+        url = "https://127.0.0.1:%d/ping/abcdef" % srv.server_address[1]
+        beat.save(hb.form({"on": True, "url": url}))
+        r = beat.ping("test")
+        self.assertFalse(r["ok"])
+        self.assertIn("certificate", r["text"])
+        self.assertEqual(Handler.seen, [])                     # the handshake failed: no request reached the server
 
 
 class Route(ServerBase):
@@ -494,6 +685,28 @@ class Route(ServerBase):
         finally:
             self.api.heartbeat._testing.release()
 
+    def test_two_real_concurrent_test_requests_the_second_is_a_409(self):
+        tok = self.owner()
+        self.call("POST", "/api/heartbeat", {"url": URL}, token=tok)
+        inside, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def slow(req, timeout):
+            inside.set()
+            release.wait(10)
+            return Reply(200)
+        self.answer = slow
+        first = []
+        t = threading.Thread(target=lambda: first.append(self.call("POST", "/api/heartbeat/test", {}, token=tok)[:2]), daemon=True)
+        t.start()
+        self.assertTrue(inside.wait(5))
+        st, body = self.call("POST", "/api/heartbeat/test", {}, token=tok)[:2]
+        self.assertEqual(st, 409, body)
+        release.set()
+        t.join(10)
+        self.assertEqual(first[0][0], 200)
+        self.assertEqual(self.call("POST", "/api/heartbeat/test", {}, token=tok)[0], 200)      # and one can be made again
+
     def test_not_an_operator_or_a_guest(self):
         owner = self.owner()
         self.call("POST", "/api/heartbeat", {"url": URL, "on": True}, token=owner)
@@ -563,6 +776,18 @@ class ExportAndDiagnostics(BoxcareBase):
         self.assertEqual((st, out["problems"]), (200, []), out)
         self.assertIn("heartbeat is not imported by this version; left as it is", out["notes"])
         self.assertEqual(self.settings.data["heartbeat"]["url"], URL)
+
+    def test_a_factory_reset_forgets_it(self):
+        usb = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(usb, True))
+        self.api.usb_root = usb
+        st, out = self.h("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, self.full_dev, LAN)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["heartbeat"], hb.DEFAULT)
+        self.assertEqual(self.api.heartbeat.config(), hb.DEFAULT)
+        self.assertNotIn(KEY, json.dumps(self.settings.data))
+        with open(self.settings.path) as f:
+            self.assertNotIn(KEY, f.read())
 
     def test_the_diagnostics_file_has_the_address_masked(self):
         shown = boxcare.public_settings(self.settings.data)
