@@ -643,7 +643,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This node']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
       'At power-up', 'Streams', 'NDI\u00ae input', 'Render nodes', 'Sound reactivity', 'NDI\u00ae discovery server', 'Projection mapping', 'Graphics', 'Nodes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
-      'Network', 'Screen output', 'Updates', 'Remote support', 'Nodes on this network', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
+      'Network', 'Screen output', 'Updates', 'Remote support', 'Nodes on this network', 'Secure connection', 'Backup and reset', 'Look', 'Save as an app', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
     assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (4)');
@@ -4057,7 +4057,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // A guest's Setup has only what a guest can use: no disabled lists
     await go(guest, 'setup/index');
     await guest.waitForSelector('#sysindex');
-    assert.deepStrictEqual(await guest.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'About and power'], 'the rows a guest sees');
+    assert.deepStrictEqual(await guest.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Save as an app', 'About and power'], 'the rows a guest sees');
     assert.strictEqual(await guest.locator('#notbuilt').count(), 0, 'a guest gets no list of modules');
     await guest.click('.navrow:has-text("About and power")');
     await guest.waitForSelector('#boxcard');

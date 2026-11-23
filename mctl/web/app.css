@@ -984,6 +984,23 @@ textarea.gfxtext { font: inherit; color: inherit; padding: 8px 10px; }
 .gfxmotion .seg .segbtn { min-width: 5.5rem; }
 .gfxmotion .seg .segbtn:disabled { opacity: .5; cursor: not-allowed; }
 
+/* ---- The panel saved as an app (D151, docs/WEBAPP.md) ----
+ * In an app window there are no browser bars: the page reaches the edges of the screen (viewport-fit=cover in
+ * index.html), so it keeps clear of the notch, the status bar, the rounded corners and the home indicator itself.
+ * env() is 0 where there is nothing to keep clear of, so a browser tab on a laptop is as it was. The tab bar has
+ * had its bottom inset since it was made; the shell's side insets move it in with the page when a phone is held
+ * sideways. Pinch zoom is left on (some people need it). */
+.shell { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+.offline { top: calc(8px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left)); right: calc(8px + env(safe-area-inset-right)); }
+/* Only in an app window: the page does not stretch away from its bars when pulled past its end. In a browser tab
+ * pulling down is how a phone loads a page again, and that is left alone; the app has "Load the panel again" on
+ * Setup > Save as an app. */
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  html, body { overscroll-behavior: none; }
+}
+.steps { margin: 8px 0; padding-left: 1.5em; display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+#appcard { overflow-wrap: anywhere; }
+
 /* ==== STYLE: signal ==================================================================================================
    Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
    element carries data-style="signal", which the server writes for a theme that names that style. The look above is

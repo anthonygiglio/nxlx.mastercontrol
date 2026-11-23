@@ -33,6 +33,18 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 NXLX.Systems and contributors"
 SPDX-License-Identifier = "Apache-2.0"
 
+# The panel's icons for a home screen, a Dock or a taskbar (D151): pictures written by tools/make-icons.py from the
+# drawing in mctl/icon.py, this project's own work. (The two SVGs carry their header themselves.)
+[[annotations]]
+path = [
+  "mctl/web/icon-192.png",
+  "mctl/web/icon-512.png",
+  "mctl/web/icon-maskable-512.png",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 NXLX.Systems and contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
 # Third-party shader packs: generators (mctl/shaders.d/isf-files) and filters (mctl/effects.d/isf-files) from Vidvox
 # ISF-Files (https://github.com/Vidvox/ISF-Files), unchanged, under the MIT licence of that repository. Its LICENSE
 # names no copyright holder ("Copyright (c) 2018"); each file names its author in its CREDIT field. See

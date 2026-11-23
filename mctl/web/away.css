@@ -1,0 +1,11 @@
+/* SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors */
+/* SPDX-License-Identifier: Apache-2.0 */
+/* The page the service worker shows when the node cannot be reached (mctl/web/sw.js). The house colours, no more. */
+:root { --ground: #0b0b0d; --text: #f2efe8; --text-2: #b4b1aa; --line: #6c6c76; }
+@media (prefers-color-scheme: light) { :root { --ground: #f2f0ea; --text: #0b0b0d; --text-2: #4a4a50; --line: #7e7a70; } }
+html, body { margin: 0; background: var(--ground); color: var(--text); font: 500 16px/22px system-ui, sans-serif; }
+main { max-width: 32em; margin: 0 auto; padding: calc(48px + env(safe-area-inset-top)) 24px 24px; }
+h1 { margin: 0 0 16px; font-size: 20px; line-height: 24px; font-weight: 700; }
+p { margin: 0 0 16px; color: var(--text-2); }
+.btn { display: inline-block; min-height: 44px; box-sizing: border-box; padding: 11px 24px; border: 1px solid var(--text); border-radius: 3px; color: var(--text); font-weight: 600; text-decoration: none; }
+.btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }

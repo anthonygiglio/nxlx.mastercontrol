@@ -33,7 +33,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import icon, paths, policy
+from . import icon, paths, webapp, policy
 from . import autostart as autostart_mod, dmx as dmx_mod, hardware, midi as midi_mod, pinscreen as pinscreen_mod, sysd as sysd_mod, netd as netd_mod, osc as osc_mod, scheduler as scheduler_mod, themes as themes_mod
 from .api import Api, ApiError
 from .auth import Auth
@@ -57,7 +57,7 @@ OLD_CSRF_HEADER = "X-PVJ-Request"
 OLD_COOKIE = "pvj_token"
 OLD_SECURE_COOKIE = "__Host-pvj_token"
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
-       "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+       "connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 CSP_ORIGIN = re.compile(r"https://(?:[a-z0-9.-]{1,253}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?")   # the one shape page_csp adds
 
 
@@ -75,7 +75,14 @@ def page_csp(origin, forms=()):
         csp = csp.replace("form-action 'self';", "form-action 'self' %s;" % " ".join(extra), 1)
     return csp
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2"}
+         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2",
+         ".png": "image/png"}
+# How long a browser may keep a file without asking again, by ending: a font's name holds the start of its checksum,
+# so the same name is always the same bytes. The icons of the panel saved as an app (D151) are asked for by a
+# launcher, not by the page, and change only with a release: a day. Everything else, the page, its scripts and the
+# service worker, is never kept.
+KEEP = {".woff2": "max-age=86400", ".png": "max-age=86400", ".svg": "max-age=86400"}
+KEEP_MANIFEST = "max-age=600"           # made from the look in use, so it may change: ten minutes, not a day
 HTML_TAG = b'<html lang="en">'          # in index.html; the style of the chosen theme is written into it (styled_html)
 
 
@@ -422,19 +429,26 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             if path == "/theme.css":
                 return self._send(200, api.theme_css().encode(), TYPES[".css"])
             if path in icon.PATHS:          # a bookmark or a home-screen tile asks for these; they were 404 on the box
-                return self._send(200, icon.png(), icon.TYPE)
+                return self._send(200, icon.png(), icon.TYPE, cache=KEEP[".png"])
+            if path == webapp.PATH:         # the panel saved as an app (D151): public, like the page, so the connect screen can be saved too
+                return self._send(200, webapp.manifest(api.theme_in_use()), webapp.TYPE, cache=KEEP_MANIFEST)
+            if path == webapp.SW_PATH:      # the service worker, with this release's name in it; never kept, so an update is seen at once
+                body = webapp.worker(web_dir)
+                if body is None:
+                    return self._json(404, {"error": "not found"})
+                return self._send(200, body, webapp.SW_TYPE)
             name = static.get(path)
             if name is None:
                 return self._json(404, {"error": "not found"})
             with open(os.path.join(web_dir, name), "rb") as f:
                 body = f.read()
             if name == "index.html":
-                body = styled_html(body, api.theme_style())
+                body = webapp.head(styled_html(body, api.theme_style()), api.theme_in_use())
             ext = os.path.splitext(name)[1]
             # a font's name holds the start of its checksum, so the same name is always the same bytes and may be
             # kept (a phone that fetched it at every page would show the fallback type first each time); everything
             # else is never kept
-            self._send(200, body, TYPES.get(ext, "application/octet-stream"), cache="max-age=86400" if ext == ".woff2" else "no-store")
+            self._send(200, body, TYPES.get(ext, "application/octet-stream"), cache=KEEP.get(ext, "no-store"))
 
         def _upload(self, update=False):
             """Raw-body upload: POST /api/media/upload?name=clip.mp4[&replace=1]. Streams to disk."""

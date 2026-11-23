@@ -775,9 +775,9 @@ const PLAY_RUN = ['play/pads', 'play/library', 'play/shaders', 'play/graphics'];
 const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
   owner: ['now/now'].concat(PLAY_RUN, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
-    'network', 'screen', 'updates', 'support', 'nodes', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
-  presenter: ['now/now'].concat(PLAY_RUN, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
-  guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
+    'network', 'screen', 'updates', 'support', 'nodes', 'https', 'backup', 'look', 'app', 'about'].map((x) => 'setup/' + x)),
+  presenter: ['now/now'].concat(PLAY_RUN, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'sync', 'midi', 'app', 'about'].map((x) => 'setup/' + x)),
+  guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'app', 'about'].map((x) => 'setup/' + x)),
 };
 // pages: { owner, presenter, guest }, each a page that has just been loaded. post(url, body): as the owner.
 async function roles(pages, post) {
