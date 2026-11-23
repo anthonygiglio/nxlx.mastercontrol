@@ -16,5 +16,5 @@ RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
 ExecStart=@NXLX_DIR@/bin/nxlx-update rollback --version %i --result /run/nxlx-update/result.json
 # Stopped before the end (the time limit below): say so, so the panel does not show "Going back" for ever.
-ExecStopPost=-@NXLX_DIR@/bin/nxlx-update finish --result /run/nxlx-update/result.json
+ExecStopPost=-@NXLX_DIR@/bin/nxlx-update finish --action rollback --result /run/nxlx-update/result.json
 TimeoutStartSec=10min

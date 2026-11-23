@@ -264,7 +264,7 @@ class RuntimeFolderTest(unittest.TestCase):
         self.assertEqual(p.netd_socket(web), p.netd_socket(self.env("nxlx-netd.service")))
         self.assertEqual(self.env("nxlx-sysd.service")["NXLX_SYSD_DIR"], p.SYSD_DIR)
         self.assertEqual(self.env("nxlx-supportd.service")["NXLX_SUPPORTD_DIR"], p.SUPPORTD_DIR)
-        for unit in ("nxlx-update-usb@.service", "nxlx-update-inbox@.service"):
+        for unit in ("nxlx-update-usb@.service", "nxlx-update-inbox@.service", "nxlx-update-rollback@.service"):
             self.assertIn("--result " + p.UPDATE_RESULT, " ".join(self.units[unit]["ExecStart"]))
         # a version from before D45 that an update rolled back to keeps working in its own folder: for those the
         # only name is NXLX_RUNTIME_DIR, and it must never point a service at a folder it cannot write

@@ -903,13 +903,30 @@ class Updater:
             raise UpdateError("the release before this one is %s now, not %s as was shown; look at the Updates card again" % (target, expect))
         log("rolling back %s -> %s" % (st["current"], target))
         self.migrate_legacy_state()
-        backup = self.latest_backup(target)
+        # A copy of today's settings first, in root's folder, so that a going back that does not work can return to
+        # what the node had (the way an update that does not come up returns). Not being able to make it never stops
+        # the rollback by hand: then the settings simply stay as the rollback leaves them.
+        forward = None
+        if st["current"]:
+            try:
+                forward = self.backup_settings(st["current"], log=log)
+            except (UpdateError, OSError) as e:
+                log("the settings could not be copied before going back (%s)" % (getattr(e, "strerror", None) or e))
+        previous_before = self._read_previous()
+        backup = self.latest_backup(target)      # after the copy above: it may have pushed the oldest copy out
         if backup is None:
             # Normal after a factory reset, which removes every saved copy (J-055): the program goes back, the settings stay as they are.
             log("there is no saved copy of the settings for %s (a factory reset removes them), so the settings stay as they are" % target)
         self._switch_to(target, backup, current=st["current"], log=log)
         if not self._health():
-            raise UpdateError("rolled back, but the panel did not answer; check the services%s" % self._settings_note())
+            if not st["current"]:
+                raise UpdateError("rolled back, but the panel did not answer; check the services%s" % self._settings_note())
+            log("the panel did not answer after going back; returning to %s" % st["current"])
+            self.settings_problem = None
+            self._switch_to(st["current"], forward, log=log)
+            self._restore_previous(previous_before)         # going back that did not work leaves the history as it was
+            again = "" if self._health() else "; the panel did not answer after that either, check the services"
+            raise UpdateError("Going back did not work; the node returned to %s%s%s" % (st["current"], self._settings_note(), again))
         return target
 
     def _switch_to(self, version, backup, current=None, log=print):
@@ -1052,6 +1069,7 @@ def main(argv=None):
         p.add_argument("--result", help="write the progress and outcome as JSON here (for the panel)")
         p.add_argument("--version", help="only this version (what the person confirmed in the panel)")
     p = sub.add_parser("finish", help="mark an unfinished panel update as failed (the unit's ExecStopPost)")
+    p.add_argument("--action", choices=["rollback"], help="the unfinished job was a rollback, not an update")
     p.add_argument("--result", required=True)
     p = sub.add_parser("rollback", help="go back to the previous release")
     p.add_argument("--result", help="write the progress and outcome as JSON here (for the panel)")
@@ -1072,8 +1090,8 @@ def main(argv=None):
         if not result:
             return
         data = {"state": state, "message": message, "version": version, "at": int(time.time())}
-        if args.cmd == "rollback":
-            data["action"] = "rollback"       # the panel says "rollback", not "update", and the event log too
+        if args.cmd == "rollback" or getattr(args, "action", None) == "rollback":
+            data["action"] = "rollback"       # the panel says "going back", not "update", and the event log too
         tmp = result + ".tmp"
         try:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
@@ -1090,7 +1108,7 @@ def main(argv=None):
         try:
             with open(result) as f:
                 if json.load(f).get("state") == "running":
-                    report("failed", "the update stopped before it finished")
+                    report("failed", "going back stopped before it finished" if args.action == "rollback" else "the update stopped before it finished")
         except (OSError, ValueError):
             pass
         return 0

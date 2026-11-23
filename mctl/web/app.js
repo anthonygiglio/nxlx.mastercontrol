@@ -5460,12 +5460,12 @@
     function goBack(rb) {
       var prev = rb.previous, cur = rb.current;
       var box = h('div', { class: 'list sp', id: 'updaterollback' }, h('div', { class: 'state', id: 'rollbackstate',
-        text: prev ? 'The release before this one is version ' + prev.version + (prev.date ? ', installed ' + day(prev.date) : '') + '.' : 'There is no earlier release on this node.' }));
+        text: prev ? 'The release before this one is version ' + prev.version + (prev.date ? ', installed around ' + day(prev.date) : '') + '.' : 'There is no earlier release on this node.' }));
       if (rb.refusal) box.appendChild(h('div', { class: 'hint warn', id: 'rollbackwhy', text: rb.refusal }));
       if (prev) box.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'rollbackgo', text: 'Go back to ' + prev.version, disabled: !!rb.refusal,
         onclick: function (e) {
           confirmRow('Go back to version ' + prev.version + (cur ? ' from ' + cur.version : '') + '? The node restarts its services and plays again in about a minute, so the picture stops for that time. ' +
-            'Your settings go back to how they were just before the update; anything you changed since is set aside in a file, not deleted. If this does not work the node says why here.',
+            'Your settings, the paired devices and the PIN go back to how they were just before ' + (cur ? cur.version + ' was installed' + (cur.date ? ' (around ' + day(cur.date) + ')' : '') : 'the last update') + ', if the node kept a copy of them. A phone paired since then, maybe this one, has to pair again with the PIN. Anything you changed since is set aside in a file, not deleted. If this does not work the node returns to ' + (cur ? cur.version : 'where it was') + ' and says why here.',
             'Go back', 'Not now', function () {
               act('POST', '/api/system/update/rollback', { version: prev.version, confirm: 'rollback' }, function () {
                 say('Going back to ' + prev.version + '. The node restarts; this page comes back by itself.');

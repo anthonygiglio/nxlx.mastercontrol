@@ -535,7 +535,7 @@ class Lock(Folder):
     def test_the_lock_is_in_the_update_units_folder_which_they_make_for_root_alone(self):
         self.assertEqual(os.path.dirname(update.DEFAULT_LOCK), paths.UPDATE_DIR)
         self.assertEqual(update.OLD_LOCK, "/run/lock/pvj-update.lock")      # its name then: an older updater takes it
-        for unit in ("nxlx-update-usb@.service", "nxlx-update-inbox@.service"):
+        for unit in ("nxlx-update-usb@.service", "nxlx-update-inbox@.service", "nxlx-update-rollback@.service"):
             text = self.read(os.path.join(os.path.dirname(__file__), "..", "install", unit))
             for line in ("User=root", "RuntimeDirectory=" + os.path.basename(paths.UPDATE_DIR),
                          "RuntimeDirectoryMode=0755", "RuntimeDirectoryPreserve=yes"):

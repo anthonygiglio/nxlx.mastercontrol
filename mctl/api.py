@@ -2417,7 +2417,7 @@ class Api:
             last = self._update_result()
             if last and last.get("state") in ("done", "failed") and log.update_seen(last.get("at")):
                 ok = last["state"] == "done"
-                what = "Rollback" if last.get("action") == "rollback" else "Update"
+                what = "Going back" if last.get("action") == "rollback" else "Update"
                 self.event("update", ("%s finished: %s" if ok else "%s failed: %s") % (what, last.get("message") or last["state"]), urgent=not ok)
             rep = self.renderer.report() if self.renderer is not None else None
             if rep and rep["drawing"] == "classic" and rep["why"] and self.renderer.saved()["use"] == "new":

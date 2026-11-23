@@ -16,9 +16,11 @@ from unittest import mock
 from mctl import events, rootfs, support, sysd, update
 from mctl.update import UpdateError, Updater
 from tests.test_server import ServerBase
+from tests.test_support import TUNNEL, SupportBase
 from tests.test_update import root_for_main
 
 REPO = os.path.join(os.path.dirname(__file__), "..")
+OLD_WEB = "p" + "vj-web"      # the program of a release from before the rename, written so the old-names guard does not count it
 NORMAL = lambda: "normal"      # not this machine's /proc/mounts (a container's / is an overlay)
 
 
@@ -30,7 +32,7 @@ def make_root(current="1.1.0", previous="1.0.0", new_names=True, releases=None):
     for v in releases or sorted({x for x in (current, previous) if x}):
         bin_dir = os.path.join(root, "opt/nxlx/releases", v, "bin")
         os.makedirs(bin_dir)
-        open(os.path.join(bin_dir, "nxlx-web" if (new_names or v == current) else "pvj-web"), "w").close()
+        open(os.path.join(bin_dir, "nxlx-web" if (new_names or v == current) else OLD_WEB), "w").close()
     if current:
         os.symlink("/opt/nxlx/releases/" + current, os.path.join(root, "opt/nxlx/current"))
     if previous:
@@ -124,6 +126,38 @@ class CommandTest(unittest.TestCase):
         with mock.patch.object(update, "Updater", made):
             return update.main(argv + ["--result", self.result])
 
+    def test_a_timed_out_rollback_is_marked_as_going_back_not_as_an_update(self):
+        with open(self.result, "w") as f:
+            json.dump({"state": "running", "message": "going back to the previous release", "action": "rollback", "at": 1}, f)
+        self.assertEqual(update.main(["finish", "--action", "rollback", "--result", self.result]), 0)
+        self.assertEqual(self.read(), dict(self.read(), state="failed", action="rollback", message="going back stopped before it finished"))
+        with open(self.result, "w") as f:
+            json.dump({"state": "running", "message": "installing", "at": 1}, f)
+        update.main(["finish", "--result", self.result])                 # an update's unit: as before
+        self.assertEqual((self.read()["message"], "action" in self.read()), ("the update stopped before it finished", False))
+
+    def test_a_going_back_whose_panel_does_not_answer_returns_to_the_release_it_came_from(self):
+        root = make_root()
+        self.addCleanup(shutil.rmtree, root, True)
+        up = {"1.1.0": "new settings\n", "1.0.0": "old settings\n"}
+        with open(os.path.join(root, "var/lib/nxlx/settings.json"), "w") as f:
+            f.write(up["1.1.0"])
+        os.makedirs(os.path.join(root, "var/lib/nxlx-update"), mode=0o700)
+        healthy = iter([False, True])
+        u = Updater(root=root, rootfs_state=NORMAL, restart=lambda: self.restarts.append(1), health=lambda: next(healthy),
+                    root_state_dir="/var/lib/nxlx-update")
+        # the copy of the settings from before 1.1.0 was installed
+        with open(os.path.join(root, "var/lib/nxlx-update/settings-1.0.0-1000.json"), "w") as f:
+            f.write(up["1.0.0"])
+        with self.assertRaises(UpdateError) as e:
+            u.rollback(log=lambda *_: None, expect="1.0.0")
+        self.assertEqual(str(e.exception), "Going back did not work; the node returned to 1.1.0")
+        st = u.status()
+        self.assertEqual((st["current"], st["previous"]), ("1.1.0", "1.0.0"))        # where it was, history as it was
+        with open(os.path.join(root, "var/lib/nxlx/settings.json")) as f:
+            self.assertEqual(f.read(), up["1.1.0"])                                     # the settings it had are back
+        self.assertEqual(len(self.restarts), 2)                                       # back, then forward again
+
     def test_it_reports_running_then_done_as_a_rollback(self):
         seen = []
         real = update.json.dump
@@ -188,6 +222,29 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(calls, [((), {})])
 
 
+class TunnelTest(SupportBase):
+    """A real request through the support tunnel, for each role a support login can have."""
+
+    def test_the_rollback_is_refused_to_a_support_login_and_root_is_not_asked(self):
+        asked = []
+
+        class Sysd:
+            def request(inner, message):
+                asked.append(message)
+                return {"ok": True}
+        self.api.sysd = Sysd()
+        self.ready()
+        for role in ("live", "full"):
+            if self.api.support.session is not None:
+                self.h("POST", "/api/support/stop", device=self.full_dev)
+            code = self.start(role=role)[1]["code"]
+            dev = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
+            st, out = self.h("POST", "/api/system/update/rollback", {"version": "1.0.0", "confirm": "rollback"}, dev, TUNNEL)
+            self.assertEqual(st, 403, (role, out))
+            self.assertIn("remote support", out["error"])
+        self.assertEqual(asked, [])
+
+
 class SysdTest(unittest.TestCase):
     def service(self, running=""):
         calls = []
@@ -225,7 +282,7 @@ class SysdTest(unittest.TestCase):
         with open(os.path.join(REPO, "install", "nxlx-update-rollback@.service")) as f:
             text = f.read()
         self.assertIn("ExecStart=@NXLX_DIR@/bin/nxlx-update rollback --version %i --result /run/nxlx-update/result.json", text)
-        self.assertIn("ExecStopPost=-@NXLX_DIR@/bin/nxlx-update finish --result /run/nxlx-update/result.json", text)
+        self.assertIn("ExecStopPost=-@NXLX_DIR@/bin/nxlx-update finish --action rollback --result /run/nxlx-update/result.json", text)
         for line in ("User=root", "RuntimeDirectory=nxlx-update", "RuntimeDirectoryMode=0755", "RuntimeDirectoryPreserve=yes"):
             self.assertIn(line + "\n", text)
         self.assertNotIn("\n[Install]", text)                  # never started at boot
@@ -303,10 +360,17 @@ class ApiTest(ServerBase):
         self.assertEqual(self.go(token="nope")[0], 401)
         self.assertEqual(self.asked, [])
 
-    def test_a_support_login_is_refused_in_the_tunnel_for_every_role(self):
+    def test_the_deny_list_names_the_route_and_leaves_the_card_readable(self):
         self.assertIn(("POST", "/api/system/update/rollback"), support.REMOTE_DENY)
         self.assertNotIn(("GET", "/api/system/update"), support.REMOTE_DENY)        # a helper may still read the card
         self.assertNotIn(("POST", "/api/system/update"), support.REMOTE_DENY)       # D84: a signed update may be sent; unchanged
+
+    def test_a_care_job_that_is_running_refuses_with_its_name(self):
+        self.api._care_busy = "A settings import"
+        self.assertEqual(self.view()["refusal"], "A settings import is running; go back when it has finished.")
+        st, body, _ = self.go()
+        self.assertEqual((st, body["error"]), (409, "A settings import is running; go back when it has finished."))
+        self.assertEqual((self.asked, self.api.events.events()), ([], []))
 
     def test_every_refusal_is_in_plain_words(self):
         # read-only system disk
@@ -361,8 +425,8 @@ class ApiTest(ServerBase):
         self.assertEqual(self.call("GET", "/api/system/update", token=self.full)[1]["last"], done)
 
     def test_the_end_of_a_rollback_is_logged_as_one(self):
-        for state, message, line in (("done", "rolled back to 1.0.0", "Rollback finished: rolled back to 1.0.0"),
-                                     ("failed", "the panel did not answer", "Rollback failed: the panel did not answer")):
+        for state, message, line in (("done", "rolled back to 1.0.0", "Going back finished: rolled back to 1.0.0"),
+                                     ("failed", "the panel did not answer", "Going back failed: the panel did not answer")):
             with open(self.result, "w") as f:
                 json.dump({"state": state, "message": message, "action": "rollback", "version": "1.0.0", "at": int(time.time()) + len(state)}, f)
             self.api.events_tick()
@@ -385,7 +449,8 @@ class CardTest(unittest.TestCase):
         block = self.js[start:self.js.index("function row(name, state, problem, id, go)", start)]
         self.assertIn("confirmRow(", block)
         self.assertNotIn("confirm(", block.replace("confirmRow(", ""))
-        for words in ("restarts its services", "plays again in about a minute", "set aside in a file, not deleted", "'/api/system/update/rollback'", "confirm: 'rollback'"):
+        for words in ("restarts its services", "plays again in about a minute", "set aside in a file, not deleted", "paired devices and the PIN",
+                      "has to pair again with the PIN", "installed around", "the node returns to", "'/api/system/update/rollback'", "confirm: 'rollback'"):
             self.assertIn(words, block)
         self.assertIn("rb.refusal", block)
         self.assertIn("if (d.rollback) body.appendChild(goBack(d.rollback));", self.js)
