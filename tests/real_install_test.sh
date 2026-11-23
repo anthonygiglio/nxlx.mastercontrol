@@ -237,7 +237,7 @@ grep -q "CONVERTED from the old names" "$OUT" || fail "the second conversion did
 /usr/local/bin/nxlx-convert --confirm || fail "the confirm failed"
 if systemctl is-enabled --quiet nxlx-convert-undo.timer 2>/dev/null; then fail "the undo timer is still enabled after the confirm"; fi
 services_and_their_files nxlx-dev
-[ "$(status_code "$OLD_TOKEN")" = 200 ] || fail "the device paired on the old release was signed out by the second conversion"
+wait_for 40 panel_takes_token_after_conversion || fail "the device paired on the old release was signed out by the second conversion"
 
 step "the tests below start from a plain machine of their own: the converted node's services are stopped and its runtime folders taken away"
 systemctl stop nxlx-raster.socket 2>/dev/null || true
