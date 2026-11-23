@@ -90,16 +90,42 @@ class PageFilesTest(unittest.TestCase):
 
     def test_the_page_as_shipped_is_wholly_under_load_js(self):
         self.assertEqual(self.shipped(), [])
-        # and the page is what the checks think it is: the loader, four scripts that each leave a name, two sheets
+        # and the page is what the checks think it is: the loader, five scripts that each leave a name, two sheets
         got = [(kind, url, attrs.get("data-gives")) for kind, url, attrs, _ in files_of(read("index.html"))]
         self.assertEqual(got, [("script", "/load.js", None), ("sheet", "/theme.css", None), ("sheet", "/app.css", None),
                                ("script", "/shaders.js", "mctlShaders"), ("script", "/effects.js", "mctlEffects"),
-                               ("script", "/app.js", "mctlApp"), ("script", "/room.js", "mctlRoom")])
+                               ("script", "/webapp.js", "mctlWebapp"), ("script", "/app.js", "mctlApp"), ("script", "/room.js", "mctlRoom")])
 
     def test_what_the_server_makes_itself_is_only_the_theme_and_it_does_make_it(self):
         self.assertFalse(os.path.exists(os.path.join(WEB, "theme.css")))
         with open(server.__file__, encoding="utf-8") as f:
             self.assertIn('if path == "/theme.css":', f.read())
+
+    def test_everything_else_the_page_names_is_answered_by_the_node(self):
+        """The icons and the manifest of the panel saved as an app (D151) are links load.js does not watch, so the
+        checks above pass over them: each must still be a file of the node or something the server makes, by a
+        route that is in server.py, or a home screen would get a blank tile and a browser no manifest."""
+        from mctl import icon, webapp
+        page = Page()
+        page.feed(read("index.html"))
+        named = sorted((a.get("rel"), a.get("href")) for tag, a, _ in page.tags if tag == "link" and "stylesheet" not in (a.get("rel") or ""))
+        self.assertEqual(named, [("apple-touch-icon", "/apple-touch-icon.png"), ("icon", "/favicon.ico"), ("manifest", "/manifest.webmanifest")])
+        self.assertEqual(webapp.PATH, "/manifest.webmanifest")
+        self.assertFalse(os.path.exists(os.path.join(WEB, webapp.PATH.lstrip("/"))))       # made from the look in use, not a file
+        for _rel, href in named:
+            self.assertTrue(href in icon.PATHS or href == webapp.PATH, href)
+        with open(server.__file__, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("if path == webapp.PATH:", text)
+        self.assertIn("if path == webapp.SW_PATH:", text)
+        self.assertIn("if path in icon.PATHS:", text)
+        # what the manifest names in its turn, and what the worker keeps, are files of the node, each under a name the policy allows
+        for name in list(icon.FILES) + [icon.OUTLINE, icon.DRAWING, webapp.SW_FILE] + list(webapp.SHELL):
+            self.assertTrue(os.path.isfile(os.path.join(WEB, name)), name)
+            self.assertRegex(name, r"^[A-Za-z0-9_.-]+$")
+        # the worker is asked for by webapp.js, not by the page, and only over https
+        self.assertIn("register('/sw.js'", read("webapp.js"))
+        self.assertIn("location.protocol !== 'https:'", read("webapp.js"))
 
     def test_each_fault_of_a_page_is_found(self):
         page = read("index.html")
@@ -147,7 +173,7 @@ class PageFilesTest(unittest.TestCase):
 
     def test_the_other_scripts_set_their_name_once_they_are_complete(self):
         # each sets its name in one place, at the outer level of its file, not inside something that may not run
-        for name, gives in (("shaders.js", "mctlShaders"), ("effects.js", "mctlEffects"), ("room.js", "mctlRoom")):
+        for name, gives in (("shaders.js", "mctlShaders"), ("effects.js", "mctlEffects"), ("webapp.js", "mctlWebapp"), ("room.js", "mctlRoom")):
             found = re.findall(r"^( *)window\.%s\s*=[^=]" % gives, read(name), re.M)
             self.assertEqual(found, ["  "], name)
 

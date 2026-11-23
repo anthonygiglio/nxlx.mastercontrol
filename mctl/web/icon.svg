@@ -1,0 +1,4 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Written by tools/make-icons.py from mctl/icon.py; do not edit by hand. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#0b0b0d"/><g fill="#f2efe8"><polygon points="27,27 37,27 37,73 27,73"/><polygon points="63,27 73,27 73,73 63,73"/><polygon points="27,27 37,27 73,73 63,73"/></g></svg>

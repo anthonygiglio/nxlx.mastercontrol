@@ -246,6 +246,7 @@
         h('h1', { text: 'Connect to your node' }),
         h('p', { text: 'Scan the QR code on the screen, or type the code shown there. The node\'s owner can use the 4 digit PIN instead. No internet needed.' }),
         scannedNote,
+        window.mctlWebapp ? window.mctlWebapp.pairNote(h) : null,       // in an app window: why it asks again (D151)
         h('div', { class: 'k', text: 'Guest or operator code' }), code,
         h('label', { class: 'k', for: 'devname', text: 'Name for this device' }),
         (name.id = 'devname', name),
@@ -2679,10 +2680,11 @@
         fact: function () { var t = S.themes.filter(function (x) { return S.theme && x.id === S.theme.name; })[0]; return t ? t.name : ''; },
         blurb: 'The panel\'s colours, on every paired device.',
         body: function () { return [appearanceCard()]; } },
+      appRow(),
       { id: 'about', group: 'box', name: 'About and power', role: 'view', url: '/api/system',
         blurb: 'What this node is, its versions, storage, screens and clock, and restarting it.',
         body: aboutPage }
-    ];
+    ].filter(Boolean);
     // A module nobody gave a row still gets one, so it can always be switched.
     var known = rows.map(function (r) { return r.module; });
     S.modules.forEach(function (m) {
@@ -2690,6 +2692,16 @@
       rows.push({ id: 'mod-' + m.id, group: 'show', name: m.name, role: 'full', module: m.id, blurb: m.description });
     });
     return rows;
+  }
+  // The panel saved as an app (D151): the row of Setup > Save as an app, for everybody who is paired. The card and its
+  // words are in webapp.js; without that file there is no row (the list drops the null).
+  function appRow() {
+    var w = window.mctlWebapp;
+    if (!w) return null;
+    return { id: 'app', group: 'box', name: 'Save as an app', role: 'view',
+      fact: function () { return w.here().app ? 'This is the app' : 'Home screen, Dock or taskbar'; },
+      blurb: 'Put this panel on the home screen of a phone or tablet, or on the Dock or taskbar of a computer, so it opens like an app with its own icon. The steps are for the device you are holding.',
+      body: function () { return [w.card({ h: h })]; } };
   }
   function rowShown(row) {
     if (row.id === 'access' && S.device && S.device.remote) return false;      // codes are refused through the support connection, whatever the role

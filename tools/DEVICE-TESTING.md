@@ -1464,3 +1464,19 @@ Do this on a Pi (node-01) and on the M710q (node-03), with someone at the node. 
 | UR3 | NOT RUN. With the overlay on: `curl -i -X POST --data-binary @nxlx-N.N.N.tar.gz` to `/api/system/update/upload?name=nxlx-N.N.N.tar.gz` (as the Owner) | 409 with the same sentence, at once (with a large file curl may show a connection reset instead of the 409 body, because the server answers without reading the body; the status line or the panel's own message is the check), and `free` shows no RAM taken by the file | A 200, or RAM going up by the size of the file |
 | UR4 | NOT RUN. With the overlay on, from a terminal: `sudo nxlx-update apply <bundle>`, `sudo nxlx-update usb` with a stick, `sudo nxlx-update rollback`, `sudo nxlx-update check <bundle>` | Each exits 1 with the sentence; `cat /run/nxlx-update/result.json` says `failed` with it; the panel's Updates card shows "Last update failed: ..."; `/opt/nxlx/current` and the settings are unchanged | An update that says done |
 | UR5 | NOT RUN. `sudo nxlx-rootfs disable`, restart, then the same four commands and an upload | They work as before | A refusal with the overlay off |
+
+### The panel saved as an app (D151): NOT RUN on any device
+
+Do these with a node that has its https:// certificate (Setup, Secure connection) and with the device's copy of the root installed, and once with plain http://. Nothing here has been tried: the tests run the node's side and the scripts against stand-ins for a browser. Words for each device are in [docs/WEBAPP.md](../docs/WEBAPP.md).
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| WA1 | NOT RUN. iPhone, Safari, https://: Setup, Save as an app. Follow the card (Share, Add to Home Screen). Open the new icon | The N icon, the name NXLX, a window with no Safari bars, the status bar readable, the page clear of the notch and the home indicator. It asks for pairing once (separate storage); type the code or PIN; close the app, open it again | The Safari bars, a blank tile, the page under the notch, asked to pair at every open |
+| WA2 | NOT RUN. The same on plain http:// | The same window; the card for http says what is different | A bookmark that opens in Safari |
+| WA3 | NOT RUN. iPhone: scan the node's QR code with the camera while the app is installed | It opens Safari, not the app (documented); the app is untouched | Anything worse |
+| WA4 | NOT RUN. Android, Chrome, https:// with the root trusted: Setup, Save as an app, the Install button, or the menu | An installed app with its own window and the N icon (maskable: round or squircle with the N inside). Is the device already signed in from Chrome, or does it ask? Write down which | A shortcut that opens in Chrome with its bar |
+| WA5 | NOT RUN. Android, Chrome, plain http:// | Only a shortcut; the card says why | An error |
+| WA6 | NOT RUN. Amazon Fire tablet, Silk, https:// and http://: the menu entry it has, and what the app looks like | Write down the menu words, whether it has a window of its own, and whether the card's words fit | n/a: this row is a record of what Silk does |
+| WA7 | NOT RUN. Each of the above: switch the device's Wi-Fi off (or leave the venue network) and open the app from its icon | The "Cannot reach the node" page with Try again; Wi-Fi back on and Try again opens the panel. Over http:// the browser's own error page | A blank window, or an old panel that looks signed out |
+| WA8 | NOT RUN. Install a new release on the node, then open the app | The new panel (no old files); in the browser's developer tools the cache `nxlx-shell-<new version>-...` is the only one | The old panel, or two caches |
+| WA9 | NOT RUN. Leave a paired iPhone app unused for eight days, then open it | Still signed in (the first proof the sign-in survives the week) | Asked to pair |
