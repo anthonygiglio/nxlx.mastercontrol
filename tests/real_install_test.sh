@@ -204,7 +204,10 @@ if [ "$settings_now" != "$SETTINGS_REST" ]; then
 fi
 only_the_new_layout
 services_and_their_files nxlx-dev
-[ "$(status_code "$OLD_TOKEN")" = 200 ] || fail "the device paired before the conversion was signed out"
+panel_takes_token_after_conversion() { [ "$(status_code "$OLD_TOKEN")" = 200 ]; }
+# The converter starts the panel again a moment before this point; give it time to listen (two CI runs on
+# 2026-11-22 met port 80 closed one second after the restart and failed here, then passed on a rerun).
+wait_for 40 panel_takes_token_after_conversion || fail "the device paired before the conversion was signed out"
 [ "$(status_code not-a-token)" != 200 ] || fail "the panel takes any token"
 if out="$(/usr/local/bin/nxlx-update rollback 2>&1)"; then fail "a rollback to the release with the old names was not refused"; fi
 grep -q "nxlx-convert --undo" <<<"$out" || fail "the refused rollback does not name the way back: $out"
@@ -234,7 +237,7 @@ grep -q "CONVERTED from the old names" "$OUT" || fail "the second conversion did
 /usr/local/bin/nxlx-convert --confirm || fail "the confirm failed"
 if systemctl is-enabled --quiet nxlx-convert-undo.timer 2>/dev/null; then fail "the undo timer is still enabled after the confirm"; fi
 services_and_their_files nxlx-dev
-[ "$(status_code "$OLD_TOKEN")" = 200 ] || fail "the device paired on the old release was signed out by the second conversion"
+wait_for 40 panel_takes_token_after_conversion || fail "the device paired on the old release was signed out by the second conversion"
 
 step "the tests below start from a plain machine of their own: the converted node's services are stopped and its runtime folders taken away"
 systemctl stop nxlx-raster.socket 2>/dev/null || true
