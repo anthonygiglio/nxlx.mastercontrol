@@ -311,8 +311,11 @@ class WorkerServedTest(RealPanel):
         with open(os.path.join(WEB, webapp.SW_FILE), encoding="utf-8") as f:
             text = f.read()
         self.assertEqual(re.findall(r"\.(put|add|addAll)\(", text), ["addAll"])
+        self.assertEqual(re.findall(r"fetch\('([^']*)'", text), ["/sw.js"])      # the one address it asks for by itself
         self.assertIn("var SHELL = ['/away.html', '/away.css'];", text)
-        self.assertIn("req.mode !== 'navigate'", text)
+        self.assertIn("req.mode === 'navigate'", text)
+        self.assertIn("SHELL.indexOf(url.pathname) >= 0", text)
+        self.assertNotIn("setTimeout", text)                                    # slowness is never taken for being away
         self.assertIn("indexOf('/api/') === 0", text)
         self.assertIn("req.method !== 'GET'", text)
         self.assertIn("url.origin !== self.location.origin", text)
@@ -350,9 +353,23 @@ class ScriptsRunTest(unittest.TestCase):
     def test_a_node_out_of_reach_gets_the_away_page(self):
         self.assertEqual(self.out["awayBody"], "AWAY PAGE /away.html")
         self.assertEqual(self.out["noCache"], [503, "The node cannot be reached."])      # never installed: a plain note
-        self.assertEqual(self.out["hangs"], "AWAY PAGE /away.html")
-        self.assertEqual(len(self.out["waitMs"]), 1)
-        self.assertTrue(0 < self.out["waitMs"][0] <= 15000)
+
+    def test_a_slow_node_is_waited_for_and_its_page_wins(self):
+        self.assertTrue(self.out["slowSame"])
+
+    def test_the_away_page_has_its_style_sheet_from_the_cache_when_the_node_is_away(self):
+        self.assertTrue(self.out["shellOnline"])
+        self.assertEqual(self.out["shellAway"], "AWAY PAGE /away.css")
+        self.assertEqual(self.out["shellAwayHtml"], "AWAY PAGE /away.html")
+
+    def test_a_node_that_no_longer_has_the_worker_makes_it_remove_itself(self):
+        r = self.out["selfRemoval"]
+        for k in ("gone404", "gone410"):
+            self.assertEqual(r[k], {"unregistered": True, "caches": []}, k)   # its caches go, and it unregisters
+        for k in ("ok", "error500"):
+            self.assertEqual(r[k], {"unregistered": False, "caches": ["nxlx-shell-" + self.release]}, k)
+        self.assertTrue(self.out["removedOnNavigation"])
+        self.assertTrue(self.out["networkErrorLeavesIt"])
 
     def test_an_api_address_a_post_a_script_or_another_site_is_never_touched(self):
         self.assertEqual(self.out["untouched"], {k: True for k in ("api", "apiNested", "post", "script", "fetchApi", "other", "head")})

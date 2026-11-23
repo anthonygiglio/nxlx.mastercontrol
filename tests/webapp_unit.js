@@ -26,17 +26,19 @@ function worker(fetchImpl) {
   class Response { constructor(body, init) { this.body = body; this.status = (init && init.status) || 200; } }
   const self = { location: { origin: 'https://node.local' }, addEventListener: (t, f) => { handlers[t] = f; },
     skipWaiting: () => { self.skipped = true; return Promise.resolve(); }, clients: { claim: () => { self.claimed = true; return Promise.resolve(); } } };
-  const waits = [];
-  const g = { self, caches, Response, URL, Promise, setTimeout: (f, ms) => { waits.push(ms); return setTimeout(f, 20); }, clearTimeout, fetch: (req) => { fetched.push(req.url); return fetchImpl(req); } };
+  self.registration = { unregister: () => { self.unregistered = true; return Promise.resolve(true); } };
+  const g = { self, caches, Response, URL, Promise, fetch: (req) => { const u = typeof req === 'string' ? req : req.url; fetched.push(u); return fetchImpl(req, u); } };
   const src = fs.readFileSync(path.join(web, 'sw.js'), 'utf8').split('__RELEASE__').join(release);
   vm.runInNewContext(src, g, { filename: 'sw.js' });
-  return { handlers, store, puts, deleted, fetched, self, waits };
+  return { handlers, store, puts, deleted, fetched, self };
 }
 async function install(w) { const ev = { waitUntil(p) { this.p = p; } }; w.handlers.install(ev); await ev.p; return w; }
 async function nav(w, url, extra) {
-  const ev = { request: Object.assign({ method: 'GET', mode: 'navigate', url }, extra || {}), respondWith(p) { this.answer = p; } };
+  const ev = { request: Object.assign({ method: 'GET', mode: 'navigate', url }, extra || {}), waitUntil(p) { this.kept = p; }, respondWith(p) { this.answer = p; } };
   w.handlers.fetch(ev);
-  return ev.answer ? await ev.answer : null;
+  const answer = ev.answer ? await ev.answer : null;
+  if (ev.kept) await ev.kept;
+  return answer;
 }
 (async function () {
   // install keeps two files and nothing else, and takes over at once
@@ -82,11 +84,38 @@ async function nav(w, url, extra) {
     out.untouched[k] = !e.called;
   }
   out.puts = w.puts.length;
-  // a node that hangs is as good as away, after the wait
-  w = await install(worker(() => new Promise(() => {})));
-  const hung = await nav(w, 'https://node.local/');
-  out.hangs = hung && hung.body;
-  out.waitMs = w.waits.slice();
+  // a slow node is waited for: the real page wins, the away page is never shown for slowness
+  w = await install(worker(() => new Promise((resolve) => setTimeout(() => resolve(live), 150))));
+  const slow = await nav(w, 'https://node.local/');
+  out.slowSame = slow === live;
+  // the away page's own style sheet: from the node when it answers, from the cache when it does not
+  w = await install(worker(() => Promise.resolve(live)));
+  let e2 = { request: { method: 'GET', mode: 'no-cors', url: 'https://node.local/away.css' }, respondWith(p) { this.answer = p; } };
+  w.handlers.fetch(e2);
+  out.shellOnline = (await e2.answer) === live;
+  w = await install(worker(() => Promise.reject(new TypeError('network'))));
+  e2 = { request: { method: 'GET', mode: 'no-cors', url: 'https://node.local/away.css' }, respondWith(p) { this.answer = p; } };
+  w.handlers.fetch(e2);
+  out.shellAway = (await e2.answer).body;
+  e2 = { request: { method: 'GET', mode: 'no-cors', url: 'https://node.local/away.html' }, respondWith(p) { this.answer = p; } };
+  w.handlers.fetch(e2);
+  out.shellAwayHtml = (await e2.answer).body;
+  // a worker the node no longer has removes itself and its caches; any other answer leaves it
+  const answers = { gone404: 404, gone410: 410, ok: 200, error500: 500 };
+  out.selfRemoval = {};
+  for (const k of Object.keys(answers)) {
+    w = await install(worker((req, u) => Promise.resolve(u === '/sw.js' ? { status: answers[k] } : live)));
+    w.store['nxlx-shell-0.0.1-old'] = ['/x']; w.store['something-else'] = ['/y'];
+    ev = { waitUntil(p) { this.p = p; } };
+    w.handlers.activate(ev); await ev.p;
+    out.selfRemoval[k] = { unregistered: !!w.self.unregistered, caches: Object.keys(w.store).sort() };
+  }
+  w = await install(worker((req, u) => Promise.resolve(u === '/sw.js' ? { status: 404 } : live)));
+  await nav(w, 'https://node.local/');                       // found out when a page is opened, too
+  out.removedOnNavigation = !!w.self.unregistered;
+  w = await install(worker((req, u) => u === '/sw.js' ? Promise.reject(new TypeError('network')) : Promise.resolve(live)));
+  await nav(w, 'https://node.local/');
+  out.networkErrorLeavesIt = !w.self.unregistered;
 
   // ---- webapp.js -----------------------------------------------------------
   function page(protocol, hasWorker) {
