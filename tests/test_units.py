@@ -116,7 +116,14 @@ class UnitOrderingTest(unittest.TestCase):
         ours = set(units)
         for name, keys in units.items():
             self.assertEqual(set(words(keys, "Requires", "BindsTo", "PartOf", "Requisite")) & ours, set(), name)
-            self.assertEqual(set(words(keys, "Before")) & ours, set(), name)
+            before = set(words(keys, "Before")) & ours
+            if name == "nxlx-kept.service":
+                # The one ordered unit (D148): the kept settings folder mounts over the folders the others write, so it must
+                # be there first. It only mounts, needs no peer, and nothing is ordered after it by a Requires.
+                self.assertEqual(before, ours & {"nxlx-player.service", "nxlx-web.service", "nxlx-netd.service",
+                                                 "nxlx-sysd.service", "nxlx-supportd.service"}, name)
+            else:
+                self.assertEqual(before, set(), name)
             after = set(words(keys, "After")) & ours
             self.assertEqual(after, {"nxlx-player.service"} if name == "nxlx-web.service" else set(), name)
 
@@ -369,7 +376,7 @@ class RuntimeFolderTest(unittest.TestCase):
         p = self.paths
         known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR, p.NDI_PIPE_DIR, p.NDI_PIPE_DIR + "/" + p.NDI_FIFO,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
-                 p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
+                 p.KEPT_STATUS, p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
                  p.RUN + "/<name>", p.NDI_DIR, p.NDI_CONFIG_DIR, p.NDISC_DIR, p.SOUND_DIR, p.LINK_DIR, p.RASTER_SOCKET}
         files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*")) + glob.glob(os.path.join(NDI_UNITS, "*"))
         seen = set()

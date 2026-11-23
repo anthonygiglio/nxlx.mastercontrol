@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""The boot step of the kept settings folder, as a release-independent copy (D148).
+
+install.sh puts this file and a copy of mctl/kept.py in /usr/local/lib/nxlx/ (root's). The boot unit runs it from there,
+not from /opt/nxlx/current, so `nxlx-update rollback` to a release that has no nxlx-kept cannot leave the settings
+folders unmounted at the next boot. Only the two boot actions exist here: `mount` and `sync`.
+"""
+import importlib.util
+import os
+import sys
+
+
+STATUS = "/run/nxlx-kept.json"        # = mctl/paths.py KEPT_STATUS (this copy has no package to import it from; tests/test_units.py checks they agree)
+
+
+def main(argv):
+    here = os.path.dirname(os.path.realpath(__file__))
+    try:
+        spec = importlib.util.spec_from_file_location("nxlx_kept_copy", os.path.join(here, "kept.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as e:      # noqa: BLE001 - fail loudly, with the status file the panel and nxlx-kept status read
+        import json
+        print("nxlx-kept-boot: cannot load %s/kept.py: %r" % (here, e), file=sys.stderr)
+        try:
+            with open("/run/nxlx-kept.json", "w") as f:
+                json.dump({"state": "refused", "message": "the kept settings boot step could not start: %r" % (e,),
+                           "items": {}, "device": None}, f)
+        except OSError:
+            pass
+        return 1
+    if argv == ["mount"]:
+        return module.Kept(status=STATUS).boot()
+    if argv == ["sync"]:
+        return module.Kept(status=STATUS).sync()
+    print("usage: nxlx-kept-boot mount|sync", file=sys.stderr)
+    return 2
+
+
+sys.exit(main(sys.argv[1:]))

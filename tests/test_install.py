@@ -125,6 +125,15 @@ class InstallTest(unittest.TestCase):
         self.assertIn("nxlx-usb@%k.service", self.read(self.p("etc/udev/rules.d/99-nxlx-usb.rules")))
         self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-usb")), "/opt/nxlx/current/bin/nxlx-usb")
         self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-rootfs")), "/opt/nxlx/current/bin/nxlx-rootfs")
+        # J-050: the kept settings folder's tool and its boot unit are installed, and the unit only acts where a kept disk was set up
+        self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-kept")), "/opt/nxlx/current/bin/nxlx-kept")
+        kept_unit = self.read(self.p("etc/systemd/system/nxlx-kept.service"))
+        self.assertIn("ExecStart=/usr/local/lib/nxlx/nxlx-kept-boot mount", kept_unit)       # not under current/: a rollback must not break it
+        self.assertTrue(os.access(self.p("usr/local/lib/nxlx/nxlx-kept-boot"), os.X_OK))
+        self.assertTrue(os.path.isfile(self.p("usr/local/lib/nxlx/kept.py")))
+        self.assertIn("ConditionPathExists=/etc/nxlx/kept.json", kept_unit)
+        self.assertNotIn("@NXLX", kept_unit)
+        self.assertFalse(os.path.exists(self.p("etc/nxlx/kept.json")))      # the installer never makes the config: only nxlx-kept prepare does
         self.assertEqual(json.loads(self.read(self.p("etc/nxlx/install.json")))["version"], "9.9.1")
         self.assertTrue(os.path.isdir(self.p("var/lib/nxlx/video")))
         # the system log survives restarts (Raspberry Pi OS keeps it in memory); our drop-in sorts after theirs
@@ -314,6 +323,8 @@ class InstallTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.p("opt/nxlx")))
         self.assertFalse(os.path.lexists(self.p("usr/local/bin/nxlx-player")))
         self.assertFalse(os.path.lexists(self.p("usr/local/bin/nxlx-rootfs")))
+        self.assertFalse(os.path.lexists(self.p("usr/local/bin/nxlx-kept")))
+        self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-kept.service")))
         self.assertFalse(os.path.lexists(self.p("usr/local/bin/nxlx-update")))
         self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-player.service")))
         self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-web.service")))

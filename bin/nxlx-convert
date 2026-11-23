@@ -1692,6 +1692,33 @@ def pending_changes(recs):
     return out
 
 
+# What install.sh adds for this release that has no old name to go back to (a feature newer than the old names), so
+# no journal record renames it: the kept settings folder's boot unit, its wants link and its command link (J-050).
+# The undo takes them away once everything it journaled is back, or the old node would carry names of this release.
+NEW_NAMES = ("etc/systemd/system/sysinit.target.wants/nxlx-kept.service", "etc/systemd/system/nxlx-kept.service",
+             "usr/local/bin/nxlx-kept", "usr/local/lib/nxlx/nxlx-kept-boot", "usr/local/lib/nxlx/kept.py")
+NEW_FOLDERS = ("usr/local/lib/nxlx",)           # made for them; taken away only if empty
+
+
+def remove_new_names(node):
+    """Remove NEW_NAMES (links and the unit file only; never a folder). Returns the ones removed."""
+    gone = []
+    for rel in NEW_NAMES:
+        path = node.p(rel)
+        try:
+            if os.path.islink(path) or os.path.isfile(path):
+                os.unlink(path)
+                gone.append(rel)
+        except OSError as e:
+            say("  NOT REMOVED  /%s: %s\n" % (rel, e))
+    for rel in NEW_FOLDERS:
+        try:
+            os.rmdir(node.p(rel))
+        except OSError:
+            pass
+    return gone
+
+
 def cmd_undo(node, force, auto):
     journal = Journal(node)
     if not journal.records():
@@ -1760,6 +1787,10 @@ def cmd_undo(node, force, auto):
                 say("  NOT UNDONE  %s: %s\n" % (r["text"], e))
                 if r["op"] == "user" and r.get("step") == 8:
                     stuck = r["new"]
+    only_second = bool(starts_in_window) and all(r.get("second_pass") for r in starts_in_window)
+    if not failed and not only_second:      # a second-pass-only undo leaves the node on the new names, with these in use
+        for rel in remove_new_names(node):
+            say("  removed  /%s (it has no old name)\n" % rel)
     disarm_undo(node, inside=auto)
     if not node.stage:
         sh(["systemctl", "daemon-reload"], check=False)
@@ -1767,7 +1798,6 @@ def cmd_undo(node, force, auto):
         for u in reversed(active):
             sh(["systemctl", "start", u], check=False)
     journal.write({"state": "undo-finished", "failed": failed})
-    only_second = bool(starts_in_window) and all(r.get("second_pass") for r in starts_in_window)
     say("%s The backup stays in /%s.\n" % (
         ("Undone: the variable and signing names are the old ones again (PVJ_*, pvj-release). This release does not "
          "read them: install the earlier release again before the node starts, or run --run again."

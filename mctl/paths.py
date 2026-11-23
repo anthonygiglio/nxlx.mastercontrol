@@ -52,6 +52,7 @@ PLAYER_STATE_DIR = "/var/lib/nxlx-player/late-screen"    # persistent, the playe
 WEB_DIR = RUN + "/web"
 NETD_DIR = RUN + "/netd"
 SYSD_DIR = "/run/nxlx-sysd"
+KEPT_STATUS = "/run/nxlx-kept.json"            # what the kept settings folder did at boot (mctl/kept.py, D148): written by root, read by nxlx-kept status
 SUPPORTD_DIR = "/run/nxlx-supportd"
 NDI_DIR = "/run/nxlx-ndi"
 NDI_PIPE_DIR = "/run/nxlx-ndi-pipe"
