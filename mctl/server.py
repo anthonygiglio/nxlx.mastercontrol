@@ -178,8 +178,14 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             who = self.client_address[0]
             parts = str(args[0]).split(" ") if args else []
             try:
-                if len(parts) > 1 and (parts[0], urlsplit(parts[1]).path) in NO_ADDRESS_LOG:
-                    who = "-"           # D147 addendum: the QR sticker's page and its send are logged without the sender's address
+                if len(parts) > 1:
+                    target = urlsplit(parts[1])
+                    # D147 addendum: the QR sticker's page, its send and the files that page loads are logged without the sender's
+                    # address. The page asks for the shared files with ?from=feedback (a Referer cannot tell: the page is served with
+                    # no-referrer); the type files come by the style sheet, so those lines never carry an address.
+                    if (parts[0], target.path) in NO_ADDRESS_LOG or target.path == "/feedback.js" or target.path.startswith("/fonts/") \
+                            or "feedback" in parse_qs(target.query).get("from", []):
+                        who = "-"
             except ValueError:
                 pass
             sys.stderr.write("%s %s\n" % (who, fmt % args))

@@ -2488,7 +2488,7 @@ class Api:
         except fb.TooFast as e:
             raise ApiError(429, "wait a few seconds before sending more", e.wait)
         except fb.Busy as e:
-            raise ApiError(429, fb.BUSY_TEXT, e.wait)
+            raise ApiError(429, str(e), e.wait)
         except OSError as e:
             raise ApiError(500, "could not save: %s" % (e.strerror or e))
         self.log("nxlx-web: feedback received: %s (sender's role: %s)" % (note["face"], role))
@@ -2533,7 +2533,7 @@ class Api:
             store.add(None, body["face"], text[:fb.TEXT_MAX], "visitor", None, node, self._feedback_playing())
         except fb.Busy as e:
             store.visitors.release(client)              # the node's share, not this sender's doing: no wait of its own
-            raise ApiError(429, fb.BUSY_TEXT, e.wait)
+            raise ApiError(429, str(e), e.wait)
         except OSError as e:
             store.visitors.release(client)
             raise ApiError(500, "could not save: %s" % (e.strerror or e))
@@ -2591,10 +2591,10 @@ class Api:
                             pass
             except Exception:
                 pass
-            info = getattr(self.https, "info", None) if self.https is not None else None
-            for a in ((info or {}).get("ips") or []):
+            # (a certificate's addresses count only when they are one of these now: a certificate can outlive an address)
+            for n in os.environ.get("NXLX_ALLOWED_HOSTS", "").split(","):
                 try:
-                    own.add(ipaddress.ip_address(str(a)))
+                    own.add(ipaddress.ip_address(n.strip()))        # an address the Owner allowed by hand
                 except ValueError:
                     pass
             return ip in own

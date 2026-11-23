@@ -3473,7 +3473,7 @@
           say(r.data.visitors ? 'People without a login can now send feedback from the sticker.' : 'Feedback from people without a login is switched off.');
           drawVisitors();
         });
-      }, 'Off until you switch it on. Anyone on the same network who scans the sticker can send a face and a few words, one note in 10 seconds and 10 in an hour from one phone. The note says "visitor" and keeps no address, and neither does the log of the node for it. Visitors have their own share of the limits of the node and at most half of the kept notes, so staff feedback is never crowded out.'));
+      }, 'Off until you switch it on. Anyone on the same network who scans the sticker can send a face and a few words, one note in 10 seconds and 10 in an hour from one phone. The note says "visitor" and keeps no address, and neither does the log of the node for it. Visitors have their own share of the limits of the node and at most half of the kept notes, and a visitor note never pushes a staff note out.'));
       visitorBox.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn', id: 'feedbackprint', text: 'Print the QR sticker', onclick: printSticker })));
     }
     function printSticker() {

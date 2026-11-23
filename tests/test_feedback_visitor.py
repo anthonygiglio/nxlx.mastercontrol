@@ -394,12 +394,19 @@ class StickerTest(VisitorBase):
         self.assertEqual(self.sticker("nxlx-node-01.local")[1]["url"], "https://nxlx-node-01.local:8443/feedback")
         self.assertEqual(self.sticker("192.168.0.169")[1]["url"], "http://192.168.0.169/feedback", "a host the certificate does not name stays http")
         self.assertEqual(self.sticker("studio.example")[1]["url"], "http://studio.example/feedback", "a name the certificate covers is the node's own")
-        self.assertEqual(self.sticker("192.168.0.50")[1]["url"], "http://192.168.0.50/feedback", "so is an address it covers")
+        st, out = self.sticker("192.168.0.50")
+        self.assertEqual((st, out.get("error")), (400, self.REFUSED), "an address only the certificate names may be stale: not the node's own")
 
     def test_the_allowed_host_names_of_the_owner_are_the_nodes_own(self):
         with mock.patch.dict(os.environ, {"NXLX_ALLOWED_HOSTS": "studio.example, localhost"}):
             self.assertEqual(self.sticker("studio.example")[1]["url"], "http://studio.example/feedback")
             self.assertEqual(self.sticker("localhost")[0], 400, "never localhost, even if it was listed")
+
+    def test_an_address_the_owner_allowed_by_hand_is_the_nodes_own(self):
+        self.assertEqual(self.sticker("192.168.5.5")[0], 400)
+        with mock.patch.dict(os.environ, {"NXLX_ALLOWED_HOSTS": "studio.example,192.168.5.5,127.0.0.1"}):
+            self.assertEqual(self.sticker("192.168.5.5:8080")[1]["url"], "http://192.168.5.5:8080/feedback")
+            self.assertEqual(self.sticker("127.0.0.1")[0], 400, "never loopback, even if it was listed")
 
     def test_anything_that_is_not_the_nodes_own_makes_no_sticker(self):
         for host in ("localhost", "localhost:8080", "localhost.", "LOCALHOST", "127.0.0.1", "127.0.0.1:8080", "127.1.2.3", "[::1]:8080", "[::1]",
@@ -517,6 +524,58 @@ class PageTest(VisitorBase):
         self.assertEqual(self.api.feedback.notes(), [])
 
 
+class FullListTest(VisitorBase):
+    def setUp(self):
+        super().setUp()
+        self.store = self.api.feedback
+        self.store.cap, self.store.visitor_cap = 10, 5
+        self.store.box_limits = self.store.visitor_limits = ()
+        self.on()
+
+    def staff(self, text):
+        self.clock.t += 6
+        self.assertEqual(self.h("POST", "/api/feedback", {"face": "good", "text": text}, self.live_dev)[0], 200)
+
+    def visitor(self, i):
+        self.clock.t += 1
+        return self.send({"face": "so-so", "text": "visitor %d" % i}, client="192.168.9.%d" % (i + 1))
+
+    def test_a_full_list_of_staff_notes_refuses_a_visitor_and_loses_nothing(self):
+        for i in range(10):
+            self.staff("staff %d" % i)
+        st, out = self.visitor(0)
+        self.assertEqual(st, 429, out)
+        self.assertIn("list of feedback is full", out["error"])
+        self.assertEqual(len(self.store.notes()), 10)
+        self.assertEqual(sorted(n["text"] for n in self.store.notes()), sorted("staff %d" % i for i in range(10)))
+        self.assertEqual(self.store.visitors.size(), 0, "the refused visitor was given back his turn")
+        with open(self.path, encoding="utf-8") as f:
+            self.assertEqual(len(json.load(f)["notes"]), 10)
+
+    def test_a_full_list_with_two_visitors_gives_a_visitor_note_the_oldest_visitor_slot(self):
+        self.assertEqual(self.visitor(0)[0], 200)
+        for i in range(4):
+            self.staff("early %d" % i)
+        self.assertEqual(self.visitor(1)[0], 200)
+        for i in range(4):
+            self.staff("late %d" % i)
+        self.assertEqual(len(self.store.notes()), 10)              # 8 staff and 2 visitors: full
+        self.assertEqual(self.visitor(2)[0], 200)
+        rows = self.store.notes()
+        self.assertEqual(len(rows), 10)
+        self.assertEqual(sorted(n["text"] for n in rows if n["role"] == "operator"), sorted(["early %d" % i for i in range(4)] + ["late %d" % i for i in range(4)]))
+        self.assertEqual(sorted(n["text"] for n in rows if n["role"] == "visitor"), ["visitor 1", "visitor 2"], "only the oldest visitor note went")
+
+    def test_a_staff_note_still_displaces_the_oldest_note_of_any_kind(self):
+        for i in range(10):
+            self.staff("staff %d" % i)
+        self.staff("newest")
+        texts = [n["text"] for n in self.store.notes()]
+        self.assertEqual(len(texts), 10)
+        self.assertIn("newest", texts)
+        self.assertNotIn("staff 0", texts)
+
+
 class LogAndTunnelTest(VisitorBase):
     def test_the_visitors_send_and_the_page_write_no_address_to_the_log(self):
         import io
@@ -535,6 +594,29 @@ class LogAndTunnelTest(VisitorBase):
         with mock.patch("sys.stderr", buf):                 # every other line keeps naming the address, as before
             self.raw("GET", "/api/status")
         self.assertIn("127.0.0.1", buf.getvalue())
+
+    def test_a_whole_page_load_logs_no_address_and_a_panel_load_still_does(self):
+        import io
+        self.on()
+        page = self.raw("GET", "/feedback")[1].decode()
+        assets = re.findall(r'(?:href|src)="(/[^"]+)"', page)
+        self.assertIn("/feedback.js", assets)
+        self.assertTrue(any(a.startswith("/app.css") for a in assets))
+        fonts = sorted(f for f in os.listdir(os.path.join(server.WEB_DIR, "fonts")) if f.endswith(".woff2"))[:1]
+        buf = io.StringIO()
+        with mock.patch("sys.stderr", buf):
+            for a in assets:
+                self.assertEqual(self.raw("GET", a)[0], 200, a)
+            for f in fonts:
+                self.assertEqual(self.raw("GET", "/fonts/" + f)[0], 200)
+            self.assertEqual(self.raw("POST", "/api/feedback/visitor", {"face": "good"})[0], 200)
+        self.assertGreaterEqual(len(buf.getvalue().splitlines()), len(assets) + 1)
+        self.assertNotIn("127.0.0.1", buf.getvalue())
+        buf = io.StringIO()
+        with mock.patch("sys.stderr", buf):                 # the panel's own page and files are logged as before
+            for a in ("/", "/app.css", "/app.js", "/theme.css", "/favicon.ico"):
+                self.raw("GET", a)
+        self.assertEqual(buf.getvalue().count("127.0.0.1"), 5)
 
     def test_the_page_and_the_send_are_refused_through_the_support_tunnel(self):
         self.on()

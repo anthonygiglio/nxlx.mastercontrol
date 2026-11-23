@@ -57,6 +57,13 @@ class Busy(Exception):
         self.wait = wait
 
 
+class ListFull(Busy):
+    """The list is full of notes a visitor may not displace (signed-in ones): the visitor's note is refused, nothing is stored."""
+    def __init__(self, wait=600):
+        super().__init__(wait)
+        self.args = ("The list of feedback is full just now; ask whoever runs the room",)
+
+
 class TooFast(Exception):
     """A send came before the gap was over. `wait` is the whole seconds to wait."""
     def __init__(self, wait, text="wait a few seconds before sending more"):
@@ -304,10 +311,17 @@ class FeedbackStore:
             if note is None:
                 raise ValueError("not a note")
             kept = self.items + [note]
-            if visitor:             # visitors hold at most half of the list: the oldest visitor note goes, never a signed-in one
-                at = [i for i, n in enumerate(kept) if n.get("role") == "visitor"]
-                for i in reversed(at[:max(0, len(at) - self.visitor_cap)]):
-                    del kept[i]
+            if visitor:
+                # a visitor's note may displace only a visitor's note: at most half of the list is visitors', and when the list is
+                # full the oldest visitor note makes room; with none to displace the note is refused (a signed-in one is never dropped)
+                at = [i for i, n in enumerate(self.items) if n.get("role") == "visitor"]
+                drop = at[:max(0, len(at) - self.visitor_cap + 1)]
+                if len(kept) - len(drop) > self.cap:
+                    rest = [i for i in at if i not in drop]
+                    if not rest:
+                        raise ListFull()
+                    drop.append(rest[0])
+                kept = [n for i, n in enumerate(kept) if i not in set(drop)]
             items, blob = self._fit(kept[-self.cap:])
             if not self._write(blob):
                 raise OSError("could not save the note")
