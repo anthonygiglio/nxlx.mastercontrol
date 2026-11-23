@@ -41,6 +41,7 @@ DEFAULT_RESULT = paths.UPDATE_RESULT     # what the panel's Updates card reads (
 _VERSION = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 
 
+NO_PREVIOUS = "there is no previous release to go back to"
 SCRATCH_PREFIX = ".update-"
 SCRATCH_NAME = re.compile(r"\.update-[a-z0-9_]{8}")     # what tempfile.mkdtemp(prefix=SCRATCH_PREFIX) makes
 
@@ -359,7 +360,7 @@ class Updater:
             return None
 
     # --- backups --------------------------------------------------------
-    def backup_settings(self, version, log=print):
+    def backup_settings(self, version, log=print, prune=True):
         """Copy settings.json into the root-only backups folder. settings.json is the panel's file: it is read without
         following a link (a link, a pipe or a device there means no backup, not a copy of what it points to), and the
         copy is made with O_EXCL inside the folder that was opened and checked, so no planted name can redirect it."""
@@ -381,25 +382,45 @@ class Updater:
                 if not self.BACKUP_NAME.fullmatch(name):
                     raise UpdateError("not a version that can be backed up: %r" % version)
                 self._write_new(bfd, name, data, 0o600)
-                old = []
-                for entry in os.listdir(bfd):
-                    if self.BACKUP_NAME.fullmatch(entry):
-                        try:
-                            st = os.lstat(entry, dir_fd=bfd)
-                        except OSError:
-                            continue
-                        if stat.S_ISREG(st.st_mode):
-                            old.append((st.st_mtime, entry))
-                for _mtime, entry in sorted(old)[:-KEEP_BACKUPS]:
-                    try:
-                        os.unlink(entry, dir_fd=bfd)
-                    except OSError:
-                        pass
+                if prune:
+                    self._prune_in(bfd)
             finally:
                 os.close(bfd)
         finally:
             os.close(state_fd)
         return os.path.join(self.backup_dir(), name)
+
+    def _prune_in(self, bfd):
+        old = []
+        for entry in os.listdir(bfd):
+            if self.BACKUP_NAME.fullmatch(entry):
+                try:
+                    st = os.lstat(entry, dir_fd=bfd)
+                except OSError:
+                    continue
+                if stat.S_ISREG(st.st_mode):
+                    old.append((st.st_mtime, entry))
+        for _mtime, entry in sorted(old)[:-KEEP_BACKUPS]:
+            try:
+                os.unlink(entry, dir_fd=bfd)
+            except OSError:
+                pass
+
+    def _tidy_backups(self, remove=None):
+        """Best effort, in root's folder: take `remove` (a copy this updater made, by path) away, or keep only the newest copies."""
+        bfd = self._open_backups()
+        if bfd is None:
+            return
+        try:
+            if remove:
+                try:
+                    os.unlink(os.path.basename(remove), dir_fd=bfd)
+                except OSError:
+                    pass
+            else:
+                self._prune_in(bfd)
+        finally:
+            os.close(bfd)
 
     @staticmethod
     def _write_new(dir_fd, name, data, mode, owner=None):
@@ -856,28 +877,88 @@ class Updater:
     def _settings_note(self):
         return "; the settings could not be put back (%s) and stay as they are" % self.settings_problem if self.settings_problem else ""
 
-    def rollback(self, log=print):
-        self.require_writable_root()
-        self.settings_problem = None
-        st = self.status()
+    def _rollback_problem(self, st):
+        """Why there is nothing to go back to, in plain words, or None. The panel asks the same question before it shows the
+        button, and rollback() asks it again as root: one place for the words."""
         target = st["previous"]
-        if not target or not os.path.isdir(self.real("%s/releases/%s" % (self.prefix, target))):
-            raise UpdateError("there is no previous release to go back to")
+        if not target or not _VERSION.match(target) or not os.path.isdir(self.real("%s/releases/%s" % (self.prefix, target))):
+            return NO_PREVIOUS
         # The release before the rename of the system names runs only under the old names (pvj-* units, accounts and
         # folders): switching "current" to it would leave every unit without its program. The converter's undo goes
         # back to it, and puts the old names back with it.
         if not os.path.isfile(self.real("%s/releases/%s/bin/nxlx-web" % (self.prefix, target))):
-            raise UpdateError("the previous release %s is from before the rename of the system names (pvj to nxlx) "
-                              "and does not run under them; to go back to it: sudo nxlx-convert --undo" % target)
+            return ("the previous release %s is from before the rename of the system names (pvj to nxlx) "
+                    "and does not run under them; to go back to it: sudo nxlx-convert --undo" % target)
+        return None
+
+    def _release_view(self, version):
+        if not version:
+            return None
+        try:
+            date = int(os.stat(self.real("%s/releases/%s" % (self.prefix, version))).st_mtime)     # when it was put on the node
+        except OSError:
+            date = None
+        return {"version": version, "date": date}
+
+    def rollback_view(self):
+        """What the panel shows before a rollback (read only, no root needed): the release that runs, the one before it
+        with the day it was installed, and `refusal`, the reason there is nothing to go back to (None when there is).
+        The read-only system disk is not asked here: the panel has that answer already."""
+        st = self.status()
+        problem = self._rollback_problem(st)
+        prev = None if problem == NO_PREVIOUS else self._release_view(st["previous"])
+        return {"current": self._release_view(st["current"]), "previous": prev, "refusal": problem}
+
+    def rollback(self, log=print, expect=None):
+        """Go back to the previous release. `expect` is the version the person was shown and confirmed (the panel): if the
+        previous release is another one by now (an update ran in between), nothing is done."""
+        self.require_writable_root()
+        self.settings_problem = None
+        st = self.status()
+        problem = self._rollback_problem(st)
+        if problem:
+            raise UpdateError(problem)
+        target = st["previous"]
+        if expect is not None and expect != target:
+            raise UpdateError("the release before this one is %s now, not %s as was shown; look at the Updates card again" % (target, expect))
         log("rolling back %s -> %s" % (st["current"], target))
         self.migrate_legacy_state()
+        # A copy of today's settings first, in root's folder, so that a going back that does not work can return to
+        # what the node had (the way an update that does not come up returns). Not being able to make it never stops
+        # the rollback by hand: then the settings simply stay as the rollback leaves them.
+        forward = None
+        if st["current"]:
+            try:
+                forward = self.backup_settings(st["current"], log=log, prune=False)     # not pruned now: it must not push the target's copy out
+            except (UpdateError, OSError) as e:
+                log("the settings could not be copied before going back (%s)" % (getattr(e, "strerror", None) or e))
+        previous_before = self._read_previous()
         backup = self.latest_backup(target)
         if backup is None:
             # Normal after a factory reset, which removes every saved copy (J-055): the program goes back, the settings stay as they are.
             log("there is no saved copy of the settings for %s (a factory reset removes them), so the settings stay as they are" % target)
         self._switch_to(target, backup, current=st["current"], log=log)
         if not self._health():
-            raise UpdateError("rolled back, but the panel did not answer; check the services%s" % self._settings_note())
+            if not st["current"]:
+                raise UpdateError("rolled back, but the panel did not answer; check the services%s" % self._settings_note())
+            log("the panel did not answer after going back; returning to %s" % st["current"])
+            self.settings_problem = None
+            try:
+                self._switch_to(st["current"], forward, log=log)
+            except Exception as e:          # the way forward failed too: say so plainly, and keep the note true
+                self._restore_previous(previous_before)
+                raise UpdateError("Going back did not work, and returning to %s did not work either (%s); the node may still be on %s. Check the services"
+                                  % (st["current"], getattr(e, "strerror", None) or e, target))
+            self._restore_previous(previous_before)         # going back that did not work leaves the history as it was
+            if forward is None:
+                note = "; the settings from before going back could not be kept, so they stay as going back left them (the older ones)"
+            else:
+                note = self._settings_note()
+                self._tidy_backups(remove=forward)          # the copy was only for this return
+            again = "" if self._health() else "; the panel did not answer after that either, check the services"
+            raise UpdateError("Going back did not work; the node returned to %s%s%s" % (st["current"], note, again))
+        if forward:
+            self._tidy_backups()                            # the copy stays (it is what Go back to the newer release restores); only now are the oldest pushed out
         return target
 
     def _switch_to(self, version, backup, current=None, log=print):
@@ -1020,8 +1101,11 @@ def main(argv=None):
         p.add_argument("--result", help="write the progress and outcome as JSON here (for the panel)")
         p.add_argument("--version", help="only this version (what the person confirmed in the panel)")
     p = sub.add_parser("finish", help="mark an unfinished panel update as failed (the unit's ExecStopPost)")
+    p.add_argument("--action", choices=["rollback"], help="the unfinished job was a rollback, not an update")
     p.add_argument("--result", required=True)
-    sub.add_parser("rollback")
+    p = sub.add_parser("rollback", help="go back to the previous release")
+    p.add_argument("--result", help="write the progress and outcome as JSON here (for the panel)")
+    p.add_argument("--version", help="only if the previous release is this one (what the person confirmed in the panel)")
     args = ap.parse_args(argv)
     if args.cmd != "status" and os.geteuid() != 0:
         print("nxlx-update: run as root (sudo)", file=sys.stderr)
@@ -1038,6 +1122,8 @@ def main(argv=None):
         if not result:
             return
         data = {"state": state, "message": message, "version": version, "at": int(time.time())}
+        if args.cmd == "rollback" or getattr(args, "action", None) == "rollback":
+            data["action"] = "rollback"       # the panel says "going back", not "update", and the event log too
         tmp = result + ".tmp"
         try:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
@@ -1054,7 +1140,7 @@ def main(argv=None):
         try:
             with open(result) as f:
                 if json.load(f).get("state") == "running":
-                    report("failed", "the update stopped before it finished")
+                    report("failed", "going back stopped before it finished" if args.action == "rollback" else "the update stopped before it finished")
         except (OSError, ValueError):
             pass
         return 0
@@ -1115,7 +1201,11 @@ def main(argv=None):
                     u.clear_inbox(inbox)
                     os.close(inbox)
         elif args.cmd == "rollback":
-            version = u.rollback()
+            if args.version is not None and not _VERSION.match(args.version):
+                raise UpdateError("not a version: %s" % args.version)
+            report("running", "going back to the previous release")
+            # from a terminal (no --version) it is the call it always was; from the panel it names the release that was shown
+            version = u.rollback() if args.version is None else u.rollback(log=log, expect=args.version)
             note = (getattr(u, "_settings_note", None) or (lambda: ""))()
             report("done", "rolled back to %s%s" % (version, note), version)
     except UpdateError as e:

@@ -244,6 +244,8 @@ ROWS = {
     ("GET", "/api/system/update"): KINDS["owner"],
     ("POST", "/api/system/update"): KINDS["owner"],
     ("POST", "/api/system/update/upload"): KINDS["owner"],
+    # going back to the release before this one (J-057, D150): the Owner's, and never through the support tunnel (support.REMOTE_DENY)
+    ("POST", "/api/system/update/rollback"): STUDIO("owner"),
     ("POST", "/api/pin/rotate"): STUDIO("owner"),
     ("POST", "/api/pin/unlock"): STUDIO("owner"),
     ("POST", "/api/pin/show"): STUDIO("owner"),

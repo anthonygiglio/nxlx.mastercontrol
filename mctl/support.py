@@ -101,6 +101,10 @@ REMOTE_DENY = {
     # the time zone (J-129): the hour every schedule entry fires at. A helper may read it; the Owner sets it, and a zone
     # picked from afar would move a show's start by hours with nobody in the room to notice
     ("POST", "/api/timezone"): "the node's time zone moves every schedule entry; the owner sets it at the studio",
+    # going back to the release before this one (J-057, D150): an update can be sent through the tunnel (signed, and nothing in it outlives
+    # the helper's say-so), but a rollback puts the old settings copy back: the PIN, the paired devices and the support switch as they were
+    # then, which can let in a device the owner has removed since, or shut out one he added. Someone at the studio does it, and sees the room.
+    ("POST", "/api/system/update/rollback"): "going back to the previous release puts old settings back; the owner does that at the studio",
     # a reset removes every paired device, the owner's too (see boxcare.py)
     ("POST", "/api/system/factory-reset"): "a reset removes every device, the owner's too",
 }

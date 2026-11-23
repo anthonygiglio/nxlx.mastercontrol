@@ -26,6 +26,9 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
   could bring back (old devices, passwords, pairings). No path or name comes from the caller;
 * update: start nxlx-update-usb@V.service or nxlx-update-inbox@V.service (fixed template units, V a checked version: nxlx-update checks the signature,
   refuses older versions and rolls back by itself).
+* rollback (J-057): start nxlx-update-rollback@V.service (a fixed template unit; V is the previous release the person was shown): the
+  updater's own rollback, which refuses where it refuses by hand (read-only system disk, no previous release, a release from before the
+  rename, another update running) and reports in the same progress file as an update.
 
 It holds no capabilities of its own (systemd and timedated do the work), and OSC, MIDI and DMX cannot reach it.
 """
@@ -48,7 +51,7 @@ MAX_EPOCH = 2082758400      # 2036-01-01: a phone set to a far future year would
                             # clock and never moves it back), so such a date is refused, not set
 JOURNAL_UNITS = ("nxlx-web.service", "nxlx-player.service", "nxlx-sysd.service", "nxlx-netd.service", "nxlx-supportd.service",
                  "nxlx-sound.service", "nxlx-link.service", "nxlx-ndi*.service", "nxlx-update-usb@*.service",
-                 "nxlx-update-inbox@*.service", "nxlx-usb@*.service")      # the node's own, a fixed list: nothing else is asked for
+                 "nxlx-update-inbox@*.service", "nxlx-update-rollback@*.service", "nxlx-usb@*.service")      # the node's own, a fixed list: nothing else is asked for
 JOURNAL_LINES, JOURNAL_LINES_MAX = 300, 500
 JOURNAL_HOURS, JOURNAL_HOURS_MAX = 24, 24 * 7
 JOURNAL_LINE_MAX = 400
@@ -293,15 +296,37 @@ class SysService:
         if not isinstance(version, str) or not self.UPDATE_VERSION.fullmatch(version):
             return {"ok": False, "error": "version must look like 1.2.3"}
         with self.lock:                       # two requests at once must not both see "nothing running"
-            code, out = self._run(["systemctl", "list-units", "--plain", "--no-legend", "--state=active,activating",
-                                   "nxlx-update-usb@*.service", "nxlx-update-inbox@*.service"])
-            if code != 0 or out.strip():
+            if self._update_unit_active():
                 return {"ok": False, "error": "an update is already running"}
             code, out = self._run(["systemctl", "start", "--no-block", "nxlx-update-%s@%s.service" % (source, version)])
         if code != 0:
             return {"ok": False, "error": "could not start the update: %s" % out.strip()[-160:]}
         self.log("nxlx-sysd: update to %s from %s started by the panel" % (version, source))
         return {"ok": True, "started": source, "version": version}
+
+    UPDATE_UNITS = ("nxlx-update-usb@*.service", "nxlx-update-inbox@*.service", "nxlx-update-rollback@*.service")
+
+    def _update_unit_active(self):
+        """True when an update or a rollback unit is running now, or when that cannot be told (then nothing is started)."""
+        code, out = self._run(["systemctl", "list-units", "--plain", "--no-legend", "--state=active,activating", *self.UPDATE_UNITS])
+        return code != 0 or bool(out.strip())
+
+    def rollback(self, version):
+        """Start nxlx-update-rollback@<version>.service, a fixed template unit (J-057): the same `nxlx-update rollback` a person
+        runs from a terminal, with the version the panel showed and the person confirmed, so that it does nothing when the previous
+        release is another one by now. It refuses by itself where the updater refuses (a read-only system disk, no previous
+        release, a release from before the rename, another update running) and says why in the progress file the panel reads.
+        Only a version that is three numbers reaches systemctl."""
+        if not isinstance(version, str) or not self.UPDATE_VERSION.fullmatch(version):
+            return {"ok": False, "error": "version must look like 1.2.3"}
+        with self.lock:
+            if self._update_unit_active():
+                return {"ok": False, "error": "an update is already running"}
+            code, out = self._run(["systemctl", "start", "--no-block", "nxlx-update-rollback@%s.service" % version])
+        if code != 0:
+            return {"ok": False, "error": "could not start the rollback: %s" % out.strip()[-160:]}
+        self.log("nxlx-sysd: rollback to %s started by the panel" % version)
+        return {"ok": True, "started": "rollback", "version": version}
 
     # --- the update backups (J-055) ----------------------------------------------------------------------------------
     backup_folder = paths.ROOT_STATE_DIR     # root's own folder (J-178), not inside the panel's state folder
@@ -464,6 +489,8 @@ class SysService:
             return self.set_timezone(message.get("zone"))
         if cmd == "update":
             return self.update(message.get("source"), message.get("version"))
+        if cmd == "rollback":
+            return self.rollback(message.get("version"))
         if cmd == "av_output":
             return self.av_output(message.get("enable"), message.get("norm"))
         if cmd == "journal":

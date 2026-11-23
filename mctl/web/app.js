@@ -5454,6 +5454,29 @@
           });
         }, control);
     }
+    // Going back to the release before this one (J-057): the Owner's, asked in place, done as root by the updater. The refusals
+    // are the node's own words (d.rollback.refusal), shown where the button would be.
+    function day(t) { return t ? new Date(t * 1000).toLocaleDateString() : ''; }
+    function goBack(rb) {
+      var prev = rb.previous, cur = rb.current;
+      var box = h('div', { class: 'list sp', id: 'updaterollback' }, h('div', { class: 'state', id: 'rollbackstate',
+        text: prev ? 'The release before this one is version ' + prev.version + (prev.date ? ', installed around ' + day(prev.date) : '') + '.' : 'There is no earlier release on this node.' }));
+      if (rb.refusal) box.appendChild(h('div', { class: 'hint warn', id: 'rollbackwhy', text: rb.refusal }));
+      if (prev) box.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'rollbackgo', text: 'Go back to ' + prev.version, disabled: !!rb.refusal,
+        onclick: function (e) {
+          confirmRow('Go back to version ' + prev.version + (cur ? ' from ' + cur.version : '') + '? The node restarts its services and plays again in about a minute, so the picture stops for that time. ' +
+            'Your settings, the paired devices and the PIN go back to the copy the node saved when it last left version ' + prev.version + ' (just before ' + (cur ? cur.version : 'the last update') + ' was installed' + (cur && cur.date ? ', around ' + day(cur.date) : '') + ', or, after you went back once, just before you did), if it kept a copy. A phone paired since then, maybe this one, has to pair again with the PIN. Anything you changed since is set aside in a file, not deleted. If this does not work the node returns to ' + (cur ? cur.version : 'where it was') + ' and says why here.',
+            'Go back', 'Not now', function () {
+              act('POST', '/api/system/update/rollback', { version: prev.version, confirm: 'rollback' }, function () {
+                say('Going back to ' + prev.version + '. The node restarts; this page comes back by itself.');
+                startedAt = Date.now();
+                watchUntil = startedAt + 10 * 60 * 1000;
+                later();
+              });
+            }, e.currentTarget, null, 30000);
+        } })));
+      return box;
+    }
     function row(name, state, problem, id, go) {
       return listRow({ cls: 'update-entry', name: name, state: state, problem: problem,
         primary: h('button', { class: 'btn on pri', id: id, text: 'Install', disabled: !!roLocked, onclick: function (e) { go(e.currentTarget); } }) });
@@ -5466,7 +5489,8 @@
       body.appendChild(h('div', { class: 'state', id: 'updateversion', text: 'Version ' + d.version + ' is installed. ' + (waiting ? 'An update is waiting below.' : 'No update is waiting.') }));
       var last = d.last;
       if (last) {
-        var words = { running: 'Updating: ', done: 'Last update: ', failed: 'Last update failed: ' };
+        var words = last.action === 'rollback' ? { running: 'Going back: ', done: 'Last rollback: ', failed: 'Going back failed: ' }
+          : { running: 'Updating: ', done: 'Last update: ', failed: 'Last update failed: ' };
         body.appendChild(h('div', { class: last.state === 'failed' ? 'hint warn' : 'hint', id: 'updatelast', text: (words[last.state] || '') + last.message + (last.at ? ' (' + new Date(last.at * 1000).toLocaleString() + ')' : '') }));
         if (last.state === 'running') watchUntil = Math.max(watchUntil, Date.now() + 60 * 1000);
         else if (startedAt && last.at && last.at * 1000 >= startedAt - 5000) watchUntil = 0;   // the update we started has ended
@@ -5503,6 +5527,7 @@
       });
       body.appendChild(pick);
       body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'updateupload', text: 'Upload an update', disabled: roLocked, onclick: function () { pick.click(); } })));
+      if (d.rollback) body.appendChild(goBack(d.rollback));
       body.appendChild(h('details', { class: 'fold', id: 'updatehow' }, h('summary', { text: 'How to get an update' }), h('div', { class: 'list sp' },
         h('div', { class: 'hint', text: 'An update is two files with the same name: nxlx-N.N.N.tar.gz and nxlx-N.N.N.tar.gz.sig (N.N.N is the version). A .sha256 file may come with them and is optional.' }),
         h('div', { class: 'hint', text: 'From a USB stick: put both files in a folder named nxlx-update on the stick, plug it into the node, and the version shows here.' }),

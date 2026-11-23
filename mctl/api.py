@@ -2417,7 +2417,8 @@ class Api:
             last = self._update_result()
             if last and last.get("state") in ("done", "failed") and log.update_seen(last.get("at")):
                 ok = last["state"] == "done"
-                self.event("update", ("Update finished: %s" if ok else "Update failed: %s") % (last.get("message") or last["state"]), urgent=not ok)
+                what = "Going back" if last.get("action") == "rollback" else "Update"
+                self.event("update", ("%s finished: %s" if ok else "%s failed: %s") % (what, last.get("message") or last["state"]), urgent=not ok)
             rep = self.renderer.report() if self.renderer is not None else None
             if rep and rep["drawing"] == "classic" and rep["why"] and self.renderer.saved()["use"] == "new":
                 key = (rep["pid"], rep["why"])
@@ -2506,7 +2507,55 @@ class Api:
             last = None         # it says "updated to X", but X is not what runs now (a rollback from a terminal)
         ro = self._read_only_root()
         return {"version": __version__, "usb": usb, "inbox": inbox, "last": last,
-                "read_only_root": ro, "read_only_message": rootfs.UPDATE_REFUSAL if ro else ""}
+                "read_only_root": ro, "read_only_message": rootfs.UPDATE_REFUSAL if ro else "",
+                "rollback": self._rollback_view(ro)}
+
+    ROLLBACK_RO = ("The system disk is read-only (power-loss protection is on), so going back would be lost at the next restart. "
+                   "Turn it off with: sudo nxlx-rootfs disable, restart, go back, then sudo nxlx-rootfs enable and restart.")
+
+    def _updater(self):
+        """The updater that reads this node's release folders (a test puts its own here)."""
+        from . import update
+        return update.Updater()
+
+    def _rollback_view(self, read_only):
+        """What the Updates card shows for a rollback: the release that runs, the one before it (version and the day it was put
+        on the node), and `refusal`, plain words for why the button cannot be used now (None when it can)."""
+        try:
+            view = self._updater().rollback_view()
+        except Exception as e:                  # a folder that cannot be read is a reason, never an error page
+            view = {"current": None, "previous": None, "refusal": "the node's releases could not be read (%s)" % (getattr(e, "strerror", None) or e)}
+        refusal = view["refusal"]
+        if refusal:
+            refusal = refusal[:1].upper() + refusal[1:] + "."
+        elif read_only:
+            refusal = self.ROLLBACK_RO
+        elif self._update_running():
+            refusal = "An update or a rollback is running; go back when it has finished."
+        elif self._care_busy:
+            refusal = "%s is running; go back when it has finished." % self._care_busy
+        view["refusal"] = refusal
+        return view
+
+    def start_rollback(self, body, device, client):
+        """{"version": "N.N.N", "confirm": "rollback"}: nxlx-sysd starts the fixed rollback unit as root (J-057), for exactly the previous
+        release the Owner was shown. Nothing here runs as root. The refusals are the card's, in the same words, as a 409."""
+        if body.get("confirm") != "rollback":
+            raise bad('send {"confirm": "rollback"}')
+        version = body.get("version")
+        if not isinstance(version, str) or not re.fullmatch(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}", version):
+            raise bad("version must look like 1.2.3")
+        with self._import_lock:                  # asked and started in one step, as an update is
+            view = self._rollback_view(self._read_only_root())
+            if view["refusal"]:
+                raise ApiError(409, view["refusal"])
+            if not view["previous"] or view["previous"]["version"] != version:
+                shown = view["previous"]["version"] if view["previous"] else "none"
+                raise ApiError(409, "The release before this one is %s now, not %s. Look at the card again." % (shown, version))
+            self._sysd({"cmd": "rollback", "version": version})
+        role = policy.NAMES.get((device or {}).get("role"), "Owner")            # the role, never the device's name
+        self.event("update", "A rollback to version %s was started by an %s." % (version, role), role, urgent=True)
+        return {"started": "rollback", "version": version}
 
     def start_update(self, body, device, client):
         """{"source": "usb" | "inbox", "version": "N.N.N", "confirm": "update"}: nxlx-sysd starts a fixed update unit
@@ -6098,6 +6147,7 @@ class Api:
             ("POST", "/api/timezone"): ("full", self.set_timezone),
             ("GET", "/api/system/update"): ("full", self.update_status),
             ("POST", "/api/system/update"): ("full", self.start_update),
+            ("POST", "/api/system/update/rollback"): ("full", self.start_rollback),      # J-057, D150: the Owner's, at the studio (support.REMOTE_DENY)
             ("POST", "/api/mix"): ("live", self.set_mix),
             # live, not full: a presenter may handle the GUEST code. Each handler checks the role again per action.
             ("GET", "/api/access"): ("live", self.get_access),

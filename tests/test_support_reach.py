@@ -68,6 +68,8 @@ REFUSED = {
     ("POST", "/api/handover/ticket"),
     # the node's time zone (D141): it moves every schedule entry, so it is set by the Owner in the room
     ("POST", "/api/timezone"),
+    # going back to the release before this one (J-057, D150): it puts the old settings copy back, so it is done at the studio
+    ("POST", "/api/system/update/rollback"),
 }
 # and one module's switch, which the table of routes holds only as /api/modules/*
 REFUSED_MODULES = {("POST", "/api/modules/ndi-discovery")}
