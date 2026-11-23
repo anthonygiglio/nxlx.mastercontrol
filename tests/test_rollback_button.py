@@ -158,6 +158,72 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(f.read(), up["1.1.0"])                                     # the settings it had are back
         self.assertEqual(len(self.restarts), 2)                                       # back, then forward again
 
+    def forward_node(self, many=0):
+        root = make_root()
+        self.addCleanup(shutil.rmtree, root, True)
+        with open(os.path.join(root, "var/lib/nxlx/settings.json"), "w") as f:
+            f.write("new settings" + chr(10))
+        folder = os.path.join(root, "var/lib/nxlx-update")
+        os.makedirs(folder, mode=0o700)
+        target = os.path.join(folder, "settings-1.0.0-1000.json")
+        with open(target, "w") as f:
+            f.write("old settings" + chr(10))
+        os.utime(target, (1000, 1000))
+        for i in range(many):           # other copies, all newer than the target's
+            other = os.path.join(folder, "settings-0.5.%d-%d.json" % (i, 2000 + i))
+            with open(other, "w") as f:
+                f.write("x")
+            os.utime(other, (2000 + i, 2000 + i))
+        return root, folder
+
+    def updater_for(self, root, health, restart=None):
+        return Updater(root=root, rootfs_state=NORMAL, restart=restart or (lambda: self.restarts.append(1)), health=health,
+                       root_state_dir="/var/lib/nxlx-update")
+
+    def test_when_the_settings_could_not_be_copied_first_the_return_says_the_older_ones_stay(self):
+        root, folder = self.forward_node()
+        healthy = iter([False, True])
+        u = self.updater_for(root, lambda: next(healthy))
+        with mock.patch.object(Updater, "backup_settings", side_effect=UpdateError("no room")):
+            with self.assertRaises(UpdateError) as e:
+                u.rollback(log=lambda *_: None, expect="1.0.0")
+        self.assertIn("the node returned to 1.1.0", str(e.exception))
+        self.assertIn("could not be kept, so they stay as going back left them (the older ones)", str(e.exception))
+
+    def test_the_copy_made_before_going_back_does_not_push_out_the_targets_copy_and_is_cleaned_up_after_a_return(self):
+        root, folder = self.forward_node(many=4)           # five copies already: the target's is the oldest
+        healthy = iter([False, True])
+        u = self.updater_for(root, lambda: next(healthy))
+        before = sorted(n for n in os.listdir(folder) if n != "migrated")
+        with self.assertRaises(UpdateError):
+            u.rollback(log=lambda *_: None, expect="1.0.0")
+        self.assertEqual(sorted(n for n in os.listdir(folder) if n != "migrated"), before)          # the target's copy was used, the forward copy is gone, nothing pruned
+        # a going back that works keeps the copy (it is what going to the newer release restores), and then prunes to five
+        root, folder = self.forward_node(many=4)
+        u = self.updater_for(root, lambda: True)
+        self.assertEqual(u.rollback(log=lambda *_: None, expect="1.0.0"), "1.0.0")
+        left = [n for n in os.listdir(folder) if n != "migrated"]        # the marker the move out of the panel's folder leaves
+        self.assertEqual(len(left), 5)
+        self.assertNotIn("settings-1.0.0-1000.json", left)            # the oldest, only now
+        self.assertTrue(any(n.startswith("settings-1.1.0-") for n in left))
+
+    def test_when_returning_fails_too_the_note_is_put_back_and_it_is_said_plainly(self):
+        root, folder = self.forward_node()
+        calls = []
+
+        def restart():
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError(5, "Input/output error")
+        u = self.updater_for(root, lambda: False, restart)
+        with open(os.path.join(root, "opt/nxlx/previous")) as f:
+            note = f.read()
+        with self.assertRaises(UpdateError) as e:
+            u.rollback(log=lambda *_: None, expect="1.0.0")
+        self.assertIn("returning to 1.1.0 did not work either (Input/output error)", str(e.exception))
+        with open(os.path.join(root, "opt/nxlx/previous")) as f:
+            self.assertEqual(f.read(), note)                          # still names 1.0.0, not the release it points at
+
     def test_it_reports_running_then_done_as_a_rollback(self):
         seen = []
         real = update.json.dump
@@ -450,7 +516,7 @@ class CardTest(unittest.TestCase):
         self.assertIn("confirmRow(", block)
         self.assertNotIn("confirm(", block.replace("confirmRow(", ""))
         for words in ("restarts its services", "plays again in about a minute", "set aside in a file, not deleted", "paired devices and the PIN",
-                      "has to pair again with the PIN", "installed around", "the node returns to", "'/api/system/update/rollback'", "confirm: 'rollback'"):
+                      "has to pair again with the PIN", "installed around", "the node returns to", "when it last left version", "'/api/system/update/rollback'", "confirm: 'rollback'"):
             self.assertIn(words, block)
         self.assertIn("rb.refusal", block)
         self.assertIn("if (d.rollback) body.appendChild(goBack(d.rollback));", self.js)

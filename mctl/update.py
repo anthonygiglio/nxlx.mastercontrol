@@ -360,7 +360,7 @@ class Updater:
             return None
 
     # --- backups --------------------------------------------------------
-    def backup_settings(self, version, log=print):
+    def backup_settings(self, version, log=print, prune=True):
         """Copy settings.json into the root-only backups folder. settings.json is the panel's file: it is read without
         following a link (a link, a pipe or a device there means no backup, not a copy of what it points to), and the
         copy is made with O_EXCL inside the folder that was opened and checked, so no planted name can redirect it."""
@@ -382,25 +382,45 @@ class Updater:
                 if not self.BACKUP_NAME.fullmatch(name):
                     raise UpdateError("not a version that can be backed up: %r" % version)
                 self._write_new(bfd, name, data, 0o600)
-                old = []
-                for entry in os.listdir(bfd):
-                    if self.BACKUP_NAME.fullmatch(entry):
-                        try:
-                            st = os.lstat(entry, dir_fd=bfd)
-                        except OSError:
-                            continue
-                        if stat.S_ISREG(st.st_mode):
-                            old.append((st.st_mtime, entry))
-                for _mtime, entry in sorted(old)[:-KEEP_BACKUPS]:
-                    try:
-                        os.unlink(entry, dir_fd=bfd)
-                    except OSError:
-                        pass
+                if prune:
+                    self._prune_in(bfd)
             finally:
                 os.close(bfd)
         finally:
             os.close(state_fd)
         return os.path.join(self.backup_dir(), name)
+
+    def _prune_in(self, bfd):
+        old = []
+        for entry in os.listdir(bfd):
+            if self.BACKUP_NAME.fullmatch(entry):
+                try:
+                    st = os.lstat(entry, dir_fd=bfd)
+                except OSError:
+                    continue
+                if stat.S_ISREG(st.st_mode):
+                    old.append((st.st_mtime, entry))
+        for _mtime, entry in sorted(old)[:-KEEP_BACKUPS]:
+            try:
+                os.unlink(entry, dir_fd=bfd)
+            except OSError:
+                pass
+
+    def _tidy_backups(self, remove=None):
+        """Best effort, in root's folder: take `remove` (a copy this updater made, by path) away, or keep only the newest copies."""
+        bfd = self._open_backups()
+        if bfd is None:
+            return
+        try:
+            if remove:
+                try:
+                    os.unlink(os.path.basename(remove), dir_fd=bfd)
+                except OSError:
+                    pass
+            else:
+                self._prune_in(bfd)
+        finally:
+            os.close(bfd)
 
     @staticmethod
     def _write_new(dir_fd, name, data, mode, owner=None):
@@ -909,11 +929,11 @@ class Updater:
         forward = None
         if st["current"]:
             try:
-                forward = self.backup_settings(st["current"], log=log)
+                forward = self.backup_settings(st["current"], log=log, prune=False)     # not pruned now: it must not push the target's copy out
             except (UpdateError, OSError) as e:
                 log("the settings could not be copied before going back (%s)" % (getattr(e, "strerror", None) or e))
         previous_before = self._read_previous()
-        backup = self.latest_backup(target)      # after the copy above: it may have pushed the oldest copy out
+        backup = self.latest_backup(target)
         if backup is None:
             # Normal after a factory reset, which removes every saved copy (J-055): the program goes back, the settings stay as they are.
             log("there is no saved copy of the settings for %s (a factory reset removes them), so the settings stay as they are" % target)
@@ -923,10 +943,22 @@ class Updater:
                 raise UpdateError("rolled back, but the panel did not answer; check the services%s" % self._settings_note())
             log("the panel did not answer after going back; returning to %s" % st["current"])
             self.settings_problem = None
-            self._switch_to(st["current"], forward, log=log)
+            try:
+                self._switch_to(st["current"], forward, log=log)
+            except Exception as e:          # the way forward failed too: say so plainly, and keep the note true
+                self._restore_previous(previous_before)
+                raise UpdateError("Going back did not work, and returning to %s did not work either (%s); the node may still be on %s. Check the services"
+                                  % (st["current"], getattr(e, "strerror", None) or e, target))
             self._restore_previous(previous_before)         # going back that did not work leaves the history as it was
+            if forward is None:
+                note = "; the settings from before going back could not be kept, so they stay as going back left them (the older ones)"
+            else:
+                note = self._settings_note()
+                self._tidy_backups(remove=forward)          # the copy was only for this return
             again = "" if self._health() else "; the panel did not answer after that either, check the services"
-            raise UpdateError("Going back did not work; the node returned to %s%s%s" % (st["current"], self._settings_note(), again))
+            raise UpdateError("Going back did not work; the node returned to %s%s%s" % (st["current"], note, again))
+        if forward:
+            self._tidy_backups()                            # the copy stays (it is what Go back to the newer release restores); only now are the oldest pushed out
         return target
 
     def _switch_to(self, version, backup, current=None, log=print):
