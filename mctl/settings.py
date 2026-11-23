@@ -63,6 +63,7 @@ def default_settings():
         "sound": {"on": False, "device": "", "gain_db": 0.0, "osc_state": False, "osc_render": False,     # D96: read with defaults
                   "map": {"on": False, "input": "", "source": "level", "rest": 0.0, "depth": 0.5, "smooth": 1.5}},  # (soundout.stored)
         "link": {"on": False},                     # D117: read with defaults (link.stored): no schema change
+        "heartbeat": {"on": False, "url": "", "minutes": 15, "fail": False},     # J-057: the daily heartbeat; read with defaults (heartbeat.stored): no schema change
         "fleet": {"discovery": True},              # D127: announce this node and list others; read with defaults (fleet.stored_on): no schema change
         "controller_code": default_controller_code(),
         "ndi": {"addresses": []},                 # read with defaults everywhere (ndi.saved_addresses): no schema change

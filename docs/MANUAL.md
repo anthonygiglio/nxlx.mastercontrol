@@ -474,6 +474,8 @@ Nothing here has been tried on a real box or a real stick yet.
 
 Setup > Health says in plain words whether the box is well: the power supply (a Pi warns when the voltage drops; any drop is remembered until the next reboot, because it is the most common cause of odd stutters, network drops and damaged SD cards: use the official supply, 5 V 3 A for a Pi 4), the temperature (above 80 C a Pi slows down), the player (decoded in hardware or software, and dropped frames a second while playing), the load, and whether the helpers are running. It also lists the addresses to open the panel from another device, and a full-access device can put the address on the display for 2 minutes.
 
+**Heartbeat (the Owner's).** Below it, a Heartbeat card can ping a dead man's switch service (healthchecks.io is one example) every few minutes, so that the service sends a push to your phone when the node goes quiet. It is off until the Owner switches it on, and the address is kept private. Setting it up, what the node sends and what it does not prove are in [docs/HEARTBEAT.md](HEARTBEAT.md).
+
 ## Settings file, diagnostics and factory reset
 
 Three cards under Setup > Backup and reset, for full-access devices only. Factory reset is last, under the heading Danger.
@@ -507,6 +509,7 @@ A factory reset also removes the box's own key and certificate for the secure co
 | --- | --- |
 | The browser says the site is not secure or cannot be reached | Type `http://` in front of the address: the panel uses plain HTTP on your own network, and browsers that try HTTPS first fail |
 | A clip stutters | Play > Library > Info on the clip says if it is too heavy for this box; see Prepare your clips |
+| The node went off and nobody noticed | Switch on the Heartbeat on Setup > Health so a service tells your phone when the node goes quiet (docs/HEARTBEAT.md) |
 | Stutters, network drops, odd restarts | Setup > Health: a "Power" warning means the power supply is too weak. After an unexpected restart, `journalctl -b -1 -e` on the box shows the end of the log before it (the log is kept across restarts, up to 64 MB) |
 | The page does not load | Same network as the box? `systemctl status nxlx-web` on the box; the address may have changed (check the router's client list) |
 | Holding the pad shows no code | The switch under Setup > People and codes > A code from a controller must be on, MIDI must be on, and the hold must last 3 to 10 seconds and end. `journalctl -u nxlx-web \| grep "controller code"` says why it was refused |

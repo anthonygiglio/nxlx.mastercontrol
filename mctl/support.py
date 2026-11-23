@@ -101,6 +101,10 @@ REMOTE_DENY = {
     # the time zone (J-129): the hour every schedule entry fires at. A helper may read it; the Owner sets it, and a zone
     # picked from afar would move a show's start by hours with nobody in the room to notice
     ("POST", "/api/timezone"): "the node's time zone moves every schedule entry; the owner sets it at the studio",
+    # the daily heartbeat (J-057): where the node reports that it is alive. A helper does not point it at a service of his own
+    # (or switch it off, so that the owner's phone stays quiet while he works); the owner sets it at the studio.
+    ("POST", "/api/heartbeat"): "where the node reports that it is alive is set by the owner at the studio",
+    ("POST", "/api/heartbeat/test"): "a ping to the owner's service is sent by the owner",
     # a reset removes every paired device, the owner's too (see boxcare.py)
     ("POST", "/api/system/factory-reset"): "a reset removes every device, the owner's too",
 }

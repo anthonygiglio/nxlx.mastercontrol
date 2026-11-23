@@ -2570,7 +2570,7 @@
     var rows = [
       { id: 'health', group: 'top', name: 'Health', role: 'view', url: '/api/health',
         blurb: 'Whether the node is well: its power supply, temperature, the player and the helpers it needs, and each projector\'s own warnings.',
-        body: function () { return can('full') ? [healthCard(), eventsCard()] : [healthCard()]; } },
+        body: function () { return can('full') ? [healthCard(), heartbeatCard(), eventsCard()] : [healthCard()]; } },
       { id: 'projectors', group: 'everyday', name: 'Projectors', role: 'live', module: 'projector', url: '/api/projectors',
         blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. On an Epson also freeze, brightness, Eco and the colour mode.',
         confirmOff: function (ask) { ask('The node stops checking the projectors. They stay as they are.'); },
@@ -3437,6 +3437,99 @@
         last = r.data;
         draw();
       });
+    }
+    look();
+    return card;
+  }
+  // ---- the daily heartbeat (J-057, D149): the Owner's card on Health ----
+  // A small HTTPS ping to a dead man's switch the Owner set up (healthchecks.io is one example); the service tells the phone when
+  // the pings stop. Off by default. The address is a key to the Owner's check, so it is only ever shown masked.
+  function heartbeatAgo(s) {
+    if (s < 90) return 'just now';
+    if (s < 5400) return Math.round(s / 60) + ' minutes ago';
+    if (s < 172800) return Math.round(s / 3600) + ' hours ago';
+    return Math.round(s / 86400) + ' days ago';
+  }
+  var heartbeatTimer = null;
+  function heartbeatCard() {
+    var msg = h('div', { class: 'msg inmsg', id: 'hbmsg', role: 'status' });
+    var line = h('div', { class: 'state', id: 'hbline', text: 'Loading...' });
+    var lastLine = h('div', { class: 'state', id: 'hblast' });
+    var urlIn = h('input', { class: 'text-input', id: 'hburl', type: 'text', maxlength: 300, autocomplete: 'off', spellcheck: 'false',
+      placeholder: 'https://hc-ping.com/your-check-id', 'aria-label': 'Ping address of your check' });
+    var mins = h('select', { class: 'text-input', id: 'hbminutes', 'aria-label': 'How often to ping', onchange: function () { send({ minutes: +mins.value }); } });
+    var tg = toggle('hbswitch', 'Send a heartbeat', false, function (v, sw) { send({ on: v }, sw, !v); },
+      'The node pings your check on a schedule while it is running. Your service tells your phone when the pings stop. Off until you switch it on.');
+    var failTg = toggle('hbfail', 'Tell the service when the player is down', false, function (v, sw) { send({ fail: v }, sw, !v); },
+      'Adds /fail to the address while the player is not running, which healthchecks.io understands as a failure. Leave it off for other services.');
+    var saveBtn = h('button', { class: 'btn', id: 'hbsave', text: 'Save address', onclick: function () {
+      var v = urlIn.value.trim();
+      if (!v) { sayAt(msg, 'Paste the check\'s ping address first.', true); return; }
+      send({ url: v }, null, false, function () { urlIn.value = ''; sayAt(msg, 'The address is saved.'); });
+    } });
+    var forgetBtn = h('button', { class: 'btn', id: 'hbforget', text: 'Forget the address', onclick: function () {
+      send({ url: '' }, null, false, function () { sayAt(msg, 'The address is forgotten and the heartbeat is off.'); });
+    } });
+    var testBtn = h('button', { class: 'btn grow', id: 'hbtest', text: 'Send a test ping now', onclick: function () {
+      testBtn.disabled = true; sayAt(msg, 'Sending...');
+      api('POST', '/api/heartbeat/test', {}).then(function (r) {
+        testBtn.disabled = !!S.remote;
+        if (!card.isConnected) return;
+        if (!r.ok) { sayAt(msg, r.data.error || 'The test could not be sent', true); return; }
+        sayAt(msg, r.data.result.text, !r.data.result.ok);
+        draw(r.data);
+      });
+    } });
+    var card = h('div', { class: 'card', id: 'heartbeatcard' }, h('h2', { text: 'Heartbeat' }),
+      h('div', { class: 'list sp', id: 'hbbody' }, tg, line,
+        labelled('Ping address of your check', urlIn, 'Paste the address your dead man\'s switch service gives you (it starts with https://). It is a key to your check, so the node shows only the end of it afterwards.'),
+        h('div', { class: 'row' }, saveBtn, forgetBtn),
+        labelled('How often', mins, 'The node pings this often. Set your service\'s period to match, and its grace time longer, for example 15 minutes and 60 minutes.'),
+        failTg, h('div', { class: 'row' }, testBtn), lastLine, msg));
+    function draw(d) {
+      tg.sw.setAttribute('aria-checked', d.on ? 'true' : 'false');
+      failTg.sw.setAttribute('aria-checked', d.fail ? 'true' : 'false');
+      if (document.activeElement !== mins) {
+        mins.textContent = '';
+        (d.minutes_choices || []).forEach(function (m) { mins.appendChild(h('option', { value: String(m), text: 'Every ' + m + ' minutes' })); });
+        mins.value = String(d.minutes);
+      }
+      var words = d.has_url ? 'Saved address: ' + d.url_shown + '. ' : 'No address saved yet. ';
+      words += d.on ? (d.next_in === null ? 'On.' : 'On. Next ping in about ' + Math.max(1, Math.round(d.next_in / 60)) + ' minutes.') : 'Off. Nothing is sent.';
+      line.textContent = words;
+      var l = d.last;
+      lastLine.textContent = l ? (l.ok ? 'Last ping worked' : 'Last ping failed') + ' (' + heartbeatAgo(l.ago) + ', ' + (l.how === 'test' ? 'a test' : 'by itself') + '): ' + l.text
+        : 'No ping has been sent since the node started.';
+      lastLine.className = 'state' + (l && !l.ok ? ' err' : '');
+    }
+    function send(body, sw, was, after) {
+      return api('POST', '/api/heartbeat', body).then(function (r) {
+        if (!card.isConnected) return;
+        if (!r.ok) {
+          if (sw) sw.setAttribute('aria-checked', was ? 'true' : 'false');       // back to what it was
+          sayAt(msg, r.data.error || 'Could not save it', true);
+          return;
+        }
+        sayAt(msg, '');
+        draw(r.data);
+        if (after) after();
+      });
+    }
+    function again() { clearTimeout(heartbeatTimer); heartbeatTimer = setTimeout(function () { if (card.isConnected) look(); }, 30000); }
+    function look() {
+      clearTimeout(heartbeatTimer);
+      if (document.visibilityState === 'hidden') return again();
+      api('GET', '/api/heartbeat').then(function (r) {
+        if (!card.isConnected && card.dataset.shown) return;
+        card.dataset.shown = '1';
+        again();
+        if (!r.ok) { line.textContent = (r.data.error || 'Not available') + '.'; return; }
+        if (document.activeElement !== urlIn) draw(r.data);
+      });
+    }
+    if (S.remote) {                      // set and tested from the studio, never through the support tunnel
+      [tg.sw, failTg.sw, urlIn, mins, saveBtn, forgetBtn, testBtn].forEach(function (el) { el.disabled = true; });
+      card.querySelector('#hbbody').insertBefore(h('div', { class: 'hint', id: 'hbremote', text: 'The heartbeat is set and tested from the studio, not through remote support.' }), line);
     }
     look();
     return card;

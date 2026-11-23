@@ -1170,6 +1170,7 @@ def build(env=None, player=None):
     api.support.panel_port = int(env.get("NXLX_PORT", "8080"))
     api.support.close_leftover()
     api.health.start()                       # notices a short undervoltage with nobody looking
+    api.heartbeat.start()                    # J-057: its own thread; sends nothing unless the Owner switched it on
     try:
         api.shaders.tidy()                   # shader texts an earlier panel process left in the runtime folder
     except Exception as e:
@@ -1295,6 +1296,7 @@ def main(argv=None):
             peerd.shutdown()
             peerd.server_close()
         api.scheduler.stop()
+        api.heartbeat.stop()
         if api.events is not None:
             api.events.flush()
         api.autostart.stop()
