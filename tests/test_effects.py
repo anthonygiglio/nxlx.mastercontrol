@@ -13,6 +13,7 @@ import struct
 import threading
 import time
 import unittest
+from unittest import mock
 
 from mctl import effects as E, midi as M, shaderlive as L, shaders as S
 from mctl.api import ApiError
@@ -482,6 +483,10 @@ class WorkingSizeTest(unittest.TestCase):
                     self.assertEqual(shader_size(text, w, h), want, (w, h, lines))
 
     def test_what_the_text_holds_for_a_cap_for_amount_0_and_for_the_old_half(self):
+        # translate() writes the time of day into the text; two calls a second apart differ by that alone (a flake on a slow runner)
+        clock = mock.patch.object(E.time, "localtime", return_value=time.localtime(0))
+        clock.start()
+        self.addCleanup(clock.stop)
         p = S.parse(GOOD, S.FILTER)
         plain = E.translate(p, desc="nxlx effect 1 1")
         self.assertEqual(E.translate(p, lines=None, desc="nxlx effect 1 1"), plain)                 # no cap: nothing of it in the text
