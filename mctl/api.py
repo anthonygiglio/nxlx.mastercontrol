@@ -22,6 +22,7 @@ import tempfile
 import threading
 import time
 import unicodedata
+from urllib.parse import urlsplit
 
 from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presence as presence_mod, presets, profile as tiers_mod, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
@@ -2487,11 +2488,152 @@ class Api:
         except fb.TooFast as e:
             raise ApiError(429, "wait a few seconds before sending more", e.wait)
         except fb.Busy as e:
-            raise ApiError(429, fb.BUSY_TEXT, e.wait)
+            raise ApiError(429, str(e), e.wait)
         except OSError as e:
             raise ApiError(500, "could not save: %s" % (e.strerror or e))
         self.log("nxlx-web: feedback received: %s (sender's role: %s)" % (note["face"], role))
         return {"sent": True}
+
+    # --- feedback from people with no login: the QR sticker (J-179 slice B, D147 addendum) ---------------
+    VISITORS_OFF = "Feedback from people without a login is switched off on this node. Ask whoever runs the room."
+
+    def visitors_on(self):
+        """Is the Owner's switch for feedback without a login on? Off unless it was switched on: anything else kept is off."""
+        with self.settings.lock:
+            value = self.settings.data.get("feedback_visitors")
+        return isinstance(value, dict) and value.get("on") is True
+
+    def feedback_visitor(self, body, device, client):
+        """POST /api/feedback/visitor, the one route with no login behind it for this (the page the QR sticker opens, GET
+        /feedback). {"face": "good" | "so-so" | "bad", "text"?: up to 1000 characters (longer is cut)}: nothing else is read,
+        no screen name. While the Owner's switch is off the answer is 403 and nothing is looked at. Held to its address
+        (one note in 10 seconds, 10 in an hour: feedback.AddressLimit) and by the node-wide limits of the store. The node adds
+        its name and id, the time and what plays on each output; the role kept is "visitor". The address is used for the limit
+        in memory and kept nowhere: not in the note, and not in the access log, which names no address for this route or its page (server.NO_ADDRESS_LOG). The server has already asked for the X-MCTL-Request header, the JSON type, the same
+        origin and a body of at most feedback.VISITOR_BODY_MAX bytes."""
+        from . import feedback as fb
+        store = self.feedback
+        if store is None:
+            raise ApiError(503, "feedback is not available on this node")
+        if device is not None:                              # a controller, a support session or a paired device: they have their own way
+            raise ApiError(403, "this is for people without a login; use the Feedback button on the Room screen")
+        if not self.visitors_on():
+            raise ApiError(403, self.VISITORS_OFF)
+        if not isinstance(body, dict) or not set(body) <= {"face", "text"} or body.get("face") not in fb.FACES:
+            raise bad("choose a face: good, so-so or bad")
+        text = body.get("text", "")
+        if not isinstance(text, str):
+            raise bad("the words must be text")
+        try:
+            store.visitors.admit(client)
+        except fb.TooFast as e:
+            raise ApiError(429, str(e), e.wait)
+        node = {"name": socket.gethostname().split(".")[0].lower(), "id": getattr(self, "node_id", None) or ""}
+        try:
+            store.add(None, body["face"], text[:fb.TEXT_MAX], "visitor", None, node, self._feedback_playing())
+        except fb.Busy as e:
+            store.visitors.release(client)              # the node's share, not this sender's doing: no wait of its own
+            raise ApiError(429, str(e), e.wait)
+        except OSError as e:
+            store.visitors.release(client)
+            raise ApiError(500, "could not save: %s" % (e.strerror or e))
+        except Exception:
+            store.visitors.release(client)
+            raise
+        self.log("nxlx-web: feedback received: %s (sender's role: visitor)" % body["face"])
+        return {"sent": True}
+
+    def feedback_open(self, body, device, client):
+        """POST /api/feedback/open {"on": true | false} (the Owner's, never through support): the switch for feedback from
+        people without a login. Off until the Owner switches it on; an import file cannot switch it on (boxcare.NEVER)."""
+        on = body.get("on")
+        if not isinstance(on, bool) or len(body) != 1:
+            raise bad("send on: true or false")
+        with self.settings.lock:
+            old = self.settings.data.get("feedback_visitors")
+            self.settings.data["feedback_visitors"] = {"on": on}
+            try:
+                self.settings.save()
+            except OSError as e:
+                if old is None:
+                    self.settings.data.pop("feedback_visitors", None)
+                else:
+                    self.settings.data["feedback_visitors"] = old
+                raise ApiError(500, "could not save: %s" % (e.strerror or e))
+        self.log("nxlx-web: feedback without a login switched %s by device %s" % ("on" if on else "off", (device or {}).get("id")))
+        return {"visitors": on}
+
+    def _own_host(self, name):
+        """Is `name` (a host name or address without brackets or port) this node's own: its host name, that name with .local, a
+        name its certificate covers or one the owner allowed in NXLX_ALLOWED_HOSTS, or an address of one of its interfaces
+        (not loopback, not the support tunnel's)? Loopback, 0.0.0.0, :: and every other name are not, so a sticker never
+        points at the device that printed it."""
+        if not name:
+            return False
+        try:
+            ip = ipaddress.ip_address(name.split("%")[0])
+        except ValueError:
+            ip = None
+        if ip is not None:
+            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+                ip = ip.ipv4_mapped
+            if ip.is_loopback or ip.is_unspecified:
+                return False
+            own = set()
+            try:
+                for e in self._ip_json():
+                    if e.get("ifname") in ("lo", "wg-nxlx"):
+                        continue
+                    for a in e.get("addr_info", []):
+                        try:
+                            own.add(ipaddress.ip_address(str(a.get("local")).split("%")[0]))
+                        except ValueError:
+                            pass
+            except Exception:
+                pass
+            # (a certificate's addresses count only when they are one of these now: a certificate can outlive an address)
+            for n in os.environ.get("NXLX_ALLOWED_HOSTS", "").split(","):
+                try:
+                    own.add(ipaddress.ip_address(n.strip()))        # an address the Owner allowed by hand
+                except ValueError:
+                    pass
+            return ip in own
+        short = socket.gethostname().split(".")[0].lower()
+        names = {short, short + ".local"}
+        names.update(n.strip().lower() for n in os.environ.get("NXLX_ALLOWED_HOSTS", "").split(",") if n.strip())
+        info = getattr(self.https, "info", None) if self.https is not None else None
+        names.update(str(n).lower() for n in ((info or {}).get("dns") or []))
+        names.discard("localhost")
+        return name in names
+
+    def feedback_sticker(self, body, device, client):
+        """GET /api/feedback/sticker (the Owner's): {"url", "svg", "on"}: the address of this node's feedback page and its QR
+        code, to print. The address is the one the Owner opened the panel by (a name or an address of this node, never
+        localhost), https when the panel was opened over it or the node's certificate names that host, else http. The code
+        holds the address and nothing else: no token, no code, no way in. Made here, from the encoder in mctl/qr.py."""
+        from . import qr as qr_mod
+        host = getattr(self.request, "host", None)
+        refuse = "Open the panel by the node's own address to print the sticker"
+        if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]{1,100}", host):
+            raise bad(refuse)
+        try:
+            name = (urlsplit("//" + host).hostname or "").lower()
+        except ValueError:
+            raise bad(refuse)
+        if not self._own_host(name):
+            raise bad(refuse)
+        box = self.https
+        origin = None
+        if getattr(self.request, "secure", False):
+            origin = "https://%s" % host
+        elif box is not None:
+            origin = box.trusted_origin(host)           # https only when the node's certificate names this host
+        url = "%s/feedback" % (origin or "http://%s" % host)
+        try:
+            svg = qr_mod.svg(qr_mod.encode(url))
+        except qr_mod.QrError:
+            raise bad("the address is too long for a QR code")
+        return {"url": url, "svg": svg, "on": self.visitors_on()}
 
     def events_tick(self):
         """About once a second (server.py, beside render_tick): what only shows in a file or a state is looked at here, the
@@ -6252,6 +6394,9 @@ class Api:
             ("POST", "/api/projector"): ("live", self.projector_action),
             ("GET", "/api/room"): ("view", self.room.api_get),
             ("POST", "/api/feedback"): ("view", self.feedback_send),    # D147: any paired device, a Guest too, locked or not; never through support, never from a controller
+            ("POST", "/api/feedback/visitor"): (None, self.feedback_visitor),   # D147 addendum: no login; the Owner's switch, the same-origin header, a JSON body of 4 KB at most, a limit for each address (server.py)
+            ("POST", "/api/feedback/open"): ("full", self.feedback_open),      # D147 addendum: the Owner's switch for it; never through support
+            ("GET", "/api/feedback/sticker"): ("full", self.feedback_sticker),
             ("POST", "/api/room"): ("live", self.room.api_set),
             ("POST", "/api/room/scene"): ("live", self.room.api_scene),
             ("POST", "/api/room/group"): ("live", self.room.api_group),

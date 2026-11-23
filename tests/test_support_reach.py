@@ -57,7 +57,7 @@ REFUSED = {
     # the NDI discovery server on this box (D85): a listener on the network is the owner's, in the room
     ("GET", "/api/ndi/discovery"), ("POST", "/api/ndi/discovery"),
     # a feedback note (D147) is from someone in the room; a support session reads the notes (GET, the Owner's role) and sends none
-    ("POST", "/api/feedback"),
+    ("POST", "/api/feedback"), ("POST", "/api/feedback/visitor"), ("POST", "/api/feedback/open"),
     # the other nodes on the network and the switch for announcing this one (D127): network things stay in the room
     ("GET", "/api/nodes"), ("POST", "/api/nodes/discovery"),
     # which nodes this one trusts to carry devices (D132): the Owner's, in the room

@@ -3455,8 +3455,39 @@
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
     } });
+    // People without a login (the QR sticker, D147 addendum): the Owner's switch, off until he switches it on, and the
+    // sticker to print. The switch is drawn when the list is read (it says what the node holds), never assumed.
+    var visitorBox = h('div', { id: 'feedbackvisitors' });
+    var stickerNote = h('div', { class: 'hint', id: 'feedbackstickernote' });
     var card = h('div', { class: 'card', id: 'feedbackcard' }, h('h2', { text: 'Feedback from the room' }), list,
-      h('div', { class: 'row' }, more, save, h('button', { class: 'btn small', id: 'feedbackrefresh', text: 'Refresh', onclick: function () { look(); } })), note);
+      h('div', { class: 'row' }, more, save, h('button', { class: 'btn small', id: 'feedbackrefresh', text: 'Refresh', onclick: function () { look(); } })), note,
+      visitorBox, stickerNote);
+    function drawVisitors() {
+      visitorBox.textContent = '';
+      var on = !!(last && last.visitors);
+      visitorBox.appendChild(toggle('feedbackvisitorswitch', 'Let people without a login send feedback (QR sticker)', on, function (v, sw) {
+        sw.disabled = true;
+        api('POST', '/api/feedback/open', { on: v }).then(function (r) {
+          if (!r.ok) { say(r.data.error || 'Could not change that.', true); look(); return; }
+          if (last) last.visitors = !!r.data.visitors;
+          say(r.data.visitors ? 'People without a login can now send feedback from the sticker.' : 'Feedback from people without a login is switched off.');
+          drawVisitors();
+        });
+      }, 'Off until you switch it on. Anyone on the same network who scans the sticker can send a face and a few words, one note in 10 seconds and 10 in an hour from one phone. The note says "visitor" and keeps no address, and neither does the log of the node for it. Visitors have their own share of the limits of the node and at most half of the kept notes, and a visitor note never pushes a staff note out.'));
+      visitorBox.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn', id: 'feedbackprint', text: 'Print the QR sticker', onclick: printSticker })));
+    }
+    function printSticker() {
+      if (typeof window.print !== 'function') return say('This browser cannot print.', true);
+      api('GET', '/api/feedback/sticker').then(function (r) {
+        if (!r.ok) { stickerNote.textContent = sentence(r.data.error || 'Could not make the sticker') + '.'; return; }
+        stickerNote.textContent = r.data.on ? '' : 'The switch above is off, so the sticker will say the feedback is switched off until you turn it on.';
+        printPage(h('div', { id: 'printsheet', class: 'sticker' },
+          h('h1', { text: 'Tell us how the night is going' }),
+          h('img', { class: 'qr-sticker', alt: 'QR code that opens the feedback page', src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(r.data.svg) }),
+          h('p', { class: 'sticker-ask', text: 'Scan to send feedback' }),
+          h('p', { class: 'sticker-url', text: r.data.url })));
+      });
+    }
     function when(t) { var d = new Date(t * 1000); return isNaN(d) ? '' : d.toLocaleString(); }
     function draw() {
       list.textContent = '';
@@ -3482,6 +3513,7 @@
         }
         last = r.data;
         draw();
+        drawVisitors();
       });
     }
     look();

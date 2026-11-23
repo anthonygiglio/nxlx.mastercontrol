@@ -111,6 +111,20 @@ button:focus-visible, input:focus-visible, a:focus-visible, select:focus-visible
 .feedback-status.err { color: var(--ac); }
 .feedback-status.thanks { font-size: 20px; }
 .feedback-sheet .row { gap: 8px; }
+/* The page the QR sticker opens (feedback.html, no login) and the sticker the Owner prints */
+.visitor-page { max-width: 560px; margin: 0 auto; width: 100%; padding-bottom: 32px; }
+.visitor-page h1 { margin: 0; font-size: 24px; }
+.visitor-page .card { gap: 12px; }
+.visitor-page .card p { margin: 0; }
+body.visitor[data-open="0"] #visitorform, body.visitor[data-open="1"] #visitoroff { display: none; }
+#printsheet.sticker { text-align: center; }
+@media print {
+  body.printing #printsheet.sticker { padding: 18mm 12mm; }
+  #printsheet.sticker h1 { font-size: 40px; margin: 0 0 6mm; }
+  #printsheet.sticker .qr-sticker { width: 120mm; height: 120mm; margin: 4mm auto; display: block; }
+  #printsheet.sticker .sticker-ask { font-size: 26px; font-weight: 600; margin: 4mm 0; }
+  #printsheet.sticker .sticker-url { font-size: 14px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+}
 .picker .sheet { background: var(--bg); border: 1.5px solid var(--ln); border-radius: 12px 12px 0 0; width: 100%; max-width: 600px; max-height: 80dvh; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
 
 @media (min-width: 900px) { .shell:not(.wsp) > .screen { padding: 24px 28px; } }      /* before pairing */

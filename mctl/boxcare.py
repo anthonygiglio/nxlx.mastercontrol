@@ -62,7 +62,7 @@ MAX_IMPORT = 1024 * 1024             # bytes: a full mapper with every saved map
 MAX_NUMBER_DIGITS = 40
 MAX_DEPTH = 24
 # never exported, never imported. "controller_code" (D61) is a way to hand out access, so a file cannot switch it on
-NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls", "ndi_discovery")      # ndi_discovery (D85): which network a listener is on belongs to this box
+NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls", "ndi_discovery", "feedback_visitors")      # ndi_discovery (D85): which network a listener is on belongs to this box
 # The box's own and no secret: in the diagnostics file, never in an export, and a file that holds it is not imported
 # (it is noted and the box's own stays). "screen" (D90): the mode is chosen for the screen on this box, and an import
 # would set it with nobody in the room to keep it or let it go back.
@@ -1229,7 +1229,7 @@ class BoxCare:
             if n.get("playing"):
                 n = dict(n, playing=[dict(p, playing=scrub(p.get("playing", ""), secrets)) for p in n["playing"]])
             rows.append(n)
-        return dict(store.state(rootfs.current_state() == "overlay"), notes=rows)
+        return dict(store.state(rootfs.current_state() == "overlay"), notes=rows, visitors=self.api.visitors_on())
 
     def diagnostics(self, body, device, client):
         """One file to send to whoever is helping: versions, the board, module states, health, the last update, the
