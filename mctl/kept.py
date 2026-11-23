@@ -39,14 +39,22 @@ Rules (D148):
   folder is written down and the next one is tried.
 * If the disk is missing at boot the node still starts, on the system disk's copies, and says "missing" in that file.
   Those copies are old and could bring back a device that was removed since, so seeding empties them of what grants
-  access: the paired devices and the Owner recovery codes in settings.json (and its backups), the handover
-  acceptances (pairings.json), the settings copies in the update folder and the remote support key. A fallback boot
+  access: the paired devices and the Owner recovery codes in settings.json (and its backups), the switch that
+  accepts devices from other nodes (fleet.accept), the signed fleet list and the acceptances by fingerprint
+  (fleet.json, fleet.sig, pairings.json), the settings copies in the update folder and the remote support key. Only
+  deny.json stays: it can only refuse. This happens after the kept disk is committed (its secret and config are
+  written), never before, and before the folders are bound (a bind hides the system disk's copy). A fallback boot
   therefore needs fresh pairing with the PIN; the rest (scenes, graphics, settings, Wi-Fi) is kept so the room runs.
   Nothing else is made up and nothing is deleted.
+* `prepare` and `seed` stop the running (or starting) nxlx services and always start them again, also on SIGTERM,
+  SIGHUP and SIGINT; they refuse while an update or a USB copy runs and while a conversion's undo is armed. The boot
+  step is installed as a copy in /usr/local/lib/nxlx (bin/nxlx-kept-boot and this file), not run from a release, so a
+  rollback cannot take it away.
 
 Changes to the kept disk take effect at the next boot. This module never reboots.
 """
 
+import contextlib
 import ctypes
 import hmac
 import json
@@ -54,6 +62,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -75,6 +84,13 @@ DEVICE_RE = re.compile(r"^/dev/[A-Za-z0-9][A-Za-z0-9/_.-]*$")
 # The nxlx services that write the kept folders, in start order: prepare and seed stop the running ones while a folder is
 # copied (nothing may write meanwhile) and start them again.
 SERVICES = ("nxlx-netd.service", "nxlx-sysd.service", "nxlx-supportd.service", "nxlx-player.service", "nxlx-web.service")
+# Units that write /var/lib/nxlx-update or the media: prepare does not stop them, it refuses while one runs.
+BUSY_UNITS = ("nxlx-update.service", "nxlx-update-usb@*.service", "nxlx-update-inbox@*.service", "nxlx-usb@*.service")
+# Files in the panel's folder that let another node, or the Owners it carries, in (mctl/handover.py): the signed fleet
+# list and its signature, and the acceptances by fingerprint. deny.json is kept: it only restricts.
+GRANT_FILES = ("fleet.json", "fleet.sig", "pairings.json")
+UNDO_TIMER = "/etc/systemd/system/nxlx-convert-undo.timer"
+SIGNALS = ("SIGTERM", "SIGHUP", "SIGINT")
 
 
 # Said in /run/nxlx-kept.json whenever the node falls back to the system disk's copies of the folders.
@@ -566,22 +582,81 @@ class Kept:
             pass
         os.sync()
 
-    def _stop_services(self):
-        active = []
+    def _stop_services(self, active):
+        """Stop the running nxlx services (also one that is still starting). `active` is filled as it goes, so a signal in
+        the middle still leaves the caller knowing what to start again."""
+        running = []
         for unit in SERVICES:
-            if self._run(["systemctl", "is-active", "--quiet", unit]).returncode == 0:
-                active.append(unit)
-        for unit in reversed(active):
+            r = self._run(["systemctl", "is-active", unit])
+            if r.returncode == 0 or (r.stdout or "").strip() in ("activating", "reloading"):
+                running.append(unit)
+        for unit in reversed(running):
+            active.insert(0, unit)
             self._run(["systemctl", "stop", unit])
         return active
 
     def _start_services(self, active):
+        self._ignore_signals()          # nothing may cut the clean-up short
         for unit in active:
             self._run(["systemctl", "start", unit])
 
+    def _busy_units(self):
+        """Update and USB units that are running (or starting) now: they write the folders being copied."""
+        r = self._run(["systemctl", "list-units", "--plain", "--no-legend", "--state=active,activating,reloading"] + list(BUSY_UNITS))
+        if r.returncode != 0:
+            return []
+        return [line.split()[0] for line in (r.stdout or "").splitlines() if line.split()]
+
+    @staticmethod
+    def _ignore_signals():
+        for name in SIGNALS:
+            try:
+                signal.signal(getattr(signal, name), signal.SIG_IGN)
+            except (ValueError, OSError):
+                pass
+
+    @contextlib.contextmanager
+    def _interruptible(self):
+        """While `prepare` or `seed` runs, a SIGTERM, SIGHUP (the ssh session ends) or SIGINT becomes a KeptError, so the
+        clean-up runs and the services that were stopped are started again. Over ssh, run it under systemd-run --scope or
+        nohup anyway."""
+        old = {}
+
+        def handler(signum, _frame):
+            self._ignore_signals()
+            raise KeptError("interrupted by %s; the services are being started again" % signal.Signals(signum).name)
+        try:
+            for name in SIGNALS:
+                old[name] = signal.signal(getattr(signal, name), handler)
+        except ValueError:              # not the main thread: no handlers, the caller's own rules apply
+            old = {}
+        try:
+            yield
+        finally:
+            for name, previous in old.items():
+                signal.signal(getattr(signal, name), previous)
+
+    def _release_old(self):
+        """--wipe over a kept disk that is in use: unbind the six places and unmount the old disk, then say plainly what that
+        means. The settings on the old disk are not copied; the node goes back to the system disk's older copies."""
+        for _name, place, _create in reversed(self.items):
+            target = _join(self.root, place)
+            if is_mount_point(target, self.proc_mounts):
+                r = self._run(["umount", target])
+                if r.returncode != 0:
+                    raise KeptError("could not unmount %s (%s): something still uses it. Nothing was formatted." % (place, (r.stderr or r.stdout or "").strip()))
+        if is_mount_point(self.mount_dir, self.proc_mounts):
+            r = self._run(["umount", self.mount_dir])
+            if r.returncode != 0:
+                raise KeptError("could not unmount the old kept disk (%s). Nothing was formatted." % (r.stderr or r.stdout or "").strip())
+        self.log("nxlx-kept: the old kept disk was unbound and unmounted. What was on it is NOT copied to the new one: the node "
+                 "goes back to the system disk's older copies, which hold no paired devices or Owner recovery codes, so pair "
+                 "again with the PIN.")
+
     def _seed_folder(self, name, target):
         """Copy `target` to the kept disk under `name`: into a temporary folder first, renamed into place when it is
-        complete, so a power cut leaves either nothing or all of it (and the disk is flushed once by the caller)."""
+        complete: copy to .new, flush the disk, rename, flush again, so a power cut leaves either nothing or all of it,
+        and a folder under its final name is always whole (a later seed skips a folder that exists)."""
         want = tree_size(target) + SPARE_BYTES
         try:
             vfs = os.statvfs(self.mount_dir)
@@ -596,7 +671,9 @@ class Kept:
             shutil.rmtree(tmp, ignore_errors=True)
         try:
             skipped = copy_tree(target, tmp)
+            self._syncfs(self.mount_dir)
             os.rename(tmp, final)
+            self._syncfs(self.mount_dir)
         except (OSError, KeptError):
             shutil.rmtree(tmp, ignore_errors=True)
             raise
@@ -605,9 +682,10 @@ class Kept:
         self.log("nxlx-kept: %s: copied to the kept disk" % name)
 
     def _seed_missing(self):
-        """Copy every folder the disk does not hold yet, then flush the disk once, then empty the system disk's copy of
-        what grants access. The caller has the services stopped and the volume mounted. Returns {name: what was done}.
-        If any folder fails, the ones copied in this call are removed again and nothing on the system disk was touched."""
+        """Copy every folder the disk does not hold yet (each flushed to the disk before and after its rename, so a power cut
+        never leaves a partial folder under its final name). The caller has the services stopped and the volume mounted.
+        Returns ({name: what was done}, [(name, target) to scrub later]). If any folder fails, the ones copied in this call
+        are removed again and nothing on the system disk was touched."""
         done, scrub, result = [], [], {}
         try:
             for name, place, create in self.items:
@@ -632,14 +710,17 @@ class Kept:
             for name in done:
                 shutil.rmtree(os.path.join(self.mount_dir, name), ignore_errors=True)
             raise
-        self._syncfs(self.mount_dir)
+        return result, scrub
+
+    def _scrub_all(self, result, scrub):
+        """Empty the system disk's copies of what grants access. Only after the kept disk is committed (its config and
+        secret written), so a failure before that leaves the system disk as the live, complete copy."""
         for name, target in scrub:
             try:
                 self._scrub(name, target)
             except Exception as e:      # noqa: BLE001 - said, and the rest is still done
                 self.log("nxlx-kept: %s: could not empty the system disk's copy of what grants access: %s" % (name, e))
                 result[name] += " (the system disk's old copy was NOT emptied: %s)" % e
-        return result
 
     # What a fallback boot must not bring back (D148): see _scrub.
     _SETTINGS_FILES = re.compile(r"^(settings\.json\..*|\.settings-.*)$")
@@ -657,7 +738,7 @@ class Kept:
                 if name == "state":
                     if entry == "settings.json":
                         self._scrub_settings(fd)
-                    elif entry == "pairings.json" or self._SETTINGS_FILES.match(entry):
+                    elif entry in GRANT_FILES or self._SETTINGS_FILES.match(entry):
                         self._unlink_in(fd, entry, name)
                 elif name == "update" and self._UPDATE_COPIES.match(entry):
                     self._unlink_in(fd, entry, name)
@@ -684,6 +765,9 @@ class Kept:
         st = os.stat("settings.json", dir_fd=dfd, follow_symlinks=False)
         data["devices"] = []
         data.pop("recovery", None)
+        fleet = data.get("fleet")
+        if isinstance(fleet, dict):
+            fleet["accept"] = False          # the switch that lets another node's carried devices in (handover.py)
         tmp = ".settings-scrub-%d" % os.getpid()
         try:
             os.unlink(tmp, dir_fd=dfd)
@@ -811,10 +895,17 @@ class Kept:
         if overlay_active:
             raise KeptError("The system disk is read-only right now, so the set-up would be lost at the next restart. "
                             "Turn it off first: sudo nxlx-rootfs disable, restart, then run this again.")
+        if os.path.lexists(_join(self.root, UNDO_TIMER)):
+            raise KeptError("A conversion of this node waits for its confirm (its undo is armed): confirm the conversion first "
+                            "(sudo nxlx-convert --confirm), then run this again. Nothing was changed.")
+        busy = self._busy_units()
+        if busy:
+            raise KeptError("An update or a USB copy is running (%s). Wait until it is done, then run this again. Nothing was changed."
+                            % ", ".join(busy))
         for _name, place, _create in self.items:
             self._check_place(place)
         if not need_config:
-            return None
+            return None, False
         if not DEVICE_RE.match(device) or ".." in device:
             raise KeptError("%r is not a device path such as /dev/sda3" % device)
         if not yes:
@@ -826,7 +917,12 @@ class Kept:
         except OSError:
             raise KeptError("%s does not exist" % device)
         table = mount_table(self.proc_mounts)
+        # --wipe over a kept disk that is in use replaces it: its own mounts do not count as "in use" then
+        replacing = wipe and os.path.lexists(self.config_path) and is_mount_point(self.mount_dir, self.proc_mounts)
+        ours = ({self.mount_dir} | {_join(self.root, place) for _n, place, _c in self.items}) if replacing else set()
         for dev, mp, _t in table:
+            if mp in ours:
+                continue
             # also a whole disk whose partition is mounted, and any name that only starts the same: refusing too much is safe
             if dev.startswith("/") and os.path.realpath(dev).startswith(real):
                 raise KeptError("%s (or a part of it) is in use, mounted at %s. Nothing was changed." % (device, mp))
@@ -838,10 +934,12 @@ class Kept:
                 raise KeptError("%s is a link or a file, not a folder. Nothing was changed." % MOUNT)
         except FileNotFoundError:
             pass
-        if is_mount_point(self.mount_dir, self.proc_mounts):
-            raise KeptError("%s is already a mount point (a kept disk is in use); restart and try again. Nothing was changed." % MOUNT)
         if os.path.lexists(self.config_path) and not wipe:
-            raise KeptError("A kept settings disk is already set up (%s). To replace it, add --wipe. Nothing was changed." % CONFIG)
+            raise KeptError("A kept settings disk is already set up (%s). To replace it, add --wipe: the old disk is then unbound "
+                            "and unmounted and its settings are NOT copied to the new one (the node goes back to the system "
+                            "disk's older copies and its devices must be paired again). Nothing was changed." % CONFIG)
+        if is_mount_point(self.mount_dir, self.proc_mounts) and not replacing:
+            raise KeptError("%s is already a mount point (a kept disk is in use); restart and try again. Nothing was changed." % MOUNT)
         existing = self._probe(real, "TYPE")
         if existing and not wipe:
             raise KeptError("%s already holds a %s filesystem. If it really is to be erased, add --wipe. Nothing was changed." % (device, existing))
@@ -851,46 +949,53 @@ class Kept:
             raise KeptError("%s is a whole disk with a partition table (%s). Use one of its partitions (/dev/%s), or add --wipe "
                             "if the whole disk really is to be erased. Nothing was changed."
                             % (device, table_type or "partitions: " + ", ".join(parts), parts[0] if parts else "<partition>"))
-        return real
+        return real, replacing
 
     def prepare(self, device, yes=False, wipe=False, overlay_active=False):
         """Make `device` the kept settings disk: an ext4 filesystem labelled nxlx-kept, a marker and a random secret on it
         (the secret also in /etc/nxlx/kept.secret), the node's folders copied to it, the UUID saved in
         /etc/nxlx/kept.json. DESTROYS what is on the device. The nxlx services are stopped while the folders are copied
         and started again, with the folders now on the kept disk."""
-        real = self._preflight(device, yes, wipe, overlay_active, True)
-        r = self._run(["mkfs.ext4", "-q", "-F", "-m", "1", "-L", LABEL, real])
-        if r.returncode != 0:
-            raise KeptError("mkfs.ext4 failed: %s" % (r.stderr or r.stdout or "").strip())
-        uuid = self._blkid(real, "UUID")
-        if not UUID_RE.match(uuid or ""):
-            raise KeptError("could not read the new filesystem's UUID")
-        self._ensure_mount_dir()
-        r = self._run(["mount", "-t", "ext4", "-o", MOUNT_OPTIONS, real, self.mount_dir])
-        if r.returncode != 0:
-            raise KeptError("could not mount the new filesystem: %s" % (r.stderr or r.stdout or "").strip())
+        real, replacing = self._preflight(device, yes, wipe, overlay_active, True)
         secret = secrets.token_hex(32)
         active = []
-        committed = False
-        try:
-            meta = os.path.join(self.mount_dir, META)
-            os.makedirs(meta, mode=0o700, exist_ok=True)
-            os.chmod(self.mount_dir, 0o700)
-            _write_atomic(os.path.join(meta, "volume"), uuid + "\n", 0o600)
-            _write_atomic(os.path.join(meta, "secret"), secret + "\n", 0o600)
-            active = self._stop_services()
-            result = self._seed_missing()
-            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-            _write_atomic(self.secret_path, secret + "\n", 0o600)
-            _write_atomic(self.config_path, json.dumps({"uuid": uuid, "label": LABEL}) + "\n", 0o644)
-            committed = True
-            self._bind_all()
-        except BaseException:
-            if not committed:
-                self._run(["umount", self.mount_dir])
-            raise
-        finally:
-            self._start_services(active)
+        mounted = committed = False
+        with self._interruptible():
+            try:
+                self._stop_services(active)
+                if replacing:
+                    self._release_old()
+                r = self._run(["mkfs.ext4", "-q", "-F", "-m", "1", "-L", LABEL, real])
+                if r.returncode != 0:
+                    raise KeptError("mkfs.ext4 failed: %s" % (r.stderr or r.stdout or "").strip())
+                uuid = self._blkid(real, "UUID")
+                if not UUID_RE.match(uuid or ""):
+                    raise KeptError("could not read the new filesystem's UUID")
+                self._ensure_mount_dir()
+                r = self._run(["mount", "-t", "ext4", "-o", MOUNT_OPTIONS, real, self.mount_dir])
+                if r.returncode != 0:
+                    raise KeptError("could not mount the new filesystem: %s" % (r.stderr or r.stdout or "").strip())
+                mounted = True
+                meta = os.path.join(self.mount_dir, META)
+                os.makedirs(meta, mode=0o700, exist_ok=True)
+                os.chmod(self.mount_dir, 0o700)
+                _write_atomic(os.path.join(meta, "volume"), uuid + "\n", 0o600)
+                _write_atomic(os.path.join(meta, "secret"), secret + "\n", 0o600)
+                result, scrub = self._seed_missing()
+                # The commit: from here the kept disk is the node's. Only after it is written is anything taken out of the
+                # system disk's copies, so a failure before it leaves the system disk the complete, live copy.
+                os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+                _write_atomic(self.secret_path, secret + "\n", 0o600)
+                _write_atomic(self.config_path, json.dumps({"uuid": uuid, "label": LABEL}) + "\n", 0o644)
+                committed = True
+                self._scrub_all(result, scrub)      # before the bind: a bind hides the system disk's copy from here on
+                self._bind_all()
+            except BaseException:
+                if mounted and not committed:
+                    self._run(["umount", self.mount_dir])
+                raise
+            finally:
+                self._start_services(active)
         self.log("The kept settings disk is ready (UUID %s) and in use now: %s. Turn the read-only disk on with: "
                  "sudo nxlx-rootfs enable." % (uuid, ", ".join("%s %s" % (n, v) for n, v in result.items())))
         return uuid
@@ -907,20 +1012,31 @@ class Kept:
             raise KeptError("The kept settings disk (UUID %s) is not connected." % cfg["uuid"])
         self._mount_volume(dev)
         self._check_marker(cfg["uuid"])
-        active = self._stop_services()
-        try:
-            result = self._seed_missing()
-            self._bind_all()
-        finally:
-            self._start_services(active)
+        active = []
+        with self._interruptible():
+            try:
+                self._stop_services(active)
+                result, scrub = self._seed_missing()
+                self._scrub_all(result, scrub)      # the disk is already committed (its config and secret exist)
+                self._bind_all()
+            finally:
+                self._start_services(active)
         for n, v in result.items():
             self.log("nxlx-kept: %s: %s" % (n, v))
         return result
 
     def _bind_all(self):
-        """Bind every folder the disk holds that is not bound yet; a failure is raised (the caller is an admin at the node)."""
+        """Bind every folder the disk holds that is not bound yet. Each is tried; the failures are raised together."""
+        failed = []
         for name, place, create in self.items:
-            self._bind(name, place, create)
+            try:
+                self._bind(name, place, create)
+            except Exception as e:      # noqa: BLE001 - every folder is tried; each failure is reported
+                failed.append("%s: %s" % (name, e))
+                self.log("nxlx-kept: %s: %s" % (name, e))
+        if failed:
+            raise KeptError("not every folder could be bound (%s). The settings are on the kept disk; restart to bind them, "
+                            "or look at the cause first." % "; ".join(failed))
 
     # ---- status ------------------------------------------------------------------------------------------------
 

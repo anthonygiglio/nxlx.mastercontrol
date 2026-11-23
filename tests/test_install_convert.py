@@ -359,7 +359,10 @@ class InstallConvertsAnOldNode(unittest.TestCase):
                             self.assertFalse(os.path.lexists(self.p(gone)), gone + " left behind by the undo")
                         waiting = "opt/pvj/releases/" + version()
                         after = snapshot(self.root, skip=("var/backups", waiting, "run/nxlx"))
-                        for extra in (waiting, "usr/local/bin/nxlx-convert", "run/nxlx", "var/backups"):
+                        # (usr/local/lib is the parent that the install made for the kept settings folder's boot copy; on a real
+                        # node it is part of the system and stays, empty, once the undo took the copy away.)
+                        self.assertFalse(os.path.lexists(self.p("usr/local/lib/nxlx")), "the boot copy's folder is left behind")
+                        for extra in (waiting, "usr/local/bin/nxlx-convert", "run/nxlx", "var/backups", "usr/local/lib"):
                             after.pop(extra, None)
                         want = {k: v for k, v in before.items() if k != "var/backups"}
                         self.assertEqual(after, want)

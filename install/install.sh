@@ -147,6 +147,7 @@ WG_LOAD="$ROOT/etc/modules-load.d/nxlx-wireguard.conf"
 USB_RULE="$ROOT/etc/udev/rules.d/99-nxlx-usb.rules"
 TMPFILES="$ROOT/etc/tmpfiles.d/nxlx.conf"
 BIN_LINKS="$ROOT/usr/local/bin"
+LIB_KEPT="$ROOT/usr/local/lib/nxlx"           # the kept settings folder's boot step: a copy that no release switch (nxlx-update rollback) can take away
 VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC/mctl/__init__.py")"
 [ -n "$VERSION" ] || die "cannot read version from mctl/__init__.py"
 RELEASE="$ROOT$PREFIX/releases/$VERSION"
@@ -171,7 +172,8 @@ uninstall() {
 	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/nxlx-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
 	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_MARK")" "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
 	run rm -f "$KEPT_UNIT" "$ROOT/etc/systemd/system/sysinit.target.wants/nxlx-kept.service" "$SUP_UNIT" "$SOUND_UNIT" "$LINK_UNIT" "$RASTER_UNIT" "$RASTER_SOCKET_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
-	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/nxlx-player" "$BIN_LINKS/nxlx-selftest" "$BIN_LINKS/nxlx-usb" "$BIN_LINKS/nxlx-rootfs" "$BIN_LINKS/nxlx-kept" "$BIN_LINKS/nxlx-pin" "$BIN_LINKS/nxlx-update" "$BIN_LINKS/nxlx-convert"
+	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/nxlx-player" "$BIN_LINKS/nxlx-selftest" "$BIN_LINKS/nxlx-usb" "$BIN_LINKS/nxlx-rootfs" "$BIN_LINKS/nxlx-kept" "$LIB_KEPT/nxlx-kept-boot" "$LIB_KEPT/kept.py" "$BIN_LINKS/nxlx-pin" "$BIN_LINKS/nxlx-update" "$BIN_LINKS/nxlx-convert"
+	if [ "$DRY" = 0 ]; then rmdir "$LIB_KEPT" 2>/dev/null || true; fi
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
 	# The owner's copy of NDI's library is theirs: it goes only with --purge.
@@ -630,6 +632,10 @@ run ln -sfn "$PREFIX/current/bin/nxlx-selftest" "$BIN_LINKS/nxlx-selftest"
 run ln -sfn "$PREFIX/current/bin/nxlx-usb" "$BIN_LINKS/nxlx-usb"
 run ln -sfn "$PREFIX/current/bin/nxlx-rootfs" "$BIN_LINKS/nxlx-rootfs"
 run ln -sfn "$PREFIX/current/bin/nxlx-kept" "$BIN_LINKS/nxlx-kept"
+# The boot unit runs these two copies, not a path under current/: a rollback to a release without them must not stop the mounts.
+run mkdir -p "$LIB_KEPT"
+run install -m 0755 "$SRC/bin/nxlx-kept-boot" "$LIB_KEPT/nxlx-kept-boot"
+run install -m 0644 "$SRC/mctl/kept.py" "$LIB_KEPT/kept.py"
 run ln -sfn "$PREFIX/current/bin/nxlx-pin" "$BIN_LINKS/nxlx-pin"
 run ln -sfn "$PREFIX/current/bin/nxlx-update" "$BIN_LINKS/nxlx-update"
 run ln -sfn "$PREFIX/current/bin/nxlx-ndi-runtime" "$BIN_LINKS/nxlx-ndi-runtime"

@@ -128,7 +128,9 @@ class InstallTest(unittest.TestCase):
         # J-050: the kept settings folder's tool and its boot unit are installed, and the unit only acts where a kept disk was set up
         self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-kept")), "/opt/nxlx/current/bin/nxlx-kept")
         kept_unit = self.read(self.p("etc/systemd/system/nxlx-kept.service"))
-        self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-kept mount", kept_unit)
+        self.assertIn("ExecStart=/usr/local/lib/nxlx/nxlx-kept-boot mount", kept_unit)       # not under current/: a rollback must not break it
+        self.assertTrue(os.access(self.p("usr/local/lib/nxlx/nxlx-kept-boot"), os.X_OK))
+        self.assertTrue(os.path.isfile(self.p("usr/local/lib/nxlx/kept.py")))
         self.assertIn("ConditionPathExists=/etc/nxlx/kept.json", kept_unit)
         self.assertNotIn("@NXLX", kept_unit)
         self.assertFalse(os.path.exists(self.p("etc/nxlx/kept.json")))      # the installer never makes the config: only nxlx-kept prepare does

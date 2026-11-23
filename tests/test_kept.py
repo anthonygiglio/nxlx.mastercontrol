@@ -10,6 +10,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -34,6 +35,8 @@ class FakeSystem:
         self.mkfs_rc = 0
         self.blkid_rc = {}                      # tag -> exit code, for a blkid that fails (exit 2 with no output is "nothing found")
         self.inactive = set()                   # units `systemctl is-active` says are not running
+        self.states = {}                        # unit -> "activating" and the like
+        self.busy = []                          # update or USB units that are running
         os.makedirs(self.p("proc"))
         self.write(self.p("proc/mounts"), "overlayroot / overlay rw 0 0\n")
         os.makedirs(self.p("dev/disk/by-uuid"))
@@ -109,14 +112,24 @@ class FakeSystem:
         elif name == "umount":
             lines = [l for l in self.mounts().splitlines(True) if cmd[1] not in l.split()]
             self.write(self.p("proc/mounts"), "".join(lines))
+            if os.path.islink(cmd[1]) and os.path.exists(cmd[1] + ".under"):      # a bind goes: what it hid is there again
+                os.unlink(cmd[1])
+                os.rename(cmd[1] + ".under", cmd[1])
         elif name == "blkid":
             tag = cmd[cmd.index("-s") + 1]
             out = self.blkid.get(tag, "")
             rc = self.blkid_rc.get(tag, 0 if out else 2)
         elif name == "systemctl" and cmd[1] == "is-active":
-            rc = 3 if cmd[-1] in self.inactive else 0
+            state = self.states.get(cmd[-1], "inactive" if cmd[-1] in self.inactive else "active")
+            out, rc = state, 0 if state == "active" else 3
+        elif name == "systemctl" and cmd[1] == "list-units":
+            out = "".join("%s loaded active running x\n" % u for u in self.busy)
         elif name == "mkfs.ext4":
             rc = self.mkfs_rc
+            vol = self.p("var/lib/nxlx-kept")
+            if not rc and os.path.isdir(vol):          # a new filesystem is empty (here the 'disk' is that folder)
+                for entry in os.listdir(vol):
+                    shutil.rmtree(os.path.join(vol, entry))
             if not rc and not os.path.lexists(self.p("dev/disk/by-uuid/" + UUID)):
                 self.add_disk_link()          # udev makes the by-uuid link of the new filesystem
         return subprocess.CompletedProcess(cmd, rc, out + ("\n" if out else ""), "boom" if rc else "")
@@ -631,7 +644,7 @@ class PrepareTest(unittest.TestCase):
         return self.s.kept().prepare(device, **kw)
 
     def nothing_written(self):
-        self.assertEqual([c for c in self.s.calls if c[0] in ("mkfs.ext4", "mount", "umount", "systemctl")], [])
+        self.assertEqual([c for c in self.s.calls if c[0] in ("mkfs.ext4", "mount", "umount") or c[:2] in (["systemctl", "stop"], ["systemctl", "start"])], [])
         self.assertFalse(os.path.lexists(self.s.p("etc/nxlx/kept.json")))
         self.assertFalse(os.path.lexists(self.s.p("etc/nxlx/kept.secret")))
         self.assertFalse(os.path.lexists(self.s.p("var/lib/nxlx-kept")))
@@ -707,14 +720,14 @@ class PrepareTest(unittest.TestCase):
         with self.assertRaises(kept.KeptError) as cm:
             self.prep()
         self.assertIn("already a mount point", str(cm.exception))
-        self.assertEqual([c for c in self.s.calls if c[0] in ("mkfs.ext4", "mount", "systemctl")], [])
+        self.assertEqual([c for c in self.s.calls if c[0] in ("mkfs.ext4", "mount") or c[:2] in (["systemctl", "stop"], ["systemctl", "start"])], [])
         self.s.write(self.s.p("proc/mounts"), "/dev/mmcblk0p2 / ext4 rw 0 0\n")
         # a config is already there
         self.s.configure()
         with self.assertRaises(kept.KeptError) as cm:
             self.prep()
         self.assertIn("already set up", str(cm.exception))
-        self.assertEqual([c for c in self.s.calls if c[0] in ("mkfs.ext4", "mount", "systemctl")], [])
+        self.assertEqual([c for c in self.s.calls if c[0] in ("mkfs.ext4", "mount") or c[:2] in (["systemctl", "stop"], ["systemctl", "start"])], [])
         os.unlink(self.s.p("etc/nxlx/kept.json"))
         # the read-only disk is on
         with self.assertRaises(kept.KeptError):
@@ -764,7 +777,7 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual([self.s.calls[i][-1] for i in starts], list(kept.SERVICES))
         self.assertLess(max(stops), min(binds))
         self.assertLess(max(binds), min(starts))
-        self.assertEqual(len(syncs), 1, syncs)             # one flush of the kept disk for all the copying
+        self.assertEqual(len(syncs), 12, syncs)            # no flush per file: one before and one after each folder's rename
         self.assertEqual(len(binds), 6)
         with open(self.s.p("var/lib/nxlx-kept/state/settings.json")) as f:
             self.assertEqual(f.read(), '{"pin": "1234"}')
@@ -911,6 +924,160 @@ class PrepareTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.s.p("etc/nxlx/kept.secret")))
 
 
+class PrepareSafetyTest(unittest.TestCase):
+    """The review's second round: the order of the commit and the scrub, signals, conversions, busy units, --wipe over a
+    working disk, every folder tried when binding, grants of other nodes."""
+
+    def setUp(self):
+        self.s = FakeSystem(self)
+        self.s.node_folders()
+        self.s.write(self.s.p("proc/mounts"), "/dev/mmcblk0p2 / ext4 rw 0 0\n")
+        self.s.blkid["TYPE"] = ""
+
+    def prep(self, device="/dev/sda3", **kw):
+        kw.setdefault("yes", True)
+        return self.s.kept().prepare(device, **kw)
+
+    def test_nothing_is_taken_out_of_the_system_disk_before_the_commit(self):
+        settings = {"devices": [{"id": "d1"}], "recovery": {"codes": ["x"]}, "auth": {"pin_hash": "aa"}}
+        self.s.write(self.s.p("var/lib/nxlx/settings.json"), json.dumps(settings))
+        real = kept._write_atomic
+
+        def failing(path, data, mode=0o644):
+            if path.endswith("kept.json"):
+                raise OSError(30, "Read-only file system")
+            return real(path, data, mode)
+        with mock.patch("mctl.kept._write_atomic", side_effect=failing):
+            with self.assertRaises(OSError):
+                self.prep()
+        with open(self.s.p("var/lib/nxlx/settings.json")) as f:
+            self.assertEqual(json.load(f), settings)                  # the system disk is still the complete live copy
+        self.assertFalse(os.path.islink(self.s.p("var/lib/nxlx")))
+        self.assertEqual(len([c for c in self.s.calls if c[:2] == ["systemctl", "start"]]), len(kept.SERVICES))
+
+    def test_the_scrub_comes_after_the_commit_and_before_the_bind(self):
+        order = []
+        real_scrub, real_bind = kept.Kept._scrub_all, kept.Kept._bind_all
+        real_write = kept._write_atomic
+
+        def write(path, data, mode=0o644):
+            if path.endswith("kept.json"):
+                order.append("commit")
+            return real_write(path, data, mode)
+        with mock.patch("mctl.kept._write_atomic", side_effect=write), \
+                mock.patch.object(kept.Kept, "_scrub_all", lambda s_, *a: (order.append("scrub"), real_scrub(s_, *a))[1]), \
+                mock.patch.object(kept.Kept, "_bind_all", lambda s_: (order.append("bind"), real_bind(s_))[1]):
+            self.prep()
+        self.assertEqual(order, ["commit", "scrub", "bind"])
+
+    def test_a_signal_starts_the_services_again_and_leaves_nothing_committed(self):
+        import signal
+        import time
+        before = {n: signal.getsignal(getattr(signal, n)) for n in kept.SIGNALS}
+
+        def killed(self_):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(2)
+        with mock.patch.object(kept.Kept, "_seed_missing", killed):
+            with self.assertRaises(kept.KeptError) as cm:
+                self.prep()
+        self.assertIn("interrupted by SIGTERM", str(cm.exception))
+        self.assertEqual(len([c for c in self.s.calls if c[:2] == ["systemctl", "start"]]), len(kept.SERVICES))
+        self.assertFalse(os.path.exists(self.s.p("etc/nxlx/kept.json")))
+        self.assertIn("umount", [c[0] for c in self.s.calls])
+        self.assertEqual({n: signal.getsignal(getattr(signal, n)) for n in kept.SIGNALS}, before)     # the handlers are put back
+        for name in ("SIGHUP", "SIGINT"):
+            self.s.calls = []
+
+            def hit(self_, sig=getattr(signal, name)):
+                os.kill(os.getpid(), sig)
+                time.sleep(2)
+            with mock.patch.object(kept.Kept, "_seed_missing", hit):
+                with self.assertRaises(kept.KeptError):
+                    self.prep()
+            self.assertEqual(len([c for c in self.s.calls if c[:2] == ["systemctl", "start"]]), len(kept.SERVICES), name)
+
+    def test_services_that_are_still_starting_are_stopped_too(self):
+        self.s.states = {"nxlx-web.service": "activating"}
+        self.s.inactive = {"nxlx-player.service"}
+        self.prep()
+        stopped = [c[-1] for c in self.s.calls if c[:2] == ["systemctl", "stop"]]
+        self.assertIn("nxlx-web.service", stopped)
+        self.assertNotIn("nxlx-player.service", stopped)
+
+    def test_it_refuses_while_a_conversion_undo_is_armed(self):
+        self.s.write(self.s.p("etc/systemd/system/nxlx-convert-undo.timer"), "[Timer]\n")
+        with self.assertRaises(kept.KeptError) as cm:
+            self.prep()
+        self.assertIn("confirm the conversion first", str(cm.exception))
+        with self.assertRaises(kept.KeptError):
+            self.s.kept().seed()
+        self.assertEqual([c for c in self.s.calls if c[0] in ("mkfs.ext4", "mount", "umount") or c[:2] == ["systemctl", "stop"]], [])
+        self.assertFalse(os.path.exists(self.s.p("var/lib/nxlx-kept")))
+
+    def test_it_refuses_while_an_update_or_a_usb_copy_runs(self):
+        self.s.busy = ["nxlx-update.service"]
+        with self.assertRaises(kept.KeptError) as cm:
+            self.prep()
+        self.assertIn("nxlx-update.service", str(cm.exception))
+        self.assertEqual([c for c in self.s.calls if c[0] in ("mkfs.ext4", "mount") or c[:2] == ["systemctl", "stop"]], [])
+
+    def test_every_folder_is_bound_even_when_one_fails(self):
+        real = kept.Kept._bind
+
+        def flaky(self_, name, place, create):
+            if name in ("state", "netd"):
+                raise kept.KeptError("busy")
+            return real(self_, name, place, create)
+        with mock.patch.object(kept.Kept, "_bind", flaky):
+            with self.assertRaises(kept.KeptError) as cm:
+                self.prep()
+        self.assertIn("state: busy", str(cm.exception))
+        self.assertIn("netd: busy", str(cm.exception))
+        self.assertEqual(len([c for c in self.s.calls if c[:2] == ["mount", "--bind"]]), 4)        # the other four
+        self.assertEqual(len([c for c in self.s.calls if c[:2] == ["systemctl", "start"]]), len(kept.SERVICES))
+
+    def test_wipe_replaces_a_working_kept_disk_and_says_what_it_means(self):
+        self.prep()
+        self.s.write(self.s.p("var/lib/nxlx/scenes/two.json"), "[2]")              # written on the old kept disk
+        # (the fake bind is a link, which a real bind mount is not: the check of the places is let through here)
+        real_folder = mock.patch.object(kept.Kept, "_check_place", lambda s_, place: os.lstat(s_.root))
+        real_folder.start()
+        self.addCleanup(real_folder.stop)
+        with self.assertRaises(kept.KeptError) as cm:
+            self.prep()
+        self.assertIn("in use", str(cm.exception))                                  # without --wipe the working disk is never touched
+        self.s.calls = []
+        self.s.logs = []
+        k = self.s.kept()
+        k.prepare("/dev/sda3", yes=True, wipe=True)
+        names = [c[0] + ":" + (c[1] if len(c) > 1 else "") for c in self.s.calls]
+        self.assertLess(names.index("umount:" + self.s.p("var/lib/nxlx")), names.index("mkfs.ext4:-q"))
+        self.assertTrue(any("NOT copied" in m for m in self.s.logs), self.s.logs)
+        with open(self.s.p("etc/nxlx/kept.json")) as f:
+            self.assertEqual(json.load(f)["uuid"], UUID)
+        self.assertTrue(os.path.islink(self.s.p("var/lib/nxlx")))                   # bound to the new disk
+        self.assertFalse(os.path.exists(self.s.p("var/lib/nxlx-kept/state/scenes/two.json")))      # not carried over
+
+    def test_what_lets_another_node_in_is_taken_out_and_what_only_restricts_stays(self):
+        settings = {"devices": [], "fleet": {"accept": True, "discovery": True}, "auth": {"pin_hash": "aa"}}
+        self.s.write(self.s.p("var/lib/nxlx/settings.json"), json.dumps(settings))
+        for name in ("fleet.json", "fleet.sig", "pairings.json", "deny.json"):
+            self.s.write(self.s.p("var/lib/nxlx/" + name), "{}")
+        self.prep()
+        under = self.s.p("var/lib/nxlx.under")
+        for gone in ("fleet.json", "fleet.sig", "pairings.json"):
+            self.assertFalse(os.path.lexists(os.path.join(under, gone)), gone)
+        self.assertTrue(os.path.exists(os.path.join(under, "deny.json")))           # it only restricts
+        with open(os.path.join(under, "settings.json")) as f:
+            old = json.load(f)
+        self.assertFalse(old["fleet"]["accept"])
+        self.assertTrue(old["fleet"]["discovery"])
+        with open(self.s.p("var/lib/nxlx-kept/state/settings.json")) as f:
+            self.assertTrue(json.load(f)["fleet"]["accept"])                       # the kept copy is whole
+        self.assertTrue(os.path.exists(self.s.p("var/lib/nxlx-kept/state/fleet.json")))
+
+
 class RootfsEnableTest(unittest.TestCase):
     """nxlx-rootfs enable with and without the kept disk (the existing rootfs tests stay in tests/test_rootfs.py)."""
 
@@ -971,14 +1138,33 @@ class RootfsEnableTest(unittest.TestCase):
         self.assertEqual(st["kept"]["uuid"], UUID)
 
 
+class BootLauncherTest(unittest.TestCase):
+    def test_the_release_independent_copy_runs_the_boot_step_alone(self):
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        shutil.copy(os.path.join(repo, "bin", "nxlx-kept-boot"), d)
+        shutil.copy(os.path.join(repo, "mctl", "kept.py"), d)           # and no mctl package, as after a rollback
+        r = subprocess.run([sys.executable, os.path.join(d, "nxlx-kept-boot"), "mount"], capture_output=True, text=True, timeout=60,
+                           cwd=d, env=dict(os.environ, PYTHONPATH=""))
+        self.assertEqual(r.returncode, 0, r.stderr)                        # no /etc/nxlx/kept.json here or on a test box: "off"
+        self.assertEqual(subprocess.run([sys.executable, os.path.join(d, "nxlx-kept-boot"), "bogus"], capture_output=True).returncode, 2)
+        os.unlink(os.path.join(d, "kept.py"))
+        gone = subprocess.run([sys.executable, os.path.join(d, "nxlx-kept-boot"), "mount"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(gone.returncode, 1)                               # fails loudly, not silently
+        self.assertIn("cannot load", gone.stderr)
+
+
 class InstalledFilesTest(unittest.TestCase):
     def test_the_unit_only_acts_where_a_kept_disk_was_set_up_and_comes_before_the_services(self):
         repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         with open(os.path.join(repo, "install", "nxlx-kept.service")) as f:
             unit = f.read()
         self.assertIn("ConditionPathExists=/etc/nxlx/kept.json", unit)
-        self.assertIn("ExecStart=@NXLX_DIR@/bin/nxlx-kept mount", unit)
-        self.assertIn("ExecStop=@NXLX_DIR@/bin/nxlx-kept sync", unit)
+        # the boot step runs from a copy that no release switch (rollback) takes away, never from a path under current/
+        self.assertIn("ExecStart=/usr/local/lib/nxlx/nxlx-kept-boot mount", unit)
+        self.assertIn("ExecStop=/usr/local/lib/nxlx/nxlx-kept-boot sync", unit)
+        self.assertNotIn("current", [l for l in unit.splitlines() if l.startswith("Exec")].__str__())
         for before in ("sysinit.target", "NetworkManager.service", "nxlx-web.service", "nxlx-player.service", "nxlx-netd.service"):
             self.assertRegex(unit, r"(?m)^Before=.*\b%s\b" % before.replace(".", r"\."))
         self.assertTrue(os.access(os.path.join(repo, "bin", "nxlx-kept"), os.X_OK))

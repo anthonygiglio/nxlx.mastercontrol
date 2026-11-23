@@ -16,8 +16,8 @@ Type=oneshot
 RemainAfterExit=yes
 # Waits up to 30 s for a slow USB disk, then goes on without it and says so in /run/nxlx-kept.json. It only mounts the disk and
 # binds the folders; the copying is done by an admin with `nxlx-kept prepare`, never here.
-ExecStart=@NXLX_DIR@/bin/nxlx-kept mount
-ExecStop=@NXLX_DIR@/bin/nxlx-kept sync
+ExecStart=/usr/local/lib/nxlx/nxlx-kept-boot mount
+ExecStop=/usr/local/lib/nxlx/nxlx-kept-boot sync
 TimeoutStartSec=3min
 
 [Install]
