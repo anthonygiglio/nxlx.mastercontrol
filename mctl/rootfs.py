@@ -111,7 +111,7 @@ def change(action, board_kind, media_dir, force=False, runner=subprocess.run,
             raise RootfsError("%s failed: %s" % (" ".join(cmd[:3]), (r.stderr or r.stdout).strip()))
     log("%s requested. Reboot to apply. Settings in /etc/nxlx can only be changed with the root writable." % action)
     if kept is not None and action == "enable":
-        log("The first restart copies the settings to the kept settings disk; after that they survive every restart.")
+        log("The settings already live on the kept settings disk (nxlx-kept prepare copied them); they survive every restart.")
     if kept is not None and action == "disable" and kept.configured():
         log("The kept settings disk stays in use: the settings keep living on it, so nothing is lost or copied back.")
 

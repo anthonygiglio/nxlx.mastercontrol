@@ -353,12 +353,13 @@ class InstallConvertsAnOldNode(unittest.TestCase):
                         self.assertFalse(os.path.exists(self.p("opt/nxlx")))
                         # What install.sh adds that is no change of the run: the waiting release, the command link,
                         # and the runtime folder (/run is rebuilt at boot and never the converter's). The kept settings
-                        # folder's unit and command link (J-050) have no old name to go back to; with no
-                        # /etc/nxlx/kept.json on an old node the unit's condition skips it.
+                        # folder's unit and links (J-050) have no old name, so the undo itself removes them.
+                        for gone in ("etc/systemd/system/nxlx-kept.service", "usr/local/bin/nxlx-kept",
+                                     "etc/systemd/system/sysinit.target.wants/nxlx-kept.service"):
+                            self.assertFalse(os.path.lexists(self.p(gone)), gone + " left behind by the undo")
                         waiting = "opt/pvj/releases/" + version()
                         after = snapshot(self.root, skip=("var/backups", waiting, "run/nxlx"))
-                        for extra in (waiting, "usr/local/bin/nxlx-convert", "usr/local/bin/nxlx-kept",
-                                      "etc/systemd/system/nxlx-kept.service", "run/nxlx", "var/backups"):
+                        for extra in (waiting, "usr/local/bin/nxlx-convert", "run/nxlx", "var/backups"):
                             after.pop(extra, None)
                         want = {k: v for k, v in before.items() if k != "var/backups"}
                         self.assertEqual(after, want)
